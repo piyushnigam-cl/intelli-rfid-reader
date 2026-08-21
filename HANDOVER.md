@@ -33,7 +33,13 @@ So the loop is:
    hardware actually does, not from what the docs implied.
 
 Step 4 is the one that is easy to skip and the one that compounds. `CLAUDE.md` is the only channel
-by which hardware truth reaches future design sessions — project memory does not cross machines.
+by which hardware truth reaches future design sessions — project memory does not cross machines. It
+lives in the `intelli-rfid-workspace` repo at the project root, so writing back is just:
+
+```bash
+cd ~/intelli-rfid-reader
+git add CLAUDE.md && git commit -m "hardware: <what you learned>" && git push
+```
 
 Things especially worth recording after a CM4 session:
 
@@ -62,16 +68,19 @@ section 2 rather than copying the folder once and diverging.
 
 ## 1. What exists right now
 
-Four git repositories under `apps/`, each with **one commit on `main`** and a CodeCommit remote in
-`ap-south-1`. **Nothing has been pushed yet**, and the CodeCommit repositories may not exist
-server-side.
+Five git repositories, each with **one commit on `main`** and a CodeCommit remote in `ap-south-1`.
+**Nothing has been pushed yet**, and the CodeCommit repositories may not exist server-side.
 
-| Repo | Files | Remote |
-|---|---|---|
-| `intelli-rfid-core` | 35 | `https://git-codecommit.ap-south-1.amazonaws.com/v1/repos/intelli-rfid-core` |
-| `intelli-rfid-reader-test` | 14 | `…/intelli-rfid-reader-test` |
-| `intelli-rfid-tunnel` | 15 | `…/intelli-rfid-tunnel` |
-| `intelli-rfid-wayside` | 18 | `…/intelli-rfid-wayside` |
+| Repo | Location | Files | Remote |
+|---|---|---|---|
+| `intelli-rfid-workspace` | project root | 5 | `https://git-codecommit.ap-south-1.amazonaws.com/v1/repos/intelli-rfid-workspace` |
+| `intelli-rfid-core` | `apps/` | 35 | `…/intelli-rfid-core` |
+| `intelli-rfid-reader-test` | `apps/` | 14 | `…/intelli-rfid-reader-test` |
+| `intelli-rfid-tunnel` | `apps/` | 15 | `…/intelli-rfid-tunnel` |
+| `intelli-rfid-wayside` | `apps/` | 18 | `…/intelli-rfid-wayside` |
+
+The workspace repo carries the shared docs only; it gitignores `apps/`, so each app stays
+independently versioned. See [§4](#how-claudemd-travels-the-workspace-repo).
 
 Commits are authored as `Piyush Nigam <this.is.piyush@gmail.com>`.
 
@@ -107,9 +116,10 @@ Cleanest: the repos end up properly remoted on both machines.
 
 ```powershell
 cd C:\Claude\intelli-rfid-reader
-bash setup-codecommit.sh --create      # needs AWS CLI configured for ap-south-1
+bash setup-codecommit.sh --create      # creates all five repos; needs AWS CLI for ap-south-1
 
-# then, per app
+git push -u origin main                # the workspace repo (docs)
+
 cd apps\intelli-rfid-core          ; git push -u origin main
 cd ..\intelli-rfid-reader-test     ; git push -u origin main
 cd ..\intelli-rfid-tunnel          ; git push -u origin main
@@ -126,11 +136,19 @@ git config --global credential.UseHttpPath true
 **On the CM4:**
 
 ```bash
+CC=https://git-codecommit.ap-south-1.amazonaws.com/v1/repos
+
+# the workspace repo becomes the project root — clone it first
+git clone $CC/intelli-rfid-workspace ~/intelli-rfid-reader
 mkdir -p ~/intelli-rfid-reader/apps && cd ~/intelli-rfid-reader/apps
+
 for a in intelli-rfid-core intelli-rfid-reader-test intelli-rfid-tunnel intelli-rfid-wayside; do
-  git clone https://git-codecommit.ap-south-1.amazonaws.com/v1/repos/$a
+  git clone $CC/$a
 done
 ```
+
+Cloning the workspace repo into the project root is what puts `CLAUDE.md` where Claude Code will
+find it when you run `claude` from `~/intelli-rfid-reader`.
 
 Then copy the SDK across separately (it is not in git):
 
@@ -236,28 +254,24 @@ own storage. `CLAUDE.md` and this file are the handover; nothing else comes acro
 That cuts both ways: notes a CM4 session keeps do not reach the laptop either. Whatever the hardware
 teaches you, put it in `CLAUDE.md` and commit it — that is the only channel between the two.
 
-### The gap in that plan
+### How CLAUDE.md travels: the workspace repo
 
-`CLAUDE.md` lives at the project root, **outside all four repos** — so as things stand it does not
-travel by `git push` / `git pull`, which is exactly the channel it is supposed to use. Right now it
-moves only by the same manual route as the vendor SDK, which means it will drift.
+`CLAUDE.md` sits at the project root, outside all four app repos, so on its own it would not travel
+by `git push` / `git pull` — which is exactly the channel it needs. That is closed by a **fifth
+repository at the project root**, `intelli-rfid-workspace`.
 
-Three ways to close it, best first:
+It tracks only the root-level docs:
 
-1. **A workspace repo at the project root** that tracks *only* the root files — `CLAUDE.md`,
-   `HANDOVER.md`, `README.md`, `setup-codecommit.sh` — with `apps/`, `API-linux-java-*/` and
-   `Hardware/` in its `.gitignore`. This is not a monorepo: it does not span the apps, and each app
-   keeps its own independent repository. It is a fifth small repo whose only job is carrying the
-   shared context between machines.
+```
+.gitignore  CLAUDE.md  HANDOVER.md  README.md  setup-codecommit.sh
+```
 
-2. **Keep it in `intelli-rfid-core`** and run `claude` from `apps/intelli-rfid-core/` when doing
-   reader work. Free, but the file stops being project-wide, and sessions started at the root will
-   not load it.
+and gitignores `apps/`, `API-linux-java-*/`, `Hardware/` and `_to_delete/`.
 
-3. **Copy it by hand** alongside the SDK. Works until the first time someone forgets, which is when
-   the hardware corrections stop reaching the design sessions.
-
-Option 1 is the only one that makes step 4 of the loop automatic. Ask and it can be set up.
+**This is not a monorepo.** It does not span the apps — `apps/` is ignored outright, and each app
+keeps its own independent repository and its own CodeCommit remote. The workspace repo's only job is
+carrying shared context between the two machines, so that step 4 of the loop happens by `git push`
+rather than by remembering to copy a file.
 
 ---
 

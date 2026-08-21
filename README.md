@@ -5,19 +5,25 @@ Raspberry Pi **Compute Module 4** running the applications.
 
 ## Repository layout
 
-Each app is its **own git repository**, remoted to AWS CodeCommit. This directory is a workspace, not
-a monorepo — there is no repository at this level.
+Each app is its **own git repository**, remoted to AWS CodeCommit in `ap-south-1`. This directory is
+a workspace, not a monorepo.
 
 ```
-intelli-rfid-reader/
-├── API-linux-java-v260721/     vendor SDK (not in git)
-├── Hardware/                   datasheets and manuals (not in git)
+intelli-rfid-reader/             intelli-rfid-workspace — docs only, apps/ gitignored
+├── CLAUDE.md                    auto-loaded by Claude Code; the channel between machines
+├── HANDOVER.md                  migration guide and session record
+├── API-linux-java-v260721/      vendor SDK (not in git)
+├── Hardware/                    datasheets and manuals (not in git)
 └── apps/
     ├── intelli-rfid-core/          shared library — repo
     ├── intelli-rfid-reader-test/   bench acceptance — repo
     ├── intelli-rfid-tunnel/        warehouse portal — repo
     └── intelli-rfid-wayside/       trackside railway — repo
 ```
+
+Five repositories in total. The root one tracks only the shared docs — it gitignores `apps/`, so it
+does not span the apps and each stays independently versioned. Its job is carrying `CLAUDE.md`
+between the Windows design machine and the CM4 that runs the reader; see `HANDOVER.md`.
 
 ## The apps
 
