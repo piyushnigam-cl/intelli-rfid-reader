@@ -159,6 +159,23 @@ guessing at signatures.
   module's actual channel plan.
 - **`GetHardwareDetails` reports `module=MODOULE_NONE`** (vendor's spelling) on a perfectly healthy
   module. Not an error.
+- **`BackReadOption.ReadDuration` is the latency knob, because the module batches callbacks.** A
+  tag is not reported when it is read — it is reported at the *end* of each read window. Measured on
+  the SIM7500: carrier-on → first tag = **ReadDuration + ~14 ms**, linear across 50/100/200/400 ms
+  (63.9 / 114.5 / 213.9 / 412.8 ms median). The irreducible floor is ~28 ms. **Below ~25 ms the
+  window starts missing the tag** and latency becomes an erratic multiple of the window (at 5 ms:
+  min 28 ms, max 284 ms). 50 ms is a good default: first tag ~64 ms, tightly grouped. Callback rate
+  follows the same law — ~1000/ReadDuration per second (50 ms → 16/s measured).
+- **Gen2 S2 plus a continuously-on carrier makes a static tag go silent after one read.** Measured:
+  16.0 callbacks/s on S0 versus **0.1/s on S2**, same tag, same everything else. This is correct
+  Gen2 behaviour — S2's inventoried flag persists while the tag is powered — but it means any
+  bench test that leaves the carrier on and uses S2 looks like a broken reader. It is also the
+  thing that makes the tunnel's carrier-off-between-boxes design necessary rather than merely
+  thermally convenient. Use S0 for continuous-carrier bench work; S2 belongs with triggered RF.
+- **Ex10 fast mode was 14× *slower* than NORMAL on a sparse population.** Measured with 2 tags:
+  NORMAL 16.0 callbacks/s, `IsFastRead=true` **1.1/s**. Fast mode is designed for dense populations,
+  so this may well invert with a real 40-article box — but it means **fast mode must not be assumed
+  faster and must be measured against NORMAL on a real box before it is made the default.**
 - **A lambda field initializer cannot read a blank final field** before the constructor assigns it —
   hence the method references (`this::handleTags`) for the vendor listeners.
 
@@ -217,6 +234,12 @@ be far worse than showing a hex string.
   program** compiled against the vendor jar — open, do the work, exit, all inside one tool call. That
   is how the first tag read was obtained. If a server really is needed, start it and drive it within
   a single command, or ask the operator to run it in their own terminal.
+- **The tunnel app hard-fails startup if its spool directory is not writable.**
+  `JsonlSpool.initialise()` throws `UncheckedIOException` out of the `InventoryService` constructor,
+  which kills the Spring context — `AccessDeniedException: /var/lib/intelli` on a dev box. Create it
+  first (`deploy/install.sh` does, as user `intelli`). Worth questioning against this project's own
+  rule that a field unit should come up and report unhealthy rather than refuse to start: a spool
+  that cannot be written is a degraded reader, not an unusable one.
 - **Maven incremental compile goes stale.** After editing a core source file, `mvn install` can
   report success while apps still bundle the old class. Use `mvn clean install` on core after
   editing it. Verify with `javap -c -p -cp target/classes <Class>` when behaviour contradicts source.
