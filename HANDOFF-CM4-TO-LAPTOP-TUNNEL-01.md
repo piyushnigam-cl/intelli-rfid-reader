@@ -197,8 +197,7 @@ the `/api/v1` layer rather than leaving to the caller.
   already proven on this module from the acceptance session — only the encoding is unverified.
 - **Discovery curve (§7.7).** Not built. Agreed it should come before any tuning; it needs a real box
   to be worth anything.
-- **Are Reliance's tags Monza?** Cannot determine from here — the two bench tags' TIDs were not read.
-  I can read TID on request; say the word and I will.
+- **Are Reliance's tags Monza? — ANSWERED: yes, Impinj.** See §8.
 
 ---
 
@@ -217,5 +216,54 @@ the `/api/v1` layer rather than leaving to the caller.
 
 ---
 
-*CM4 session, 2026-08-27. Every number here was measured on the module. Two tags on one antenna:
-treat all rate and timing figures as relative, not as tunnel performance.*
+## 8. Are Reliance's tags Monza? Yes — Impinj, all of them
+
+Answered after the rest of this document was written. A box of tags appeared on the bench, so this
+is a real sample rather than the two loose tags: **19 tags read, TID bank read per tag via a Select
+filter on EPC.**
+
+| Count | Manufacturer | MDID | TMID | TID prefix | Indicators |
+|---|---|---|---|---|---|
+| **18** | **Impinj** | `0x001` | `0x190` | `E2801190` | XTID |
+| 1 | NXP Semiconductors | `0x006` | `0x892` | `E2C06892` | XTID + Security |
+
+The single NXP tag is one of the two loose bench tags I had been using (EPC
+`8A8070003A6D00021F0C3F9D` — note its EPC tail equals its TID tail, so it is factory-programmed
+EPC-from-TID). **Every one of the 18 product tags is Impinj**, all sharing TMID `0x190`, i.e. a
+single part number and consistent stock.
+
+**So FastID and Impinj fast mode are available**, and your §2 note applies: `tid:true` becomes nearly
+free rather than doubling the read, and the Impinj-vs-Ex10 question changes shape. Given §3.1 —
+Ex10 fast mode measured 14× slower than NORMAL here — Impinj fast mode is now clearly worth
+measuring in the same sweep.
+
+I can confirm the **manufacturer** definitively; I am not going to name the exact Monza/M-series part
+from memory. TMID `0x190` under the `E28011xx` Monza-family prefix should be looked up in Impinj's
+TID model table to pin the part — worth doing, since it decides whether FastID is actually present
+on this silicon or only on some of the family.
+
+**XTID is set on all of them**, so each carries a serialised factory TID — the tails all differ.
+That is a genuinely unique per-tag identifier independent of whatever we write into EPC, which is
+worth knowing for the commissioning and `tid:true` paths.
+
+### A bonus you will care about: there are already SGTIN-96 tags in this batch
+
+Two of the 19 EPCs are `30361F879BC4F780000000 2D` and `…2E` — header `30` is SGTIN-96, and the
+`3036` prefix matches your §6 test vectors (`30361F8CDC100F0000000001`), i.e. **partition 5,
+filter 1**, exactly as specified. The body differs from your vectors, so it is a different GTIN.
+
+That means the encoder can be validated against live tags rather than only against the two test
+strings — and it is worth checking whether these were commissioned to the same scheme you specified.
+Say if you want me to decode them back to GTIN + serial.
+
+### One correction to how TIDs get decoded
+
+Worth recording because it produced a wrong answer first time. The 12 bits after the `E2` allocation
+class are **not** all MDID. Gen2v2 puts three indicator bits on top — XTID `0x800`, Security `0x400`,
+File `0x200` — leaving a **9-bit MDID**. Masking only the XTID bit off decodes the security-enabled
+NXP tag (raw `0xC06`) as an unknown `0x406` instead of `0x006`. The Impinj tags decode correctly
+either way, which is exactly why the mistake would have survived a smaller sample.
+
+---
+
+*CM4 session, 2026-08-27. Every number here was measured on the module.*

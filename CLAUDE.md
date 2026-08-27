@@ -176,6 +176,15 @@ guessing at signatures.
   NORMAL 16.0 callbacks/s, `IsFastRead=true` **1.1/s**. Fast mode is designed for dense populations,
   so this may well invert with a real 40-article box — but it means **fast mode must not be assumed
   faster and must be measured against NORMAL on a real box before it is made the default.**
+- **The bench/product tags are Impinj.** 19 tags read: 18 are Impinj (MDID `0x001`, TMID `0x190`,
+  TID prefix `E2801190`), 1 is NXP (`0x006`). So FastID and Impinj fast mode are available on the
+  product stock. XTID is set on all of them, so each has a serialised factory TID — a unique per-tag
+  identifier independent of the EPC we write.
+- **Decoding a TID: the 12 bits after the `E2` allocation class are not all MDID.** Gen2v2 puts
+  three indicator bits on top — XTID `0x800`, Security `0x400`, File `0x200` — leaving a **9-bit
+  MDID**. Mask `0x1FF`, not `0x7FF`: a security-enabled NXP tag (raw `0xC06`) otherwise decodes as
+  an unknown `0x406` rather than `0x006`. Impinj tags decode correctly under either mask, so the
+  error hides in a small sample.
 - **A lambda field initializer cannot read a blank final field** before the constructor assigns it —
   hence the method references (`this::handleTags`) for the vendor listeners.
 
