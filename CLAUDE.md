@@ -10,8 +10,8 @@ hardware behaviour that are not derivable from the code.
 | RFID module | Silion **SIM7500**, built on an Impinj **E710** Gen2 RF chip |
 | Host | Raspberry Pi **Compute Module 4**, on board the reader — this runs the apps |
 | Architecture | **aarch64** — use `libs/aarch64/libModuleAPIJni.so` |
-| Serial port | Defaults to `/dev/ttyAMA0`. Confirm with `dmesg \| grep tty`. A USB bridge gives `/dev/ttyUSB0` |
-| Region | `RG_IN` — the 865–867 MHz Indian band |
+| Serial port | **Confirmed `/dev/ttyAMA0`** on the CM4 bench rig (2026-08-27). A USB bridge gives `/dev/ttyUSB0` |
+| Region | `RG_IN` is the intent (865–867 MHz Indian band) — but **the bench module refuses it**; see below |
 
 The apps run **on the reader itself**, not on a PC talking to a remote reader.
 
@@ -44,20 +44,26 @@ quirks, the actual serial port, tuned configuration values, and anything that su
 ## Repository layout
 
 Each app is its **own git repository**, remoted to AWS CodeCommit in `ap-south-1`. The project root
-is a workspace, not a monorepo — there is no repo at this level.
+is a workspace, not a monorepo — the repo at this level tracks **documentation only** and explicitly
+ignores `apps/`.
 
 ```
-intelli-rfid-reader/
+intelli-rfid-reader/            repo: intelli-rfid-reader — DOCS ONLY, ignores apps/
+├── CLAUDE.md                       tracked here
+├── CM4-BENCH-HANDOFF.md            tracked here
+├── docs/                           tracked here
 ├── API-linux-java-v260721/     vendor SDK — NOT in git, copied separately
 ├── Hardware/                   datasheets — NOT in git
-└── apps/
-    ├── intelli-rfid-core/          shared library — repo
-    ├── intelli-rfid-reader-test/   bench acceptance — repo
+└── apps/                       ignored by the root repo; each app is its own repo
+    ├── intelli-rfid-core/          shared library — repo: intelli-rfid-core
+    ├── intelli-rfid-reader-test/   bench acceptance — repo: intelli-rfid-reader-test
     ├── intelli-rfid-tunnel/        warehouse portal — repo
     └── intelli-rfid-wayside/       trackside railway — repo
 ```
 
-`git init` belongs inside each app directory. Never create a repo spanning `apps/`.
+`git init` belongs inside each app directory. **Never create a repo spanning `apps/`** — the root
+repo keeps that rule by ignoring `apps/` outright, so a stray `git add -A` at the root cannot
+swallow an app. Nesting the app repos would need submodules and is not what this project does.
 
 ## The apps
 
@@ -134,6 +140,25 @@ guessing at signatures.
   `UnsatisfiedLinkError` during Spring bean creation and killed the context before any retry logic
   could run, crash-looping a field unit instead of letting it report unhealthy. **Do not move it
   back into a field initialiser.**
+- **The JNI library needs `-Djava.library.path`; `rfid.reader.native-lib-path` alone does not work.**
+  `JniModuleAPI`'s static initialiser calls `System.loadLibrary("ModuleAPIJni")`, which searches only
+  `java.library.path`. `NativeLibraryLoader`'s `System.load()` of the same `.so` by absolute path
+  succeeds but does **not** satisfy it, so `new Reader()` still throws `UnsatisfiedLinkError` — 
+  surfacing as an HTTP 500, not a 409. **Every launch command and systemd unit must pass
+  `-Djava.library.path=/opt/intelli/lib`.** Verified on the CM4 2026-08-27.
+- **Region is a firmware SKU limit, and the bench module is locked to `RG_EU3`.** Setting each
+  `Region_Conf` and reading it back is the only way to find out: `MTR_PARAM_RF_SUPPORTEDREGIONS`
+  returns `MT_INVALID_PARA`. On the bench SIM7500 every region except `RG_EU3` (8) — `RG_IN` (4) and
+  plain `RG_EU` (2) included — is refused with `MT_CMD_FAILED_ERR / 0x10b FAULT_INVALID_REGION`.
+  Under `RG_EU3` it hops 865.7/866.3/866.9/867.5 MHz, so the first three channels are inside the
+  Indian band. `RG_IN` is region **4**, not 7 (7 is `RG_EU2`).
+- **`ParamGet(MTR_PARAM_FREQUENCY_REGION, ...)` takes a `Region_Conf[]`, not an `int[]`** — the
+  vendor doc says `int[1]` and is wrong; an `int[]` throws `ClassCastException` from inside
+  `Reader.ParamGet`. `ParamSet` on the same parameter does accept a bare `Region_Conf`.
+- **`TAGINFO.Frequency` is in kHz** (`865700` = 865.7 MHz). It is the practical way to discover a
+  module's actual channel plan.
+- **`GetHardwareDetails` reports `module=MODOULE_NONE`** (vendor's spelling) on a perfectly healthy
+  module. Not an error.
 - **A lambda field initializer cannot read a blank final field** before the constructor assigns it —
   hence the method references (`this::handleTags`) for the vendor listeners.
 
@@ -170,6 +195,12 @@ be far worse than showing a hex string.
 - Framework-free code goes in `com.intelli.rfid.core`; anything Spring goes in
   `com.intelli.rfid.spring`. Core must stay usable from a plain CLI, so its Spring dependencies are
   `<optional>`.
+- **Core's pom must keep `<parameters>true</parameters>` on the compiler plugin.** Core has no parent
+  pom by design, so it does not inherit the flag from `spring-boot-starter-parent` the way the apps
+  do. Without it, any `@RequestParam` / `@PathVariable` in core that omits an explicit name fails at
+  *request* time with HTTP 400 ("parameter name information not available via reflection") — code
+  that compiles and starts cleanly, then 400s on first use. Removing that config silently breaks
+  four endpoints across all three apps.
 - Every vendor `READER_ERR` is checked and wrapped in a `ReaderException` carrying the module's own
   detail string. Never discard a return code.
 - `ReaderException` maps to HTTP **409**, not 500 — almost every one means "the reader is not in a
@@ -179,6 +210,13 @@ be far worse than showing a hex string.
 
 ## Gotchas
 
+- **Ask the operator to start and stop the apps.** Claude Code on the CM4 cannot reliably manage a
+  long-running process: a backgrounded JVM gets killed at tool-call boundaries, and
+  `pkill -f '<app-name>'` matches Claude's own wrapper shell and kills that instead (exit 144). Use
+  `pgrep -x java` or the listening port to identify it. For diagnostics prefer a **one-shot Java
+  program** compiled against the vendor jar — open, do the work, exit, all inside one tool call. That
+  is how the first tag read was obtained. If a server really is needed, start it and drive it within
+  a single command, or ask the operator to run it in their own terminal.
 - **Maven incremental compile goes stale.** After editing a core source file, `mvn install` can
   report success while apps still bundle the old class. Use `mvn clean install` on core after
   editing it. Verify with `javap -c -p -cp target/classes <Class>` when behaviour contradicts source.

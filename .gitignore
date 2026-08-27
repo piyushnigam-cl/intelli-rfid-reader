@@ -1,18 +1,14 @@
-# Workspace repo — tracks ONLY the shared project context at this level.
+# This repo holds the workspace-level documentation ONLY.
 #
-# This is deliberately NOT a monorepo. Each app under apps/ is its own independent git
-# repository with its own CodeCommit remote; they are ignored here so the two never overlap.
-# The only job of this repo is to carry CLAUDE.md and the project docs between the Windows
-# design machine and the CM4, so hardware corrections reach future design sessions.
-
-# The app repositories — each is independently versioned
+# Each app under apps/ is its own git repository with its own CodeCommit remote
+# (see CLAUDE.md, "Repository layout"). They are excluded here so that this repo
+# never spans apps/ - nesting them would need submodules and would break the
+# one-repo-per-app rule the project is built on.
 apps/
 
-# Vendor SDK: ~175KB jar plus architecture-specific .so binaries. Licensed material,
-# not ours to redistribute, and it has its own versioning (API-linux-java-vNNNNNN).
+# Vendor SDK and datasheets are copied in separately, not tracked (CLAUDE.md).
+# Globbed so a newer SDK drop is ignored without editing this file.
 API-linux-java-*/
-
-# Datasheets and manuals — large binaries, supplied by the vendor
 Hardware/
 
 # Files the desktop bridge could not delete
@@ -21,7 +17,14 @@ _to_delete/
 # Build output and local scratch
 target/
 *.jar
+*.bak
 *.log
+
+# Transfer bundles - large, regenerated on demand, never source of truth
+*.tar.gz
+*.tgz
+
+# Editors and OS cruft
 .idea/
 *.iml
 .vscode/
