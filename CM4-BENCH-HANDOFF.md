@@ -280,13 +280,33 @@ One thing that looks like a bug and is not: `/api/tags/recent` returns `[]` in P
 recent buffer is filled by the dispatcher thread off the continuous read loop, and POLLED has no
 such loop — `inventoryOnce()` returns its tags directly to the caller. Expected.
 
-**3. The VSWR sweep reports 100 readings when only 4 are real.**
+**3. The VSWR sweep reports 100 readings when only 4 are real. — FIXED**
 
-`antenna-vswr` returns a fixed-length array of 100 entries; the 4 genuine channel readings
-(865700/866300/866900/867500 kHz) are followed by 96 entries of `{"frequencyKhz":0,"vswr":0.0}`.
-The check's verdict is correct — it is the payload that is noisy. Truncate at the first zero
-frequency before returning. Cosmetic, but it makes the report hard to read and bloats every stored
-result.
+`antenna-vswr` returned a fixed-length array of 100 entries; the 4 genuine channel readings
+(865700/866300/866900/867500 kHz) were followed by 96 entries of `{"frequencyKhz":0,"vswr":0.0}`.
+
+The cause is not padding that needs trimming — **the vendor already tells you the count**.
+`AntPortsVSWR` carries a `frecount` field alongside the fixed 100-entry `vswrs` array, and
+`checkAntennas()` ignored it, iterating `vswrs.length`. Measured on the SIM7500:
+
+```
+ParamGet ANTPORTS_VSWR -> MT_OK_ERR
+frecount      = 4
+vswrs.length  = 100
+non-zero freq entries = 4
+```
+
+**Fixed** by honouring `frecount` (clamped to the array length) rather than truncating at the first
+zero frequency — the latter would be a guess that happens to work, and would break on a legitimate
+0 kHz reading. Verified on hardware: `/api/diagnostics/antennas` now returns 4 readings, worst VSWR
+unchanged at 1.1191697, and the acceptance report is 1726 bytes.
+
+The same change also fixed a **latent verdict bug**: on an empty sweep `worst` stayed `0.0`, and
+`0.0 <= vswrLimit` is true, so an antenna that returned no measurements at all was reported
+**healthy**. It now reports unhealthy with `NaN`, matching the existing failure branch.
+
+`Probe3.java` in `apps/intelli-rfid-reader-test/tools/bench-probe/` is what established `frecount`
+is genuinely populated — worth keeping for the next vendor-struct question.
 
 ### 0.8 Corrected vendor API signatures
 
