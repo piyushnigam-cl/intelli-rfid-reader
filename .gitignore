@@ -1,0 +1,17 @@
+# This repo holds the workspace-level documentation ONLY.
+#
+# Each app under apps/ is its own git repository with its own CodeCommit remote
+# (see CLAUDE.md, "Repository layout"). They are excluded here so that this repo
+# never spans apps/ - nesting them would need submodules and would break the
+# one-repo-per-app rule the project is built on.
+apps/
+
+# Vendor SDK and datasheets are copied in separately, not tracked (CLAUDE.md).
+API-linux-java-v260721/
+Hardware/
+
+*.bak
+*.log
+.DS_Store
+.idea/
+.vscode/
