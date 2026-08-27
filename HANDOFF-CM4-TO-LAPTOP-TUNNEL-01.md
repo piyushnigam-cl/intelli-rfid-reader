@@ -252,9 +252,14 @@ Two of the 19 EPCs are `30361F879BC4F780000000 2D` and `…2E` — header `30` i
 `3036` prefix matches your §6 test vectors (`30361F8CDC100F0000000001`), i.e. **partition 5,
 filter 1**, exactly as specified. The body differs from your vectors, so it is a different GTIN.
 
-That means the encoder can be validated against live tags rather than only against the two test
-strings — and it is worth checking whether these were commissioned to the same scheme you specified.
-Say if you want me to decode them back to GTIN + serial.
+Decoded (see §9). **They are not Reliance's company prefix.**
+
+### A reference codec you can check the Java against
+
+`apps/intelli-rfid-tunnel/tools/sgtin96.py` — encode, decode, and `--selftest` asserting **both
+directions on both of your vectors**. It passes. Your §6 says the encoder is wrong if it does not
+reproduce those strings exactly, so check the Java implementation against this rather than against
+another derivation.
 
 ### One correction to how TIDs get decoded
 
@@ -263,6 +268,65 @@ class are **not** all MDID. Gen2v2 puts three indicator bits on top — XTID `0x
 File `0x200` — leaving a **9-bit MDID**. Masking only the XTID bit off decodes the security-enabled
 NXP tag (raw `0xC06`) as an unknown `0x406` instead of `0x006`. The Impinj tags decode correctly
 either way, which is exactly why the mistake would have survived a smaller sample.
+
+---
+
+*CM4 session, 2026-08-27. Every number here was measured on the module.*
+
+---
+
+## 9. The two SGTIN-96 tags, decoded
+
+Decoder validated first against your two vectors — both round-trip in both directions, check digits
+included — then applied to the live tags.
+
+```
+30361F879BC4F7800000002D          30361F879BC4F7800000002E
+  filter          1                 filter          1
+  partition       5                 partition       5
+  companyPrefix   8905190           companyPrefix   8905190
+  itemReference   988126            itemReference   988126
+  indicator       9                 indicator       9
+  serial          45                serial          46
+  GTIN-14  98905190881260           GTIN-14  98905190881260
+```
+
+Same item, consecutive serials. Three things stand out, all of which affect commissioning:
+
+**9.1 The company prefix is `8905190`, not Reliance's `8905527`.** Both are Indian GS1 prefixes
+(`890`), but this is a different brand owner. So this batch is **not** Reliance pilot stock encoded
+to your spec — it is somebody else's commissioned product that happens to be on the bench. Do not
+treat these as validation that the Reliance scheme has been applied anywhere.
+
+**9.2 The indicator digit is `9`, not `0`.** Your vectors use indicator 0, i.e. a plain item-level
+GTIN-13. Indicator 9 conventionally means a **variable-measure trade item**, so the authoritative
+identifier here is the **GTIN-14 `98905190881260`**, and a GTIN-13 derived by dropping the indicator
+is a base item number rather than a registered EAN. The tool labels it as derived for that reason.
+Worth deciding explicitly whether the commissioning API should accept an indicator at all, or hard-
+code 0 — right now `{ean, count, startSerial, ...}` implies 0 and cannot express these tags.
+
+**9.3 Serials are 45 and 46 — small and sequential.** Not the `(reader.id << 30) | counter` scheme
+from your §6, which would put them in the hundreds of millions. Another sign these were commissioned
+elsewhere, and a reminder that the serial authority question you list as still open with Reliance is
+a real one: nothing about a tag tells you which allocator produced it.
+
+### And the thing that matters most for Select
+
+**Only 2 of the 19 tags carry a valid GS1 EPC header at all.**
+
+| Header | Count | Meaning |
+|---|---|---|
+| `0x30` | 2 | SGTIN-96 |
+| `0x23`, `0x8A`, `0x8F`, `0xB7`, `0xEC`, `0xF1`, `0xF3`, `0xFF` | 17 | not a GS1 EPC header — unstructured / test EPCs |
+
+Your §6 notes that an SSCC header `0x31` will not match an SGTIN mask and would land in
+`undecodable`. The real situation on this bench is more severe: **an SGTIN-scoped Select would
+suppress 17 of 19 tags outright.** On mixed stock that is indistinguishable from a reader fault.
+
+This strengthens the case for your `Reader/rssifilter` suggestion over a SKU-scoped Select — an RSSI
+floor cuts distant tags regardless of encoding, and cannot blind the reader to an article whose EPC
+simply is not SGTIN. It also means `decoded: false` handling needs to be genuinely routine rather
+than an edge case, exactly as the wayside rule already says.
 
 ---
 
