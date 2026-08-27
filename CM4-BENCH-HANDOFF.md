@@ -183,8 +183,9 @@ Already done by a previous session — no need to redo: JDK 17 (`17.0.20.1`) and
 apps built, `libModuleAPIJni.so` in `/opt/intelli/lib`, user in `dialout`, `enable_uart=1` and
 `dtoverlay=disable-bt` set, serial console disabled, `/dev/ttyAMA0` free.
 
-Two things that are **not** installed/present: **`git` is not on this machine** (so nothing can be
-committed here at all), and `/etc/intelli/` does not exist (no site config overrides in play).
+`git` was **not** installed when this session started — it has since been installed
+(`sudo apt install git`, 2.39.5) and all three repos are committed and pushed; see the git note at
+the end of this document. `/etc/intelli/` does not exist, so no site config overrides are in play.
 
 Smaller notes:
 - `ReaderException` → HTTP **409** works as designed (the region failure returned 409 with the
@@ -456,6 +457,23 @@ back, and it is tracked in the `intelli-rfid-workspace` repo. Record, as you lea
 Put module-level facts in `CLAUDE.md` under the vendor SDK section; bench procedure corrections go
 in `docs/Bench-Bringup-SIM7500-DevBoard.md`.
 
-**Note on git:** none of the five repos has ever been pushed — every `origin/main` is `gone`. If you
-commit on the CM4, that history exists only on the CM4 until someone resolves CodeCommit access.
-Say so rather than assuming a push worked.
+**Note on git — RESOLVED 2026-08-27.** This previously said no repo had ever been pushed and
+`origin/main` was `gone` everywhere. That is no longer true for the three repos that exist:
+
+| Repo | State |
+|---|---|
+| `intelli-rfid-reader` | workspace **docs only**, ignores `apps/` — pushed |
+| `intelli-rfid-core` | pushed |
+| `intelli-rfid-reader-test` | pushed |
+
+CodeCommit access works from the CM4 over HTTPS with IAM Git credentials, stored via
+`credential.helper store` in `~/.git-credentials`. Two things to know:
+
+- **Those Git credentials are for git operations only.** They cannot create a repository — that
+  needs real AWS keys with `codecommit:CreateRepository`, or the console. Both app repos had to be
+  created by hand first; pushing to a repo that does not exist fails with `repository not found`,
+  which looks like an auth failure and is not one.
+- `intelli-rfid-tunnel` and `intelli-rfid-wayside` do not exist yet, locally or in CodeCommit.
+
+Still worth saying explicitly whether a push actually worked rather than assuming it — verify with
+`git ls-remote origin refs/heads/main` and compare against `git rev-parse main`.
