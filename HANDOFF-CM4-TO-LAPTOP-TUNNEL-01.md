@@ -331,3 +331,67 @@ than an edge case, exactly as the wayside rule already says.
 ---
 
 *CM4 session, 2026-08-27. Every number here was measured on the module.*
+
+---
+
+## 10. Settling test — and an S2 result that challenges §8
+
+Ran the discovery curve you asked for in §3: 10 fresh reads, carrier fully off between trials,
+18 tags in the field, one antenna, 30 dBm, NORMAL, `ReadDuration` 50 ms, settle 1500 ms.
+
+### Discovery is cheap; settle dominates
+
+S0 trials (the ones that produced data — see below for why):
+
+| trial | first tag | last new | settled at | unique | discovery window |
+|---|---|---|---|---|---|
+| 1 | 95 ms | 547 ms | 2067 ms | 18 | 452 ms |
+| 2 | 77 ms | 495 ms | 2017 ms | 18 | 418 ms |
+| 3 | 88 ms | 817 ms | 2339 ms | 18 | 729 ms |
+| 4 | 82 ms | 976 ms | 2519 ms | 18 | 894 ms |
+
+The single good S2 trial was the fastest of all: first tag 91 ms, **all 18 discovered by 260 ms**.
+
+**All 18 tags are found inside ~1 s, then the session spends another 1.5 s proving nothing else is
+coming. Settle is 60–75% of total session time.** That is a measured argument for the missing
+`COUNT_REACHED` early exit in §5.1: with `expectedCount` supplied these sessions would close at
+0.5–1.0 s instead of 2.0–2.5 s. Cheapest second in the budget, currently unclaimed.
+
+Caveat: 18 tags loose on a bench is not 40 packed articles. Trust the *shape* — discovery finishing
+under a second, then a flat tail — not the magnitudes.
+
+### ⚠️ S2 flags persist longer than 15 s, so carrier-off is not enough
+
+This is the part that affects your §2 and §8.
+
+```
+S2, 4 s gap   — trial 1: 18 tags. Trials 2-10: ZERO, all ten ran to the 8 s ceiling.
+S2, 15 s gap  — 4 trials: ZERO, every one.
+S0, 3 s gap   — 4 trials: 18/18 every time.        <-- control: rig, tags and probe are fine
+```
+
+Your §2 and §8 both rest on the carrier-off window letting S2 flags decay back to A. **On this stock
+that window is longer than 15 seconds.** At one box per 20 s it is uncomfortably tight, and any
+faster cadence means **the second box reads as empty** — the same failure you correctly warned about
+for Target A/B alternation, arriving by a different route.
+
+The Gen2 "≥2 s" figure is a minimum, not a typical value, and this silicon holds far longer.
+
+I have **not** bracketed the actual persistence — the sweep needs 20/30/45/60/120 s gaps and the best
+part of half an hour, and I ran out of session. It is the first thing queued for next time, and it is
+written up in `RESUME-NEXT-SESSION.md` §1.
+
+**Two alternatives worth your opinion before I spend that time:**
+
+1. **S1 may now be the better choice.** You rejected it because it self-decays even while powered and
+   a tag could re-answer mid-box. But a box read is **under a second** (measured above), and S1's
+   500 ms – 5 s decay is exactly what fixes the between-box problem. The objection may be smaller
+   than the problem it was avoiding.
+2. **A Select forcing inventoried → A at the start of each box** removes the dependency on
+   persistence entirely. You already found the mechanism — `SelC_Inventoried_S2` with
+   `SelCmd_Action.Mat_SLorA_NMat_no`. Untested, but if it works it is the clean answer and makes the
+   session choice much less load-bearing.
+
+---
+
+*CM4 session, 2026-08-27. Every number here was measured on the module.*

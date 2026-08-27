@@ -172,6 +172,16 @@ guessing at signatures.
   bench test that leaves the carrier on and uses S2 looks like a broken reader. It is also the
   thing that makes the tunnel's carrier-off-between-boxes design necessary rather than merely
   thermally convenient. Use S0 for continuous-carrier bench work; S2 belongs with triggered RF.
+- **Gen2 S2 inventoried flags persist for more than 15 s on our tag stock — carrier-off does not
+  clear them quickly.** Measured: with S2, a first read found all 18 tags; every subsequent read
+  found **zero**, at carrier-off gaps of both 4 s and 15 s. An S0 control at a 3 s gap read 18/18
+  every time, so it is S2 state and not the rig. The Gen2 spec's "≥2 s" is a *minimum*, and this
+  silicon holds far longer. **Consequence: the tunnel's `session: 2` plus a carrier-off window
+  between boxes is not sufficient on its own** — a second box arriving inside the persistence window
+  reads as empty. Options not yet tested: S1 (self-decays 500 ms–5 s even while powered, and a box
+  read is under a second so mid-box re-answering may not matter), or a Select forcing
+  inventoried → A at the start of each box (`SelC_Inventoried_S2` +
+  `SelCmd_Action.Mat_SLorA_NMat_no`). Bracket the real persistence before choosing.
 - **Ex10 fast mode was 14× *slower* than NORMAL on a sparse population.** Measured with 2 tags:
   NORMAL 16.0 callbacks/s, `IsFastRead=true` **1.1/s**. Fast mode is designed for dense populations,
   so this may well invert with a real 40-article box — but it means **fast mode must not be assumed
