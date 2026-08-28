@@ -71,11 +71,24 @@ swallow an app. Nesting the app repos would need submodules and is not what this
 |---|---|---|
 | `intelli-rfid-reader-test` | 8080 | A new reader arrives: is it good? Reads a few tags, writes a few tags, reports pass/fail |
 | `intelli-rfid-tunnel` | 8081 | Warehouse entry/exit tunnel. A box of ~40 tagged articles passes through; a third-party app asks what was in it. Also commissions warehouse tags |
+
 | `intelli-rfid-wayside` | 8082 | Trackside railway reader. A train passes; produce the consist |
 
 `intelli-rfid-core` is the shared library underneath all three.
 
 **The tunnel app is retail/warehouse. Only the wayside app is rail.** Do not conflate them.
+
+### Two API surfaces on the tunnel, and only one of them is the contract
+
+| Surface | What it is |
+|---|---|
+| **`/api/v1/**`** | **The customer contract.** Transcribed from `docs/Intelli-RFID-RestAPI.docx`, which has been issued to Reliance. Five endpoints, one result object, one error body, a fixed set of error slugs. Change it only with the document. |
+| `/api/inventory/**` | The diagnostic and bench surface. The reader-test client drives it and it is useful for exactly the debugging the v1 layer needs. **It is not the contract, must not appear in customer documentation, and must not be reshaped to match v1.** |
+
+The internal `CloseReason` enum has four values; the contract's `stopReason` has three and they are
+not the same three. **Map at the boundary** (`v1/ResultMapper`) rather than renaming the internal
+enum: the bench needs to know a session was closed by its caller, and the WMS was never told that
+such a thing exists.
 
 ## Stack
 
@@ -119,6 +132,22 @@ callback filters and offers; a single dispatcher thread does the fan-out. The qu
 
 Confirmed from `API-linux-java-v260721/docs_en/doc_API_J_html/` — grep those files rather than
 guessing at signatures.
+
+> **A return code from this SDK is a lower bound on success, not a confirmation.**
+>
+> `MT_OK_ERR` means the command was accepted, not that the module did what you asked. The measured
+> case is `MTR_PARAM_POTL_GEN2_TAGENCODING`, where RF modes 101, 111 and 115 are all accepted and
+> all silently become 107 — but treat the rule as general, because the next parameter that behaves
+> this way will not announce itself either. Where a silent failure would invalidate a measurement or
+> a customer-visible read, set the parameter and then read it back.
+>
+> `ReaderSession.applyConfig()` now does exactly that for the six that matter — **rf-mode, session,
+> target, Q, region and power** — and throws naming what was written and what came back. Those are
+> pushed once at start-up and on a deliberate config change, never per box, so the extra round trip
+> costs nothing. **Do not extend this to the per-read path**: carrier-on latency is 14 ms and a
+> blanket read-back would double the module round trips in the one place they are expensive.
+> Verified on the bench 2026-08-28: all six read back exactly what was written, including the
+> easily-doubted ones (`Q = -250`, meaning dynamic with initial Q 6, and the antenna power table).
 
 - **`TAGINFO` structs are recycled** between callbacks. Copy before the read leaves the callback.
 - **The byte-array argument to `WriteTagEpc` / `WriteTagData` / `GetTagData` is the access password**,
@@ -169,6 +198,29 @@ guessing at signatures.
   window starts missing the tag** and latency becomes an erratic multiple of the window (at 5 ms:
   min 28 ms, max 284 ms). 50 ms is a good default: first tag ~64 ms, tightly grouped. Callback rate
   follows the same law — ~1000/ReadDuration per second (50 ms → 16/s measured).
+- **FastID works, and it puts the TID inside `EpcId`, not in `EmbededData`.** Setting the custom
+  parameter `tagcustomcmd/fastid` to 1 makes every tag backscatter its 12-byte factory TID with its
+  EPC. The module does **not** use `TAGINFO.EmbededData` for it (that stays empty even with
+  `TMFlags.IsEmdData` set): it appends the TID to `EpcId` and grows the PC word to match — a 96-bit
+  EPC arrives as 24 bytes with PC going `0x3400` → `0x6400`. Split on the trailing 12 bytes
+  beginning with the **0xE2** allocation class, never on a fixed length: a tag that does not answer
+  FastID reports its EPC unchanged, and mixed stock is the normal case in a warehouse.
+  Verified across the whole bench population 2026-08-28: **18 of 18 EPCs identical with FastID off
+  and on**, including one tag whose EPC is genuinely 6 bytes (`PC=1D7A`, `Epclen=6`) rather than 12.
+  **Cost: about 25% of the raw read rate** — 80.7 → 60.6 reads/s on 18 tags at 30 dBm in NORMAL —
+  with unique-tag discovery unchanged at 18/18. Re-measure on a real box before assuming that holds
+  at 40 tags.
+- **FastID is a connect-time setting, not a per-request one, and this is a hard-won rule.**
+  Toggling it per read costs two inventory restarts, and four restarts inside thirty seconds made
+  the module raise `MT_HARDWARE_ALERT_ERR_BY_TOO_MANY_RESET (0xfefe: MODULE_NEED_RESTART)` and stop
+  reading. Set it once in `rfid.reader.fast-id` and let the API decide only whether to *render* the
+  TID. The same warning applies to anything else that wants to stop and start inventory per request.
+- **A read exception leaves the reader `FAULTED` and nothing brings it back.**
+  `ReaderSession.handleReadException` sets the state and stops reading; there is no reconnect. After
+  the `MODULE_NEED_RESTART` above, every v1 call answered `409 reader_not_connected` until the
+  application was restarted — which is the correct answer to give, but a field unit should recover
+  on its own. **Open, and not a v1 concern:** the connector thread retries only the *initial*
+  connect, not a fault after a successful one.
 - **Gen2 S2 plus a continuously-on carrier makes a static tag go silent after one read.** Measured:
   16.0 callbacks/s on S0 versus **0.1/s on S2**, same tag, same everything else. This is correct
   Gen2 behaviour — S2's inventoried flag persists while the tag is powered — but it means any
@@ -278,6 +330,30 @@ not configured or the evidence is split. A wrong direction on a consist is worse
 **Decoding never fails a read.** If the wagon-id rule does not match an EPC, the raw EPC is used and
 the sighting is marked `decoded: false`. Losing a wagon because its tag did not match a regex would
 be far worse than showing a hex string.
+
+**Tunnel v1 — what counts towards the expected quantity must agree exactly with what lands in
+`matched`.** Two rules over one population, and if they disagree the reader contradicts itself. The
+bug, and it shipped for an afternoon: with no `ean` requested, the count predicate accepted any EPC
+while `matched` accepted only EPCs that decode as SGTIN-96. A read with `expectedCount: 2` closed on
+count at 90 ms and reported `stopReason: COUNT_REACHED` with `matched.count: 0` — the reader saying
+it had found everything it was looking for and then listing none of it. `V1Service.countsTowardsExpected`
+and `ResultMapper` are now tested against the same population precisely so they cannot drift apart.
+
+**Tunnel v1 — an undecodable tag never counts.** However many there are. On the bench population 16
+of 18 tags carry no GS1 header at all, so a count that included them would close a carton on tags
+that are not articles of the requested SKU and report a short carton as complete.
+
+**Tunnel v1 — the carton is released before the callback is sent, never after.** The contract
+promises the WMS that "a slow or unavailable WMS endpoint does not stall the conveyor". If the
+release ever waits on the callback, the symptom at the customer's site is a stopped line — the most
+expensive failure this product has and the least obviously ours. `CartonRelease` exists as a named
+seam so the ordering is checkable in one line at the call site rather than being a thing that
+quietly does not happen anywhere.
+
+**Tunnel v1 — `timed: true` runs the whole of `durationMs` even when the count was reached.** It
+looks like a missed optimisation and it is not: the customer may be holding the carton for a
+deterministic period, and a read that finishes early leaves it in the field. Verified on the bench:
+count met at 189 ms, response returned at 3082 ms.
 
 ## Conventions
 
