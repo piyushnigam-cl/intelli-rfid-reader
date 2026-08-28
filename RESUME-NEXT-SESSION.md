@@ -93,25 +93,48 @@ module raise `MODULE_NEED_RESTART` and stop reading.
 
 ---
 
+## 3a. Super Fast is sensor-driven
+
+GPIO23 rising opens the read, GPIO24 rising ends it, and the count and settle are recorded rather
+than acted on. Stop reason: count not met is `PACKAGE_EXITED`; count met and settled is `SETTLED`;
+count met and still yielding is `COUNT_REACHED`. `endedAt` is the moment the count was met — not
+when the carton left — and `settledAt` is new. All three tested on hardware.
+
+**No sensors are wired.** The edges were produced by flipping the pins' internal pulls, which is a
+real edge as far as the kernel is concerned:
+
+```bash
+pinctrl set 23 ip pu && sleep 4 && pinctrl set 23 ip pd    # carton enters, dwells
+pinctrl set 24 ip pu && sleep 1 && pinctrl set 24 ip pd    # carton leaves
+```
+
+`gpiomon` holds the lines exclusively, so a probe on those pins while the app is running gets
+`Device or resource busy` — that is the app working, not a fault.
+
+**`stdbuf -oL` in front of `gpiomon` is load-bearing.** Without it every edge is detected and then
+sits in a 4 KB stdio buffer, and the tunnel silently never triggers. See CLAUDE.md.
+
 ## 4. Open, in rough priority order
 
 1. **Run the laptop's REST client** (§1) — the missing acceptance evidence.
 2. **Commission the tags** (§1) — needs a person, and an answer on write-14-or-16.
-3. **The four invented error slugs** — `invalid_mode`, `timed_required`, `expected_count_required`,
+3. **The document needs `PACKAGE_EXITED`, `settledAt` and the new `endedAt` semantics** —
+   §7a of the handoff lists them. The laptop is updating the `.docx`.
+4. **The four invented error slugs** — `invalid_mode`, `timed_required`, `expected_count_required`,
    `invalid_direction`. The `.docx` has no slug for a malformed body. They are the only slugs a
    caller can see that the customer has not been told about.
-4. **`ean` cannot always be an EAN-13.** The bench SKU is GTIN-14 `98905190881260` — indicator 9, a
+5. **`ean` cannot always be an EAN-13.** The bench SKU is GTIN-14 `98905190881260` — indicator 9, a
    variable-measure item. Confirmed in the read path now, not just the write path.
-5. **A faulted reader does not reconnect.** After a read exception the session stays `FAULTED` until
+6. **A faulted reader does not reconnect.** After a read exception the session stays `FAULTED` until
    the app restarts. The connector thread retries only the *initial* connect. A field unit nobody
    can walk up to should recover on its own.
-6. **The lock path has never touched a tag.** Implemented in full — write → verify → password →
+7. **The lock path has never touched a tag.** Implemented in full — write → verify → password →
    lock → confirm, `BANK1_LOCK` never `BANK1_PERM_LOCK`. Run it on a sacrificial tag before it goes
    near stock.
-7. **S2 persistence** — still parked, still unresolved, and now also the reason the bench cannot run
+8. **S2 persistence** — still parked, still unresolved, and now also the reason the bench cannot run
    the packaged config. Bracket at 20/30/45/60/120 s with `ProbeSettle`; also worth testing S1 and a
    Select forcing inventoried → A. *Ask before starting: about 30 minutes.*
-8. Everything else in `HANDOFF-LAPTOP-TO-CM4-TUNNEL-04.md` §3 — Select action control, `TAG_FILTER`
+9. Everything else in `HANDOFF-LAPTOP-TO-CM4-TUNNEL-04.md` §3 — Select action control, `TAG_FILTER`
    on-air vs post-filter, mixed-silicon FastID (needs a sourced NXP tag; there is no non-Impinj tag
    on this bench any more), TagFocus, the discovery curve.
 

@@ -221,6 +221,24 @@ guessing at signatures.
   application was restarted — which is the correct answer to give, but a field unit should recover
   on its own. **Open, and not a v1 concern:** the connector thread retries only the *initial*
   connect, not a fault after a successful one.
+- **A subprocess that prints to a pipe block-buffers, and libgpiod's `gpiomon` is the case that
+  will cost you an afternoon.** gpiomon writes through libc stdio, which line-buffers to a tty and
+  **block-buffers at 4 KB to a pipe**. Every edge is detected by the kernel, printed by gpiomon, and
+  then held in a buffer that on a conveyor will not fill for hours. Nothing reports an error; the
+  symptom is a tunnel that never triggers. Measured on this bench: three confirmed rising edges
+  through a plain pipe delivered **zero** bytes, and the same three under `stdbuf -oL` delivered
+  three lines. It looks exactly like missed edges, which is the wrong diagnosis and leads somewhere
+  expensive — polling instead of interrupts, which in a JVM with no GPIO binding means spawning a
+  process per poll and losing the kernel's edge timestamp. **Wrap any long-running CLI you read
+  incrementally in `stdbuf -oL`.** The one-shot form hides it: `--num-events=1` prints because the
+  process exits, and exiting flushes.
+- **`gpiomon` holds the lines exclusively.** A second one, or a `gpioget` on the same line, gets
+  `Device or resource busy` — so a probe run while the tunnel app is up will fail, and that failure
+  is a sign the app is working rather than a fault. Stop the app to probe the pins.
+- **Toggling a pin's internal pull is a real edge, which makes the sensors testable with no
+  wiring.** `pinctrl set 23 ip pu` lifts an unconnected input to 1 and `pinctrl set 23 ip pd`
+  returns it, and the kernel reports both to an edge monitor holding the line. That is how the
+  entry/exit sensors were exercised on a bench with nothing attached to GPIO23 or GPIO24.
 - **Gen2 S2 plus a continuously-on carrier makes a static tag go silent after one read.** Measured:
   16.0 callbacks/s on S0 versus **0.1/s on S2**, same tag, same everything else. This is correct
   Gen2 behaviour — S2's inventoried flag persists while the tag is powered — but it means any
@@ -349,6 +367,32 @@ release ever waits on the callback, the symptom at the customer's site is a stop
 expensive failure this product has and the least obviously ours. `CartonRelease` exists as a named
 seam so the ordering is checkable in one line at the call site rather than being a thing that
 quietly does not happen anywhere.
+
+**Tunnel v1 — in Super Fast Mode the sensors own the start and the end of a read, and the count
+and settle are observations rather than exits.** A rising edge on GPIO23 opens the session, a rising
+edge on GPIO24 closes it, and what had happened in between decides the stop reason:
+
+| by the time the carton left | `stopReason` |
+|---|---|
+| count met, population settled | `SETTLED` |
+| count met, still yielding tags | `COUNT_REACHED` |
+| count not met, whatever else | `PACKAGE_EXITED` |
+
+The order matters: a count that was never met is the finding, and a population that settled *short*
+of it does not soften that. `maxDurationMs` stays as the backstop for an exit sensor that never
+fires. With no sensors the mode falls back to opening on the first tag and closing on settle, which
+is not equivalent and is reported as `degraded` in `/api/v1/reader/status`.
+
+**Tunnel v1 — `endedAt` on a sensor-driven carton is when the count was met, not when the carton
+left.** The carton then sits in the field until the conveyor moves it, and reporting that later
+moment would inflate every duration by the dwell time. Measured on the bench: a carton read in
+600 ms and left the zone 4 s later. When the count was never met there is no such moment and
+`endedAt` is when it actually left.
+
+**Tunnel v1 — completeness is judged on the requested SKU, not on everything in the field.**
+`InventoryResult.matchingCount` is the number that matters; `tagCount` is everything that answered.
+Comparing the total logged a perfect carton as *"18 of 2 articles, NOT trustworthy"*, because 16 of
+the 18 bench tags are not GS1 at all.
 
 **Tunnel v1 — `timed: true` runs the whole of `durationMs` even when the count was reached.** It
 looks like a missed optimisation and it is not: the customer may be holding the carton for a
