@@ -159,6 +159,42 @@ guessing at signatures.
   module's actual channel plan.
 - **`GetHardwareDetails` reports `module=MODOULE_NONE`** (vendor's spelling) on a perfectly healthy
   module. Not an error.
+- **`BackReadOption.ReadDuration` is the latency knob, because the module batches callbacks.** A
+  tag is not reported when it is read — it is reported at the *end* of each read window. Measured on
+  the SIM7500: carrier-on → first tag = **ReadDuration + ~14 ms**, linear across 50/100/200/400 ms
+  (63.9 / 114.5 / 213.9 / 412.8 ms median). The irreducible floor is ~28 ms. **Below ~25 ms the
+  window starts missing the tag** and latency becomes an erratic multiple of the window (at 5 ms:
+  min 28 ms, max 284 ms). 50 ms is a good default: first tag ~64 ms, tightly grouped. Callback rate
+  follows the same law — ~1000/ReadDuration per second (50 ms → 16/s measured).
+- **Gen2 S2 plus a continuously-on carrier makes a static tag go silent after one read.** Measured:
+  16.0 callbacks/s on S0 versus **0.1/s on S2**, same tag, same everything else. This is correct
+  Gen2 behaviour — S2's inventoried flag persists while the tag is powered — but it means any
+  bench test that leaves the carrier on and uses S2 looks like a broken reader. It is also the
+  thing that makes the tunnel's carrier-off-between-boxes design necessary rather than merely
+  thermally convenient. Use S0 for continuous-carrier bench work; S2 belongs with triggered RF.
+- **Gen2 S2 inventoried flags persist for more than 15 s on our tag stock — carrier-off does not
+  clear them quickly.** Measured: with S2, a first read found all 18 tags; every subsequent read
+  found **zero**, at carrier-off gaps of both 4 s and 15 s. An S0 control at a 3 s gap read 18/18
+  every time, so it is S2 state and not the rig. The Gen2 spec's "≥2 s" is a *minimum*, and this
+  silicon holds far longer. **Consequence: the tunnel's `session: 2` plus a carrier-off window
+  between boxes is not sufficient on its own** — a second box arriving inside the persistence window
+  reads as empty. Options not yet tested: S1 (self-decays 500 ms–5 s even while powered, and a box
+  read is under a second so mid-box re-answering may not matter), or a Select forcing
+  inventoried → A at the start of each box (`SelC_Inventoried_S2` +
+  `SelCmd_Action.Mat_SLorA_NMat_no`). Bracket the real persistence before choosing.
+- **Ex10 fast mode was 14× *slower* than NORMAL on a sparse population.** Measured with 2 tags:
+  NORMAL 16.0 callbacks/s, `IsFastRead=true` **1.1/s**. Fast mode is designed for dense populations,
+  so this may well invert with a real 40-article box — but it means **fast mode must not be assumed
+  faster and must be measured against NORMAL on a real box before it is made the default.**
+- **The bench/product tags are Impinj.** 19 tags read: 18 are Impinj (MDID `0x001`, TMID `0x190`,
+  TID prefix `E2801190`), 1 is NXP (`0x006`). So FastID and Impinj fast mode are available on the
+  product stock. XTID is set on all of them, so each has a serialised factory TID — a unique per-tag
+  identifier independent of the EPC we write.
+- **Decoding a TID: the 12 bits after the `E2` allocation class are not all MDID.** Gen2v2 puts
+  three indicator bits on top — XTID `0x800`, Security `0x400`, File `0x200` — leaving a **9-bit
+  MDID**. Mask `0x1FF`, not `0x7FF`: a security-enabled NXP tag (raw `0xC06`) otherwise decodes as
+  an unknown `0x406` rather than `0x006`. Impinj tags decode correctly under either mask, so the
+  error hides in a small sample.
 - **A lambda field initializer cannot read a blank final field** before the constructor assigns it —
   hence the method references (`this::handleTags`) for the vendor listeners.
 
@@ -217,6 +253,12 @@ be far worse than showing a hex string.
   program** compiled against the vendor jar — open, do the work, exit, all inside one tool call. That
   is how the first tag read was obtained. If a server really is needed, start it and drive it within
   a single command, or ask the operator to run it in their own terminal.
+- **The tunnel app hard-fails startup if its spool directory is not writable.**
+  `JsonlSpool.initialise()` throws `UncheckedIOException` out of the `InventoryService` constructor,
+  which kills the Spring context — `AccessDeniedException: /var/lib/intelli` on a dev box. Create it
+  first (`deploy/install.sh` does, as user `intelli`). Worth questioning against this project's own
+  rule that a field unit should come up and report unhealthy rather than refuse to start: a spool
+  that cannot be written is a degraded reader, not an unusable one.
 - **Maven incremental compile goes stale.** After editing a core source file, `mvn install` can
   report success while apps still bundle the old class. Use `mvn clean install` on core after
   editing it. Verify with `javap -c -p -cp target/classes <Class>` when behaviour contradicts source.
