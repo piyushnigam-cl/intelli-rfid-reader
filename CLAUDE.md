@@ -132,7 +132,10 @@ guessing at signatures.
   `TagOperations.clearFilter()` exists for this; call it in a `finally`.
 - **Ex10 fast mode and Impinj fast mode are mutually exclusive and both sticky.** `ReaderSession`
   clears the other on every mode change; skipping that gives a reader whose behaviour depends on
-  what ran before it.
+  what ran before it. **Corrected 2026-08-28:** on the bench SIM7500 Impinj fast mode cannot be set
+  at all and Ex10 fast mode is refused (both below), so neither is actually stateful here. The
+  clearing logic is still right — the failure it guards against is simply not reachable on this
+  module.
 - **Single-tag operations cannot run during continuous inventory.** The `/api/tags/ops` endpoints
   stop and restart inventory around each call.
 - **`new Reader()` triggers the JNI library load** via `JniModuleAPI`'s static initialiser. This is
@@ -182,10 +185,60 @@ guessing at signatures.
   read is under a second so mid-box re-answering may not matter), or a Select forcing
   inventoried → A at the start of each box (`SelC_Inventoried_S2` +
   `SelCmd_Action.Mat_SLorA_NMat_no`). Bracket the real persistence before choosing.
-- **Ex10 fast mode was 14× *slower* than NORMAL on a sparse population.** Measured with 2 tags:
-  NORMAL 16.0 callbacks/s, `IsFastRead=true` **1.1/s**. Fast mode is designed for dense populations,
-  so this may well invert with a real 40-article box — but it means **fast mode must not be assumed
-  faster and must be measured against NORMAL on a real box before it is made the default.**
+- **RF mode IDs come in three numbering spaces, and `MTR_PARAM_POTL_GEN2_TAGENCODING` accepts two
+  of them.** Read `Reader$RFMODE` out of the vendor jar: `RFM_7_EX_SFM = 107` is the Silion E-series
+  profile space (100 + profile number), while `RFM_222_EX22 = -16776994 = 0xFF000000 | 222` carries
+  the hardware manual's own mode IDs under an `0xFF` tag byte. **A bare `222` is not manual mode
+  222.** Measured on the bench SIM7500 2026-08-28: of the eight values in `ReaderConfig`'s javadoc
+  only 103, 105, 107, 112 and 113 are accepted — **101, 111 and 115 are silently discarded**. All 13
+  ETSI LB mode IDs work when written as `0xFF000000 | id`.
+- **`ParamSet` on `MTR_PARAM_POTL_GEN2_TAGENCODING` returns `MT_OK_ERR` for every value, valid or
+  not** — 999 and 0 included — and **any unrecognised value silently snaps the module to 107**. 107
+  is a hard fallback, not the previously-set value: verified by parking on 105, 113 and EX22-222
+  first and writing junk over each. So `rf-mode: 222` in a config file lands on 107 with no error
+  anywhere. **Read the parameter back and compare — the return code carries no information.**
+- **`rfMode = 107` is manual ETSI LB mode 244**: 175 tags/s, −91.0 dBm, Miller M=4, Tari 20 µs, BLF
+  250 kHz. **Inferred from a read-rate fingerprint, not proven.** The 13 EX22 modes reproduced the
+  manual's declared rate ordering monotonically, and pairing each Silion profile back-to-back with
+  its suspected twin matched within 1–4% across five pairs (107↔244, 105↔241, 103↔222, 112↔223,
+  113↔285). Consistent with 107 = `0x6B` being the manual's Old Mode ID for the 146/244/343 triple.
+  The manual's mode table is an image, so it could not be cross-checked directly. **Consequence: 107
+  is *more* sensitive than mode 222 (−88.0 dBm), so moving the default to 222 would be a 3 dB
+  downgrade bought with speed a 40-tag box does not need.**
+- **`Reader/impinjfastmode` does not exist on this module.** `ParamGet` and `ParamSet` both return
+  `MT_INVALID_PARA` for every `IMPINJ_MODE_ID` — the FCC-only 4124 the code currently uses and the
+  ETSI LB alternatives alike — because the parameter *name* is rejected before the mode ID is ever
+  looked at. It appears nowhere in the vendor's documented custom-parameter list, and a read-only
+  sweep of all 33 documented names found no Impinj-mode parameter of any kind. **`readMode =
+  IMPINJ_FAST` therefore throws `ReaderException` → HTTP 409 on every call, and correcting the mode
+  ID cannot fix it.** What the vendor documents instead is one parameter with two modes, selected by
+  byte 0 of `Reader/Ex10fastmode`: `1` = Ex10 fast, `0` = "general fast mode" — the latter is most
+  likely what this project has been calling Impinj fast mode.
+- **`Reader/Ex10fastmode` byte 1 (= 20) is a payload length, not a mode constant.** The vendor demo
+  uses it as a loop bound over the 20 bytes following the 2-byte header of the 22-byte buffer
+  (`for (i = 0; i < vals[1]; i++) vals[2 + i] = ...`). **Do not "correct" it to `0x20`** — that
+  declares 32 trailing bytes in a 22-byte buffer. Measured: the module stores either value verbatim,
+  validates neither, and behaves identically for both. `values[2]` is the scenario byte ("0 more
+  tags, 1 less tags").
+- **Neither fast read mode works on this module — NORMAL is the only one worth shipping.** Measured
+  2026-08-28, 18 tags, 3 s windows, with `BackReadOption.IsFastRead = true`, which is the only
+  condition under which the Ex10 payload does anything:
+
+  | Config | `StartReading` | unique | reports/s |
+  |---|---|---|---|
+  | NORMAL control, `IsFastRead=false` | ok | 18 | 64.3 |
+  | `Ex10fastmode[0]=0` — "general fast mode" | ok | 18 | **18.0** |
+  | `Ex10fastmode[0]=1` — true Ex10 fast | **`MT_CMD_FAILED_ERR`** | 0 | 0.0 |
+
+  **True Ex10 fast mode is refused outright** — `StartReading` fails and zero tags are read, for byte
+  1 = 20 and `0x20` alike. Only the general fast mode runs, and it is **3.6× slower than NORMAL**.
+  The earlier "14× slower" figure (2 tags: NORMAL 16.0 callbacks/s vs 1.1/s) was this same general
+  fast mode, not Ex10 — same direction, less extreme with more tags. Fast mode is built for dense
+  populations so it could still invert on a real 40-article box, but on everything measured so far
+  **fast mode must not be assumed faster.** The module recovered cleanly after each refusal.
+- **`MTR_PARAM_POTL_GEN2_BLF` and `MTR_PARAM_POTL_GEN2_TARI` return `MT_OP_NOT_SUPPORTED`** — not
+  merely deprecated, absent. BLF, Tari, PIE and both modulations come bundled into the mode ID and
+  cannot be set independently.
 - **The bench/product tags are Impinj.** 19 tags read: 18 are Impinj (MDID `0x001`, TMID `0x190`,
   TID prefix `E2801190`), 1 is NXP (`0x006`). So FastID and Impinj fast mode are available on the
   product stock. XTID is set on all of them, so each has a serialised factory TID — a unique per-tag
@@ -265,3 +318,12 @@ be far worse than showing a hex string.
 - Site config lives in `/etc/intelli/<app>/application.yml` and overrides the packaged defaults.
 - The service user must be in the `dialout` group or the app starts and then fails to open the
   serial port — which looks exactly like a reader fault.
+- **Never conclude a setting took effect from its return code — read it back.** Two adjacent
+  parameter layers on this module have opposite failure signatures: `MTR_PARAM_CUSTOM` reports a bad
+  parameter name honestly (`MT_INVALID_PARA`), while `MTR_PARAM_POTL_GEN2_TAGENCODING` returns
+  `MT_OK_ERR` for anything at all and silently substitutes 107. `Probe2` does the read-back for
+  regions and `ProbeMode` for modes — copy that pattern.
+- **Check `GEN2_SESSION` before believing a low tag count.** A leftover `session = 2` from a previous
+  run, against tag stock whose S2 inventoried flags persist >15 s, reads exactly like a broken reader
+  or a missing tag. Found sticky at S2 on 2026-08-28 and briefly mistaken for a lost tag. Probes
+  should set session explicitly rather than inheriting whatever the last run left.
