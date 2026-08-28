@@ -30,3 +30,6 @@ target/
 .vscode/
 .DS_Store
 Thumbs.db
+
+# Word lock files - present while a .docx in docs/ is open
+~$*
