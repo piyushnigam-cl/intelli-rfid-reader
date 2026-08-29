@@ -1,10 +1,41 @@
 # Resume here — CM4 session, next sitting
 
-Written at the end of 2026-08-28. Everything below is measured on hardware unless it says otherwise.
+Written at the end of 2026-08-28, **updated 2026-08-29**. Everything below is measured on hardware
+unless it says otherwise.
 
 **Read `HANDOFF-CM4-TO-LAPTOP-TUNNEL-03.md` first** — it is the full build report for the `/api/v1`
 layer and it answers the laptop's five audit questions. This file is the short version plus what to
 do next.
+
+---
+
+## 0. What changed on 2026-08-29 — and the thing that changed the priorities
+
+**The project moved to production hardware.** Piyush is standing up the real unit: a **CM4 on our
+own IntelliRFID v2.x carrier**, with the SIM7500 soldered on (U20), instead of the vendor dev board.
+This bench — a Pi 4B plus the "Develop Component A" board — is now the *second* machine, not the
+only one.
+
+**`CM4-PRODUCTION-BRINGUP.md` is the runbook for that unit**, and it is the first thing to read if
+you are on the new CM4. Fresh flash → packages → UART → SDK → the four clones → build → site config
+→ systemd, each step with a verification line. Steps 1–6 are what is installed and working here;
+Step 7 onwards is read off `docs/Hardware-IntelliRFIDv2.md` and **has never been run against the
+v2.x board**.
+
+Its action box is the part that matters: **five things about that carrier the code does not handle**,
+each enough on its own to make a correctly installed unit read nothing — `RFID_EN` on GPIO22 leaves
+the module **off at boot**; the SIM7500 is **mono-static**, so `antenna-count` is 1 and both antennas
+sit behind an SP4T on GPIO8/9 that nothing drives; **GPIO23/24 are active-LOW field inputs** while
+`GpioEdgeMonitor` is hardcoded to rising edges; the power ceiling is **27 dBm**, not 30; and the
+antenna port must be selected **before** the reader is enabled. Region `RG_IN` is still unanswered
+on the new module and Step 8 answers it in thirty seconds.
+
+**Open item 6 is done: a faulted reader now reconnects on its own** (see §4.6). Verified on hardware
+against a real `IO_RECV_TIMEOUT`.
+
+Everything below this line was written about **this bench**. Where it says "the CM4" it means the
+Pi 4B, and a claim about wiring or pinout does not carry over to the carrier — see
+`docs/Hardware-IntelliRFIDv2.md`, which is authoritative for that board.
 
 ---
 
@@ -19,7 +50,9 @@ Managed Reading forms work, every documented error slug and status code checked.
 The priority change in `HANDOFF-LAPTOP-TO-CM4-TUNNEL-04.md` is done. The audit was folded into the
 build, as instructed.
 
-### The two things a next session should pick up first
+### The two things a next session should pick up first — on this bench
+
+(If you are on the **production CM4**, your list is `CM4-PRODUCTION-BRINGUP.md` instead.)
 
 **1. Run the laptop's REST client against this reader.** That is the acceptance evidence nobody has
 yet — it shares no code with the reader and checks every response against the `.docx`. Port 8081,
@@ -161,4 +194,5 @@ sits in a 4 KB stdio buffer, and the tunnel silently never triggers. See CLAUDE.
 
 ---
 
-*CM4 session, 2026-08-28.*
+*CM4 bench session, 2026-08-28; updated 2026-08-29 with the production bring-up and the
+fault-recovery fix.*
