@@ -215,12 +215,39 @@ guessing at signatures.
   the module raise `MT_HARDWARE_ALERT_ERR_BY_TOO_MANY_RESET (0xfefe: MODULE_NEED_RESTART)` and stop
   reading. Set it once in `rfid.reader.fast-id` and let the API decide only whether to *render* the
   TID. The same warning applies to anything else that wants to stop and start inventory per request.
-- **A read exception leaves the reader `FAULTED` and nothing brings it back.**
-  `ReaderSession.handleReadException` sets the state and stops reading; there is no reconnect. After
-  the `MODULE_NEED_RESTART` above, every v1 call answered `409 reader_not_connected` until the
-  application was restarted — which is the correct answer to give, but a field unit should recover
-  on its own. **Open, and not a v1 concern:** the connector thread retries only the *initial*
-  connect, not a fault after a successful one.
+- **A read exception used to leave the reader `FAULTED` forever. Fixed 2026-08-29 —
+  `ReaderService`'s supervisor thread now reconnects.** `handleReadException` still only records the
+  fault (it runs on the vendor's read thread, and reopening the reader from inside its own exception
+  handler means re-entering the native library while it is unwinding); a separate `rfid-supervise`
+  thread watches for it and does the work. It closes, reopens, and restarts inventory **if inventory
+  had been running** — `ReaderSession.wasReadingWhenFaulted()`, captured at fault time because by
+  recovery time the previous state is gone.
+
+  Two things about it are load-bearing and neither is obvious:
+
+  **The backoff does not reset on a successful reconnect, only after the reader has stayed up for
+  `recover-stable-ms`.** Reconnecting costs a module re-init, and re-initialising repeatedly is
+  itself a way to break this module — four inventory restarts inside thirty seconds produced
+  `MODULE_NEED_RESTART`. A reader that faults, recovers and faults again must not be handed the
+  short delay again. `FaultRecoveryPolicy` holds that rule and is unit-tested.
+
+  **Recovery is a latch, not a state observation.** A *failed* attempt does not leave the session
+  FAULTED: `open()` throws out of `InitReader` before the block that sets FAULTED, so the state is
+  whatever the preceding `close()` left — **CLOSED**. Watching for FAULTED alone therefore gives up
+  after exactly one attempt, and CLOSED is indistinguishable from an operator's deliberate
+  disconnect. Measured on the bench with the reader's RX pin de-muxed. The supervisor raises a
+  `recovering` flag on the fault and lowers it only when the reader is genuinely OPEN/READING, or
+  when `connect()`/`disconnect()` says an operator has taken over.
+
+  Verified on hardware 2026-08-29 with a real `IO_RECV_TIMEOUT`: five failed attempts backing off
+  5→10→20→40→60 s while the module was unreachable, recovery with inventory restarted the moment it
+  was reachable again, and a second fault a minute later recovered in 5.5 s on the reset delay.
+  `recoveries` and `lastRecoveryAt` are on `/api/reader/status` and `/actuator/health` — a count that
+  climbs steadily is a reader that keeps breaking, which each recovery would otherwise hide.
+
+  **Inject this fault without touching the wiring:** `pinctrl set 15 ip pd` de-muxes RXD0, so the
+  module's replies stop reaching the Pi and the vendor library raises a genuine read exception within
+  seconds. `pinctrl set 15 a0 pu` puts it back.
 - **A subprocess that prints to a pipe block-buffers, and libgpiod's `gpiomon` is the case that
   will cost you an afternoon.** gpiomon writes through libc stdio, which line-buffers to a tty and
   **block-buffers at 4 KB to a pipe**. Every edge is detected by the kernel, printed by gpiomon, and

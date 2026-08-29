@@ -414,10 +414,12 @@ journalctl -u intelli-rfid-tunnel -f
 
 Two caveats worth knowing before you enable this:
 
-- **`Restart=on-failure` is the only fault recovery this unit has.** After a read exception the
-  session goes `FAULTED` and stays there until the process restarts — the connector thread retries
-  only the *initial* connect. Auto-reconnect is open item 6 in `RESUME-NEXT-SESSION.md`; until it
-  lands, the service restart is the recovery path, and it costs a reader re-init.
+- **The app reconnects itself after a read exception** (added 2026-08-29): an `rfid-supervise`
+  thread closes, reopens and restarts inventory, backing off 5→10→20→40→60 s while the module is
+  unreachable. So `Restart=on-failure` here covers the JVM dying, not the module glitching. Watch
+  `recoveries` in `/actuator/health`: a count that climbs steadily is a reader that keeps breaking,
+  and on this board the first thing to suspect is `RFID_EN` — recovery cannot help a module that
+  has been switched off underneath it.
 - The jar path is versioned. It changes when the version does.
 
 ---

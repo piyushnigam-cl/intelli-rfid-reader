@@ -125,9 +125,14 @@ sits in a 4 KB stdio buffer, and the tunnel silently never triggers. See CLAUDE.
    caller can see that the customer has not been told about.
 5. **`ean` cannot always be an EAN-13.** The bench SKU is GTIN-14 `98905190881260` — indicator 9, a
    variable-measure item. Confirmed in the read path now, not just the write path.
-6. **A faulted reader does not reconnect.** After a read exception the session stays `FAULTED` until
-   the app restarts. The connector thread retries only the *initial* connect. A field unit nobody
-   can walk up to should recover on its own.
+6. ~~**A faulted reader does not reconnect.**~~ **Done 2026-08-29.** `ReaderService` now runs an
+   `rfid-supervise` thread that closes, reopens and restarts inventory after a fault, with a backoff
+   that only resets once the reader has stayed up for a minute. Verified on hardware against a real
+   `IO_RECV_TIMEOUT` (de-mux RXD0 with `pinctrl set 15 ip pd` to reproduce): five failed attempts
+   backing off 5→10→20→40→60 s, recovery as soon as the module was reachable, second fault recovered
+   in 5.5 s. `recoveries`/`lastRecoveryAt` on `/api/reader/status` and `/actuator/health`.
+   See `CLAUDE.md` for the two non-obvious parts (why the backoff does not reset on reconnect, and
+   why recovery is a latch rather than a state observation).
 7. **The lock path has never touched a tag.** Implemented in full — write → verify → password →
    lock → confirm, `BANK1_LOCK` never `BANK1_PERM_LOCK`. Run it on a sacrificial tag before it goes
    near stock.
