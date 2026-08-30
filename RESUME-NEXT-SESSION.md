@@ -61,10 +61,10 @@ yet — it shares no code with the reader and checks every response against the 
 callback.
 
 **2. Commission the bench tags — this needs a person.** Gen2 cannot address "the next unwritten
-tag", so someone has to present tags **one at a time**. Nothing has been written. The register that
-must exist first does now: `apps/intelli-rfid-tunnel/tools/bench-tag-register.jsonl`, keyed on TID,
-18 tags, all Impinj, 2 of 18 with a valid GS1 header. Read `bench-tag-register.md` beside it — it
-carries one open question (write 14 or 16) that the laptop has not answered yet.
+tag", so someone has to present tags **one at a time**. All 18 tags were written on 2026-08-29. The
+register — `apps/intelli-rfid-tunnel/tools/bench-tag-register.jsonl`, keyed on TID, 18 tags, all
+Impinj — is therefore stale in its EPC column and needs re-probing; the TID keying survives, which
+is why it was keyed that way. Read `bench-tag-register.md` beside it.
 
 ---
 

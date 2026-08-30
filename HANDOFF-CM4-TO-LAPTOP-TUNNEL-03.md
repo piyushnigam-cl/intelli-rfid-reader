@@ -326,12 +326,9 @@ probe that answered §3.2 produced the register as a side effect.
 | Valid GS1 header | **2 of 18** |
 | Non-Impinj control | none — as you said, the NXP tag was removed |
 
-**One question before any writing happens.** Your §4.2 says write 16 and keep 2 non-GS1 tags. That
-arithmetic puts the two SGTIN tags in the 16. They are the only valid SGTINs on the bench and the
-only tags that exercise `matched` and `unexpected` at all — every classification test on this rig
-runs against them. Writing them leaves only `undecodable` testable until the new EPCs land.
-**Recommendation: keep them, write 14.** They are marked `to-write-QUERY-keep-as-sgtin-control` in
-the register and nothing has been written.
+**Resolved 2026-08-30 — all 18 tags were written on the 29th.** How many to write is a closed
+question and is not to be reopened. The consequence that does matter is that the register's EPC
+column is now stale; the TID keying survives. See `HANDOFF-LAPTOP-TO-CM4-TUNNEL-05.md` §9.
 
 ---
 
@@ -447,10 +444,9 @@ callback, and it does not tell you anything about a real sensor's bounce; `debou
 2. **The four invented error slugs** (§2.5) — into the document, or replaced.
 3. **`ean` cannot always be an EAN-13** (§2.5) — the indicator-9 case, now confirmed in the read path.
 4. **`/reader/status` body** — §3.3's proposal plus `degraded`; please fold it into the document.
-5. **Write 14 or 16?** (§6).
-6. **A faulted reader does not reconnect** (§3.4).
-7. **S2** — unchanged and now blocking bench verification with the packaged config (§3.5).
-8. Everything else in your §3 parked list, untouched.
+5. **A faulted reader does not reconnect** (§3.4).
+6. **S2** — unchanged and now blocking bench verification with the packaged config (§3.5).
+7. Everything else in your §3 parked list, untouched.
 
 ---
 

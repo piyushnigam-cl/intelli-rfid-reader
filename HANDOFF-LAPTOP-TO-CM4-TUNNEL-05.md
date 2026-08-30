@@ -182,56 +182,70 @@ Not on the first tag seen. Not on a timer. Not on the module's own trigger. The 
 straight from the optical sensor at the zone entry, in real time — that edge is the carton arriving,
 and it is the only thing that is.
 
-### 3.3 Close and publish on **whichever comes first**
+### 3.3 The carton sequence, exactly
 
-This is the change. Today, count and settle "no longer close anything — they are recorded as they
-happen and reported". **That is now wrong.** The read closes and the JSON is published to the WMS on
-the first of these to occur:
+This is the change, and it is specified step by step so there is nothing to infer.
 
-| # | Condition | `stopReason` |
-|---|---|---|
-| 1 | The expected count is met | `COUNT_REACHED` |
-| 2 | The population settles — no new distinct tag for the settle interval | `SETTLED` |
-| 3 | **Rising edge on IN2** | `PACKAGE_EXITED` |
-| 4 | The read budget expires | `TIMEOUT` |
+1. **Start reading on a rising edge on IN1.**
+2. **Note the time the expected count was first reached.** Record it. Do **not** close on it.
+3. **Note the time the tag count settled** — no new distinct tag for the settle interval. Record it.
+4. **If IN2 has not gone high by then, the settle closes the carton.** Publish the callback with
+   `stopReason: SETTLED`.
+5. **If IN2 goes high before the population has settled, the exit edge closes the carton.** Publish
+   with `stopReason: PACKAGE_EXITED`.
+6. **Whether the count was as expected is reported the same way either way.** It is computed from
+   the matching count against `expectedCount` and nothing else.
 
-Whichever fires first wins, the window closes there, and the result goes out immediately. Do not
-wait for the carton to leave once the count is satisfied.
+So: **settle and the exit edge are the only two things that close a carton**, and whichever happens
+first is the one that closes it and names the stop reason. A read budget expiring stays as the
+backstop for a carton that neither settles nor leaves — `TIMEOUT`, as now.
 
-**Publish once per carton.** When condition 1 or 2 closes a carton, the IN2 edge that follows for
-that same carton is consumed and discarded — it must not produce a second callback, and it must not
-open a new window. Only an IN1 edge opens a window.
+| What closed the carton | `stopReason` |
+|---|---|
+| The population settled, IN2 not yet seen | `SETTLED` |
+| IN2 rising edge, population had not settled | `PACKAGE_EXITED` |
+| Neither, and the read budget expired | `TIMEOUT` |
 
-`endedAt` is the moment the window actually closed, by whichever condition closed it. `settledAt`
-stays as you built it — present when the population stopped growing, absent when it never did.
+> **`COUNT_REACHED` does not occur in Super Fast Mode.** Reaching the count is an observation with a
+> timestamp, not an ending. The enum value stays — managed reading still closes on count and still
+> reports it — but nothing in the Super Fast path may emit it. This is a correction to what I told
+> you in my previous draft of this section; step 2 above is the authority.
 
-**In the code this is `V1Service.superFastSpec()`.** Today it computes `boolean sensorOwnsTheEnd =
-gpio.isWatching()` and passes `!sensorOwnsTheEnd` for both `exitOnCount` and `exitOnSettle`, so with
-sensors present both are false and only the exit edge closes. **Both should now be true regardless
-of whether the sensors are watching** — the exit edge becomes one of four close conditions rather
-than the only one. `sensorOwnsTheEnd` stops being a thing; the sensor owns the *latest possible* end,
-not the end.
+**Step 6 is the part most likely to be got subtly wrong, so to be explicit:** `complete` and
+`stopReason` are independent. A carton that settled with 18 of 20 is `SETTLED` with
+`complete: false`. A carton that reached 20 of 20 and then left before settling is
+`PACKAGE_EXITED` with `complete: true`. Neither reason implies anything about the count, and the
+count implies nothing about the reason. Do not let one soften or override the other.
 
-Two consequences to work through rather than assume:
+**Publish once per carton.** When the settle closes a carton, the IN2 edge that follows for that
+same carton is consumed and discarded — no second callback, and no new window. Only an IN1 edge
+opens a window.
 
-- **`SessionSpec`'s javadoc for `exitOnCount` and `exitOnSettle` becomes wrong.** It currently says
-  they are false "when an exit sensor decides the end of the read". Fix the prose in the same
-  commit — that javadoc is the only place the policy is written down.
-- **`ResultMapper`'s stop-reason precedence needs re-deriving.** Your §7a ordering was built for a
-  world where everything was observed and then judged at the exit: count-not-met beat everything,
-  and a population that settled short still reported `PACKAGE_EXITED`. Now the reason should be
-  **what actually closed the window**. A carton that settles short of its count now closes on
-  settle, and I think that is `SETTLED` with `complete: false` rather than `PACKAGE_EXITED` — the
-  carton had not left. Your call on the mapping, but it is a real decision and not a mechanical
-  follow-on; say which way you went and why.
+`endedAt` is the moment the window actually closed. `settledAt` stays as you built it. The
+count-met moment from step 2 needs somewhere to live — see §6.
 
-> **Consequence worth being awake to, and it is deliberate.** Publishing on count-met means we stop
-> looking while the carton is still in the field. If `expectedCount` is understated for a carton,
-> we will report `complete: true` and roll extra articles past unseen. That is the accepted
-> trade — the count comes from the WMS and is the WMS's statement about the carton — but it means
-> `expectedCount` is now load-bearing in a way it was not when IN2 closed everything. If you find a
-> path where `expectedCount` can be absent in Super Fast Mode, that path needs to fall through to
-> condition 2 or 3 rather than closing on a count it does not have.
+**In the code this is one boolean in `V1Service.superFastSpec()`.** It computes
+`boolean sensorOwnsTheEnd = gpio.isWatching()` and passes `!sensorOwnsTheEnd` for both `exitOnCount`
+and `exitOnSettle`, so with sensors present both are false and only the exit edge closes.
+
+- `exitOnCount` stays **false**. The count does not close anything — step 2.
+- `exitOnSettle` becomes **true**, unconditionally. Settle closes — step 4.
+
+That is the whole change to the close policy. `sensorOwnsTheEnd` no longer describes anything true:
+the sensor owns the *latest possible* end, not the end.
+
+Two follow-ons that are not mechanical:
+
+- **`SessionSpec`'s javadoc for `exitOnSettle` becomes wrong.** It says settle is false "when
+  something else owns the end of the read — a fixed duration, or the carton physically leaving the
+  zone". The carton leaving no longer suppresses settle. Fix the prose in the same commit; that
+  javadoc is the only place this policy is written down in the code.
+- **`ResultMapper`'s stop-reason precedence must be re-derived from step 6.** Your §7a ordering was
+  built for a world where everything was observed and judged at the exit — count-not-met beat
+  everything, and a population that settled short still reported `PACKAGE_EXITED`. That ordering is
+  now wrong twice over: the reason is **what closed the window**, and the count is reported
+  separately and never changes the reason. A carton that settles short of its count is `SETTLED`
+  with `complete: false`.
 
 ### 3.4 The fallback when no edges arrive
 
@@ -318,18 +332,21 @@ grows past ~50 s, that is an interface problem, not just a slow boot.
 
 ## 6. What this changes in the API document
 
-`docs/Intelli-RFID-RestAPI.docx` still does not describe Super Fast Mode as built, and §3.3 above
-changes one of the four items you asked for. Updated list — I will make these changes:
+`docs/Intelli-RFID-RestAPI.docx` still does not describe Super Fast Mode as built, and §3.3 changes
+what it needs to say. Updated list — I will make these changes:
 
-1. **`PACKAGE_EXITED`** as a fourth `stopReason`. Still needed. It now means the carton left with
-   the count unmet *and* the population not settled, which is a narrower and more useful statement
-   than before.
+1. **`PACKAGE_EXITED`** as a fourth `stopReason`. Still needed. Under §3.3 it means precisely: the
+   carton left before the population settled. It says nothing about the count.
 2. **`settledAt`** in the result object. Unchanged.
-3. **`endedAt`** — now simply "when the read window closed", by whichever of the four conditions
-   closed it. The special Super-Fast meaning you documented in §7a goes away, because count-met now
-   closes the window rather than being recorded inside it. **This is simpler than what you built
-   and it removes a mode-specific semantic from the contract — flag it if you disagree.**
-4. **The two-sensor assumption**, and the `degraded` fallback.
+3. **`countReachedAt`** — a new field, and the home for step 2 of §3.3. The moment the expected
+   count was first met, absent when it never was. It cannot ride on `endedAt` any more, because
+   reaching the count no longer ends anything. **Name it whatever reads best beside `settledAt` and
+   tell me; I will document what you build.**
+4. **`endedAt`** — now simply "when the read window closed", by whichever of settle, exit edge or
+   budget closed it. The mode-specific meaning you documented in §7a goes away.
+5. **`stopReason` and `complete` are independent**, stated explicitly in the document. The WMS
+   branches on `stopReason` and it must not infer the count from it — §3.3 step 6.
+6. **The two-sensor assumption**, and the `degraded` fallback.
 
 Plus the four invented error slugs from your §2.5 (`invalid_mode`, `timed_required`,
 `expected_count_required`, `invalid_direction`) — going in as documented values.
@@ -344,9 +361,11 @@ path; it says nothing about a real beam's bounce.
 | # | Test | Pass |
 |---|---|---|
 | 1 | IN1 edge opens a read | Window opens on the edge, not on the first tag |
-| 2 | Count met before IN2 | Closes and publishes immediately, `COUNT_REACHED`, IN2 edge afterwards produces **no second callback** |
-| 3 | Settle before IN2 | Closes and publishes, `SETTLED`, `settledAt` present |
-| 4 | IN2 before either | Closes and publishes, `PACKAGE_EXITED`, `complete: false` |
+| 2 | Count met, then settle, then IN2 | Closes on **settle**, `SETTLED`, both the count-met time and `settledAt` present, `complete: true`. The later IN2 edge produces **no second callback** |
+| 3 | Count met, then IN2, never settled | Closes on **IN2**, `PACKAGE_EXITED`, **`complete: true`** — the count was met and the reason does not soften it (§3.3 step 6) |
+| 4 | Settled short of the count, no IN2 | Closes on **settle**, `SETTLED`, `complete: false`. Must **not** report `PACKAGE_EXITED` — the carton had not left |
+| 4b | Neither count nor settle, then IN2 | `PACKAGE_EXITED`, `complete: false` |
+| 4c | Any Super Fast carton | `COUNT_REACHED` **never appears**. If it does, `exitOnCount` got flipped |
 | 5 | Two cartons back to back | Two callbacks, two sequence numbers, no window opened by an IN2 edge. `onCartonLeft` already returns early when `activeSession()` is empty, so this should pass unchanged — confirm it rather than assume it |
 | 6 | RESULT pulse width | Scope or log the achieved width on OUT5 over 100 cartons. **Every** pulse inside 400–600 or 60–200 ms. Report the spread — that number decides whether the encoding survives a loaded JVM |
 | 7 | Verdict before next ZONE_ARRIVE | At the shortest carton pitch you can produce, the pulse completes before the next IN1 edge |
@@ -378,12 +397,18 @@ instead of 500 ms fails as a **silent wrong answer** at the customer.
 
 Nothing on the interface. The vendor document is closed.
 
-Two things still owed to you from earlier handoffs, which I have not forgotten and which are not
-blocked by any of the above:
+One thing still owed to you: the API document changes in §6 above.
 
-1. **Write 14 or 16?** — your handoff-03 §6. My answer is 14: keep the two valid SGTIN tags as
-   `matched` / `unexpected` controls. Confirming so you can proceed.
-2. The API document changes in §6 above.
+**And one fact that changes your bench, which is not a question.** All 18 tags were written on
+2026-08-29. Nothing was held back as a control and nothing is in a `to-write` state, so the
+`role` values in `bench-tag-register.jsonl` are a record of what was planned on the 28th rather than
+the state of the rig, and every EPC in it is stale — **re-probe before relying on it.** The TID
+keying survives, which is the reason it was keyed that way.
+
+The population's mix of decodable and undecodable EPCs has therefore changed, so any test that
+assumed "2 of 18 valid GS1" needs its assumption re-checked against what is actually on the tags.
+When a particular mix is wanted for a classification test, the tags will be rewritten in the format
+that test needs. How many tags to write is a closed question and is not to be raised again.
 
 ---
 
