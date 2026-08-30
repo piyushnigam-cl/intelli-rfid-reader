@@ -12,6 +12,10 @@ has already been told what the reader does.
 There is one deliberate behaviour change on top of the interface, in §3. Read that first if you read
 nothing else: **Super Fast Mode's close condition changes.**
 
+There is also one new endpoint to build, in §5a — `/api/v1/diagnostics/io`. The admin interface's
+PLC I/O tab is already written against it and returns a clear "this reader build does not have it
+yet" until it lands.
+
 ---
 
 ## 0. Document authority — and a stale design note you must stop trusting
@@ -364,6 +368,127 @@ grows past ~50 s, that is an interface problem, not just a slow boot.
 
 ---
 
+## 5a. `/api/v1/diagnostics/io` — the endpoint the admin interface now calls
+
+**New endpoint, and the admin interface's PLC I/O tab is already built against it.** It exists so the
+panel wiring can be proven against the vendor's ladder without a carton, a conveyor or a tag: read
+every channel, drive an output, watch it appear on their PLC's input indicator.
+
+### 5a.1 Read
+
+`GET /api/v1/diagnostics/io` · scope **ADMIN** · always safe, never changes a pin.
+
+```json
+{
+  "readAt":   "2026-08-30T10:16:00.362Z",
+  "armed":    false,
+  "writable": true,
+  "inputs": [
+    { "channel": "IN1", "pin": 9,  "bcm": 23, "function": "ZONE_ARRIVE",      "level": "LOW" },
+    { "channel": "IN2", "pin": 10, "bcm": 24, "function": "ZONE_EXIT",        "level": "LOW" },
+    { "channel": "IN3", "pin": 11, "bcm": 18, "function": "SHUTDOWN_REQUEST", "level": "LOW" },
+    { "channel": "IN4", "pin": 12, "bcm": 25, "function": null,               "level": "LOW" }
+  ],
+  "outputs": [
+    { "channel": "OUT1", "pin": 1, "bcm": 26, "function": "SPEED0",    "level": "LOW" },
+    { "channel": "OUT2", "pin": 2, "bcm": 20, "function": "SPEED1",    "level": "LOW" },
+    { "channel": "OUT3", "pin": 3, "bcm": 16, "function": "SPEED2",    "level": "LOW" },
+    { "channel": "OUT4", "pin": 4, "bcm": 19, "function": "DIRECTION", "level": "LOW" },
+    { "channel": "OUT5", "pin": 5, "bcm": 21, "function": "RESULT",    "level": "LOW" },
+    { "channel": "OUT6", "pin": 6, "bcm": 12, "function": "HEARTBEAT", "level": "HIGH" },
+    { "channel": "OUT7", "pin": 7, "bcm": 13, "function": null,        "level": "LOW" }
+  ]
+}
+```
+
+> ### `level` is the FIELD sense, not the GPIO level
+>
+> `HIGH` means **the channel is asserted at the J26 connector** — what an electrician measuring at
+> the terminal block sees, and what the PLC sees.
+>
+> Inputs are inverted at the GPIO (`Hardware-IntelliRFIDv2.md` §3): field-asserted reads as GPIO
+> low. **Do that inversion inside the reader and report the field sense here.** If this endpoint
+> reports raw GPIO, then the screen, the vendor's drawing and the multimeter all disagree with each
+> other, and the person holding the multimeter is the one who is right.
+>
+> This is the single most likely thing to get wrong in this endpoint, and it will look like working
+> software until someone is on a ladder at the tunnel.
+
+`bcm` is there for our own debugging and can be omitted if you would rather not publish it; `pin`
+and `function` are what the screen shows beside each row. `function` is `null` for the two parked
+channels.
+
+### 5a.2 Apply
+
+`POST /api/v1/diagnostics/io` · scope **ADMIN**
+
+```json
+{ "outputs": { "OUT1": "HIGH", "OUT2": "LOW", "OUT3": "HIGH", "OUT4": "HIGH",
+               "OUT5": "LOW",  "OUT6": "LOW", "OUT7": "LOW" } }
+```
+
+Apply the levels, then **read every channel back** and return exactly the §5a.1 shape. The screen
+shows the reader's own read-back, never what it asked for, so that a channel that refuses to move
+shows up as a mismatch rather than as a lie.
+
+- The admin interface sends **all seven** outputs every time, so an Apply is a complete statement of
+  intent. Still, treat a partial object as "leave the omitted channels alone" rather than rejecting
+  it — a curl from a bench is a legitimate caller.
+- An unknown channel name is a `400`. Silently ignoring it would let a typo look like success.
+- `OUT7` is writable **here** even though it is parked in normal running. It is a real wired core to
+  a spare terminal, and being able to prove continuity on it is the whole point of a wiring screen.
+  Parked means the application never drives it, not that it is dead.
+
+### 5a.3 The interlock: refuse writes while armed
+
+**`POST` returns `409` when Super Fast Mode is armed.**
+
+```json
+{ "error": "reader_armed",
+  "message": "Output writes are refused while Super Fast Mode is armed. Disarm first." }
+```
+
+The tunnel's own arming state is the interlock, so there is nothing extra for anyone to remember to
+switch off. Reasoning, since the rule is worth understanding rather than just implementing:
+
+- **OUT1–3 are the conveyor speed bits.** A diagnostic write during a live run commands a real
+  speed. Whatever the ladder does next is not something we get to take back.
+- **A write while the application is driving the same pin is a fight nobody wins.** The application
+  sets SPEED for a carton, the diagnostic write overrides it, the next carton sets it again — and
+  the screen shows a level that was true for fifty milliseconds. Refusing is honest; racing is not.
+- **`GET` is never refused.** Reading a live tunnel is exactly what you want to do when something
+  looks wrong, and it cannot disturb anything. `armed: true` in the body tells the screen why the
+  Apply button will fail, before it is pressed.
+
+The admin interface renders that 409 as *"disarm on the WMS API v1 tab first"* rather than as a raw
+status, so the operator is told what to do rather than what went wrong.
+
+### 5a.4 What the screen does with the answer
+
+Built and tested against a stub that returns exactly the shapes above:
+
+| Reader says | Screen shows |
+|---|---|
+| `200` | pill green, `read ok` / `applied and read back`, timestamp, all lamps updated |
+| `409 reader_armed` | pill red, *disarm on the WMS API v1 tab first*, plus an `armed` badge |
+| `404` | pill red, *this reader build has no `/api/v1/diagnostics/io` yet* — the expected state until you build it |
+| `401` / `403` | pill red, *the key in the header lacks ADMIN scope* |
+| `502` / no answer | pill red, *reader unreachable* |
+
+It also decodes OUT1–3 into a speed value and OUT4 into FORWARD / REVERSE, using the vendor's own
+rules — OUT1 as LSB, 000 as stop. **A crossed pair of speed cores shows up there as the wrong
+number** rather than as a conveyor doing something unexpected on site, which is the cheapest place
+to find that particular mistake.
+
+### 5a.5 Scope
+
+`ADMIN`, not `INVENTORY`. This endpoint can move a conveyor; an inventory key should not reach it.
+`ScopeRules` needs the entry — and note that a missing entry falls through to default-deny ADMIN,
+which happens to be right here, but relying on a default for a channel that drives machinery is not
+something to leave implicit. Add it explicitly.
+
+---
+
 ## 6. What this changes in the API document
 
 `docs/Intelli-RFID-RestAPI.docx` still does not describe Super Fast Mode as built, and §3.3 changes
@@ -412,6 +537,9 @@ path; it says nothing about a real beam's bounce.
 | 10 | Shutdown ordering | Heartbeat still toggling at steps 1–5, goes low only after the serial counter is committed. **Verify by log timestamps, not by assertion** |
 | 11 | Shutdown budget | Whole sequence completes inside 60 s with a full spool and a write in flight |
 | 12 | Boot | SPEED = 000 from power-on through to application ready |
+| 13 | `/api/v1/diagnostics/io` field sense | Assert IN1 from the PLC and confirm the endpoint reports `HIGH`, not `LOW`. This is the inversion trap in §5a.1 |
+| 14 | Diagnostic write | Set OUT4 HIGH from the admin PLC I/O tab, confirm the vendor's X4 indicator lights, and confirm the read-back says `HIGH` |
+| 15 | Interlock | Arm Super Fast, then Apply from the same tab. Expect `409 reader_armed`, and confirm no pin moved |
 
 Test 6 is the one I would not skip. Everything else fails loudly; a verdict pulse that is 380 ms
 instead of 500 ms fails as a **silent wrong answer** at the customer.
