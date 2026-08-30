@@ -1,10 +1,41 @@
 # Resume here — CM4 session, next sitting
 
-Written at the end of 2026-08-28. Everything below is measured on hardware unless it says otherwise.
+Written at the end of 2026-08-28, **updated 2026-08-29**. Everything below is measured on hardware
+unless it says otherwise.
 
 **Read `HANDOFF-CM4-TO-LAPTOP-TUNNEL-03.md` first** — it is the full build report for the `/api/v1`
 layer and it answers the laptop's five audit questions. This file is the short version plus what to
 do next.
+
+---
+
+## 0. What changed on 2026-08-29 — and the thing that changed the priorities
+
+**The project moved to production hardware.** Piyush is standing up the real unit: a **CM4 on our
+own IntelliRFID v2.x carrier**, with the SIM7500 soldered on (U20), instead of the vendor dev board.
+This bench — a Pi 4B plus the "Develop Component A" board — is now the *second* machine, not the
+only one.
+
+**`CM4-PRODUCTION-BRINGUP.md` is the runbook for that unit**, and it is the first thing to read if
+you are on the new CM4. Fresh flash → packages → UART → SDK → the four clones → build → site config
+→ systemd, each step with a verification line. Steps 1–6 are what is installed and working here;
+Step 7 onwards is read off `docs/Hardware-IntelliRFIDv2.md` and **has never been run against the
+v2.x board**.
+
+Its action box is the part that matters: **five things about that carrier the code does not handle**,
+each enough on its own to make a correctly installed unit read nothing — `RFID_EN` on GPIO22 leaves
+the module **off at boot**; the SIM7500 is **mono-static**, so `antenna-count` is 1 and both antennas
+sit behind an SP4T on GPIO8/9 that nothing drives; **GPIO23/24 are active-LOW field inputs** while
+`GpioEdgeMonitor` is hardcoded to rising edges; the power ceiling is **27 dBm**, not 30; and the
+antenna port must be selected **before** the reader is enabled. Region `RG_IN` is still unanswered
+on the new module and Step 8 answers it in thirty seconds.
+
+**Open item 6 is done: a faulted reader now reconnects on its own** (see §4.6). Verified on hardware
+against a real `IO_RECV_TIMEOUT`.
+
+Everything below this line was written about **this bench**. Where it says "the CM4" it means the
+Pi 4B, and a claim about wiring or pinout does not carry over to the carrier — see
+`docs/Hardware-IntelliRFIDv2.md`, which is authoritative for that board.
 
 ---
 
@@ -19,7 +50,9 @@ Managed Reading forms work, every documented error slug and status code checked.
 The priority change in `HANDOFF-LAPTOP-TO-CM4-TUNNEL-04.md` is done. The audit was folded into the
 build, as instructed.
 
-### The two things a next session should pick up first
+### The two things a next session should pick up first — on this bench
+
+(If you are on the **production CM4**, your list is `CM4-PRODUCTION-BRINGUP.md` instead.)
 
 **1. Run the laptop's REST client against this reader.** That is the acceptance evidence nobody has
 yet — it shares no code with the reader and checks every response against the `.docx`. Port 8081,
@@ -93,25 +126,53 @@ module raise `MODULE_NEED_RESTART` and stop reading.
 
 ---
 
+## 3a. Super Fast is sensor-driven
+
+GPIO23 rising opens the read, GPIO24 rising ends it, and the count and settle are recorded rather
+than acted on. Stop reason: count not met is `PACKAGE_EXITED`; count met and settled is `SETTLED`;
+count met and still yielding is `COUNT_REACHED`. `endedAt` is the moment the count was met — not
+when the carton left — and `settledAt` is new. All three tested on hardware.
+
+**No sensors are wired.** The edges were produced by flipping the pins' internal pulls, which is a
+real edge as far as the kernel is concerned:
+
+```bash
+pinctrl set 23 ip pu && sleep 4 && pinctrl set 23 ip pd    # carton enters, dwells
+pinctrl set 24 ip pu && sleep 1 && pinctrl set 24 ip pd    # carton leaves
+```
+
+`gpiomon` holds the lines exclusively, so a probe on those pins while the app is running gets
+`Device or resource busy` — that is the app working, not a fault.
+
+**`stdbuf -oL` in front of `gpiomon` is load-bearing.** Without it every edge is detected and then
+sits in a 4 KB stdio buffer, and the tunnel silently never triggers. See CLAUDE.md.
+
 ## 4. Open, in rough priority order
 
 1. **Run the laptop's REST client** (§1) — the missing acceptance evidence.
 2. **Commission the tags** (§1) — needs a person, and an answer on write-14-or-16.
-3. **The four invented error slugs** — `invalid_mode`, `timed_required`, `expected_count_required`,
+3. **The document needs `PACKAGE_EXITED`, `settledAt` and the new `endedAt` semantics** —
+   §7a of the handoff lists them. The laptop is updating the `.docx`.
+4. **The four invented error slugs** — `invalid_mode`, `timed_required`, `expected_count_required`,
    `invalid_direction`. The `.docx` has no slug for a malformed body. They are the only slugs a
    caller can see that the customer has not been told about.
-4. **`ean` cannot always be an EAN-13.** The bench SKU is GTIN-14 `98905190881260` — indicator 9, a
+5. **`ean` cannot always be an EAN-13.** The bench SKU is GTIN-14 `98905190881260` — indicator 9, a
    variable-measure item. Confirmed in the read path now, not just the write path.
-5. **A faulted reader does not reconnect.** After a read exception the session stays `FAULTED` until
-   the app restarts. The connector thread retries only the *initial* connect. A field unit nobody
-   can walk up to should recover on its own.
-6. **The lock path has never touched a tag.** Implemented in full — write → verify → password →
+6. ~~**A faulted reader does not reconnect.**~~ **Done 2026-08-29.** `ReaderService` now runs an
+   `rfid-supervise` thread that closes, reopens and restarts inventory after a fault, with a backoff
+   that only resets once the reader has stayed up for a minute. Verified on hardware against a real
+   `IO_RECV_TIMEOUT` (de-mux RXD0 with `pinctrl set 15 ip pd` to reproduce): five failed attempts
+   backing off 5→10→20→40→60 s, recovery as soon as the module was reachable, second fault recovered
+   in 5.5 s. `recoveries`/`lastRecoveryAt` on `/api/reader/status` and `/actuator/health`.
+   See `CLAUDE.md` for the two non-obvious parts (why the backoff does not reset on reconnect, and
+   why recovery is a latch rather than a state observation).
+7. **The lock path has never touched a tag.** Implemented in full — write → verify → password →
    lock → confirm, `BANK1_LOCK` never `BANK1_PERM_LOCK`. Run it on a sacrificial tag before it goes
    near stock.
-7. **S2 persistence** — still parked, still unresolved, and now also the reason the bench cannot run
+8. **S2 persistence** — still parked, still unresolved, and now also the reason the bench cannot run
    the packaged config. Bracket at 20/30/45/60/120 s with `ProbeSettle`; also worth testing S1 and a
    Select forcing inventoried → A. *Ask before starting: about 30 minutes.*
-8. Everything else in `HANDOFF-LAPTOP-TO-CM4-TUNNEL-04.md` §3 — Select action control, `TAG_FILTER`
+9. Everything else in `HANDOFF-LAPTOP-TO-CM4-TUNNEL-04.md` §3 — Select action control, `TAG_FILTER`
    on-air vs post-filter, mixed-silicon FastID (needs a sourced NXP tag; there is no non-Impinj tag
    on this bench any more), TagFocus, the discovery curve.
 
@@ -133,4 +194,5 @@ module raise `MODULE_NEED_RESTART` and stop reading.
 
 ---
 
-*CM4 session, 2026-08-28.*
+*CM4 bench session, 2026-08-28; updated 2026-08-29 with the production bring-up and the
+fault-recovery fix.*

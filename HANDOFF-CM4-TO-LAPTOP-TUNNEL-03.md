@@ -15,6 +15,30 @@ at what came back. §2 answers all five.
 **Three findings changed the design as I built it, and one of them was a bug of mine that the
 hardware caught.** §3.
 
+---
+
+> ## ACTION FOR THE LAPTOP: the API document needs updating
+>
+> **Super Fast Mode changed after the rest of this report was written, and the customer document no
+> longer describes what the reader does.** A carton's read is now bracketed by two sensors — a
+> rising edge on GPIO23 opens it, a rising edge on GPIO24 ends it — and that adds a fourth
+> `stopReason`, a new field, and a changed meaning for an existing one.
+>
+> **Please update `docs/Intelli-RFID-RestAPI.docx` and push it.** Four changes, all in §7a below
+> with the measured numbers behind them:
+>
+> | # | Change | Why it cannot wait |
+> |---|---|---|
+> | 1 | **`PACKAGE_EXITED`** as a fourth `stopReason` | The document commits to three and tells the WMS to branch on this field. An integrator meeting a value the document does not list has no defined behaviour. |
+> | 2 | **`settledAt`** in the result object | New field. Alongside a met count it is the strongest statement the reader can make. |
+> | 3 | **`endedAt` now means "when the count was met"** in this mode | Not "when the read ended". A carton that read in 600 ms left the zone 4 s later; the old meaning would have inflated every duration by the conveyor's dwell. |
+> | 4 | **Super Fast assumes two sensors** | Without them it falls back to opening on the first tag and closing on settle. That is not equivalent — a stray tag from the next carton can open a session, and nothing knows when a carton has gone. |
+>
+> All three stop-reason outcomes are tested on the module; §7a has the numbers. Nothing here is
+> speculative and nothing here is optional — the reader is already behaving this way.
+
+---
+
 **Nothing has been written to a tag.** Commissioning needs a person to present tags one at a time
 and there was nobody at the bench. The write path is built, guarded and validated; §5 says exactly
 what is and is not proven. The register you asked for in handoff 02 §1 exists, and producing it
@@ -344,17 +368,96 @@ proves the release really does not wait on the callback.
 
 ---
 
+## 7a. Super Fast is now sensor-driven — and the document needs four changes
+
+Added after the report above, on Piyush's instruction. **Tested on hardware, all three cases.**
+
+A rising edge on **GPIO23** opens the read; a rising edge on **GPIO24** ends it. The expected count
+and settle no longer close anything in this mode — they are recorded as they happen and reported.
+
+| by the time the carton left | `stopReason` | measured |
+|---|---|---|
+| count met, population settled | `SETTLED` | 2 of 2, `settledAt` present, `durationMs` 600 |
+| count met, still yielding tags | `COUNT_REACHED` | 2 of 2, `settledAt` absent, `durationMs` 367 |
+| count not met | `PACKAGE_EXITED` | 2 of 40, `complete: false`, `durationMs` 3004 |
+
+The order is deliberate and tested: a count that was never met is the finding, and a population that
+settled *short* of the count does not soften it — case three above had settled and is still
+`PACKAGE_EXITED`.
+
+**`endedAt` now means "when the count was met"** on a sensor-driven carton, not "when the carton
+left". The carton sits in the field until the conveyor moves it, and reporting that later moment
+would inflate every duration by the dwell: case one read in 600 ms and left the zone 4 s later.
+Where the count is never met there is no such moment and `endedAt` is when it actually left.
+
+**`settledAt` is a new field**, absent when the population never stopped growing. Alongside a met
+count it is the strongest statement the reader can make: everything expected was found *and*
+nothing further was arriving.
+
+### What the document needs
+
+1. **`PACKAGE_EXITED` as a fourth `stopReason`.** The `.docx` commits to three and tells the WMS to
+   branch on this field. It is distinct from `TIMEOUT` and the difference decides what someone
+   does: TIMEOUT means the reader ran out of its own budget, a tuning problem, and the carton may
+   well have been fine. PACKAGE_EXITED means the carton physically went past with articles
+   unaccounted for — the read had all the time the conveyor was ever going to give it.
+2. **`settledAt`** in the result object.
+3. **The `endedAt` semantics above**, which change for Super Fast only.
+4. A note that the two sensors are what Super Fast Mode assumes. Without them it falls back to
+   opening on the first tag and closing on settle, which is not equivalent — a stray tag from the
+   next carton can open a session, and nothing knows when a carton has gone. The fallback is
+   reported as `degraded` in `/api/v1/reader/status` while armed.
+
+**On the casing:** `packageExited` was asked for and then reverted to `PACKAGE_EXITED` for the next
+release, so all four values share one convention. `StopReason.wire()` exists to make that a
+one-line change without touching the enum the code switches on.
+
+### Two findings from building it
+
+**libgpiod's `gpiomon` block-buffers into a pipe, and it is silent.** It writes through libc stdio,
+which line-buffers to a tty and buffers at 4 KB to a pipe. Every edge was detected by the kernel and
+printed, then held in a buffer that on a conveyor would not fill for hours — three confirmed rising
+edges delivered **zero bytes**, and the same three under `stdbuf -oL` delivered three lines. It
+presents as missed edges, which is the wrong diagnosis and leads to polling instead of interrupts —
+in a JVM with no GPIO binding that means a process spawn per poll and the loss of the kernel's edge
+timestamp. Worth knowing before the wayside app reads any subprocess incrementally.
+
+**Completeness was being judged on the wrong number.** `isTrustworthy()` compared the *total* tag
+count against the expected count, so a perfect carton logged as *"18 of 2 articles, NOT
+trustworthy"* — 16 of the 18 bench tags are not GS1 at all. `InventoryResult` now carries
+`matchingCount` and the verdict uses it. The contract's `complete` was always correct; only the
+operator-facing verdict was wrong.
+
+### Still not wired
+
+No optical sensor and no conveyor interlock exist on this bench, so the edges were produced by
+flipping the pins' internal pulls — `pinctrl set 23 ip pu` lifts an unconnected input and the
+kernel reports it to an edge monitor holding the line. That exercises the whole path from edge to
+callback, and it does not tell you anything about a real sensor's bounce; `debounce-ms` is set to
+50 and is a guess until there is a beam to measure.
+
+---
+
 ## 8. Still open
 
-1. **The four invented error slugs** (§2.5) — into the document, or replaced.
-2. **`ean` cannot always be an EAN-13** (§2.5) — the indicator-9 case, now confirmed in the read path.
-3. **`/reader/status` body** — §3.3's proposal plus `degraded`; please fold it into the document.
-4. **Write 14 or 16?** (§6).
-5. **A faulted reader does not reconnect** (§3.4).
-6. **S2** — unchanged and now blocking bench verification with the packaged config (§3.5).
-7. Everything else in your §3 parked list, untouched.
+1. **The API document does not describe Super Fast Mode as built** (§7a, and the box at the top).
+   `PACKAGE_EXITED`, `settledAt`, the `endedAt` semantics, and the two-sensor assumption. **This is
+   the one item on this list that is a request rather than a question** — the reader ships this
+   behaviour now.
+2. **The four invented error slugs** (§2.5) — into the document, or replaced.
+3. **`ean` cannot always be an EAN-13** (§2.5) — the indicator-9 case, now confirmed in the read path.
+4. **`/reader/status` body** — §3.3's proposal plus `degraded`; please fold it into the document.
+5. **Write 14 or 16?** (§6).
+6. **A faulted reader does not reconnect** (§3.4).
+7. **S2** — unchanged and now blocking bench verification with the packaged config (§3.5).
+8. Everything else in your §3 parked list, untouched.
 
 ---
 
 *CM4 session, 2026-08-28. Everything above was measured on the bench SIM7500 unless it says
 otherwise. Where I have only reasoned, I have said so.*
+
+*Revised the same day: §7a and the action box at the top were added after Super Fast Mode was
+changed to read between two sensors. The rest of the report predates that change and is unaffected
+by it — the result object, both Managed Reading forms, the callback path and the error model are
+the same as when they were tested.*

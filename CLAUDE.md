@@ -215,12 +215,57 @@ guessing at signatures.
   the module raise `MT_HARDWARE_ALERT_ERR_BY_TOO_MANY_RESET (0xfefe: MODULE_NEED_RESTART)` and stop
   reading. Set it once in `rfid.reader.fast-id` and let the API decide only whether to *render* the
   TID. The same warning applies to anything else that wants to stop and start inventory per request.
-- **A read exception leaves the reader `FAULTED` and nothing brings it back.**
-  `ReaderSession.handleReadException` sets the state and stops reading; there is no reconnect. After
-  the `MODULE_NEED_RESTART` above, every v1 call answered `409 reader_not_connected` until the
-  application was restarted — which is the correct answer to give, but a field unit should recover
-  on its own. **Open, and not a v1 concern:** the connector thread retries only the *initial*
-  connect, not a fault after a successful one.
+- **A read exception used to leave the reader `FAULTED` forever. Fixed 2026-08-29 —
+  `ReaderService`'s supervisor thread now reconnects.** `handleReadException` still only records the
+  fault (it runs on the vendor's read thread, and reopening the reader from inside its own exception
+  handler means re-entering the native library while it is unwinding); a separate `rfid-supervise`
+  thread watches for it and does the work. It closes, reopens, and restarts inventory **if inventory
+  had been running** — `ReaderSession.wasReadingWhenFaulted()`, captured at fault time because by
+  recovery time the previous state is gone.
+
+  Two things about it are load-bearing and neither is obvious:
+
+  **The backoff does not reset on a successful reconnect, only after the reader has stayed up for
+  `recover-stable-ms`.** Reconnecting costs a module re-init, and re-initialising repeatedly is
+  itself a way to break this module — four inventory restarts inside thirty seconds produced
+  `MODULE_NEED_RESTART`. A reader that faults, recovers and faults again must not be handed the
+  short delay again. `FaultRecoveryPolicy` holds that rule and is unit-tested.
+
+  **Recovery is a latch, not a state observation.** A *failed* attempt does not leave the session
+  FAULTED: `open()` throws out of `InitReader` before the block that sets FAULTED, so the state is
+  whatever the preceding `close()` left — **CLOSED**. Watching for FAULTED alone therefore gives up
+  after exactly one attempt, and CLOSED is indistinguishable from an operator's deliberate
+  disconnect. Measured on the bench with the reader's RX pin de-muxed. The supervisor raises a
+  `recovering` flag on the fault and lowers it only when the reader is genuinely OPEN/READING, or
+  when `connect()`/`disconnect()` says an operator has taken over.
+
+  Verified on hardware 2026-08-29 with a real `IO_RECV_TIMEOUT`: five failed attempts backing off
+  5→10→20→40→60 s while the module was unreachable, recovery with inventory restarted the moment it
+  was reachable again, and a second fault a minute later recovered in 5.5 s on the reset delay.
+  `recoveries` and `lastRecoveryAt` are on `/api/reader/status` and `/actuator/health` — a count that
+  climbs steadily is a reader that keeps breaking, which each recovery would otherwise hide.
+
+  **Inject this fault without touching the wiring:** `pinctrl set 15 ip pd` de-muxes RXD0, so the
+  module's replies stop reaching the Pi and the vendor library raises a genuine read exception within
+  seconds. `pinctrl set 15 a0 pu` puts it back.
+- **A subprocess that prints to a pipe block-buffers, and libgpiod's `gpiomon` is the case that
+  will cost you an afternoon.** gpiomon writes through libc stdio, which line-buffers to a tty and
+  **block-buffers at 4 KB to a pipe**. Every edge is detected by the kernel, printed by gpiomon, and
+  then held in a buffer that on a conveyor will not fill for hours. Nothing reports an error; the
+  symptom is a tunnel that never triggers. Measured on this bench: three confirmed rising edges
+  through a plain pipe delivered **zero** bytes, and the same three under `stdbuf -oL` delivered
+  three lines. It looks exactly like missed edges, which is the wrong diagnosis and leads somewhere
+  expensive — polling instead of interrupts, which in a JVM with no GPIO binding means spawning a
+  process per poll and losing the kernel's edge timestamp. **Wrap any long-running CLI you read
+  incrementally in `stdbuf -oL`.** The one-shot form hides it: `--num-events=1` prints because the
+  process exits, and exiting flushes.
+- **`gpiomon` holds the lines exclusively.** A second one, or a `gpioget` on the same line, gets
+  `Device or resource busy` — so a probe run while the tunnel app is up will fail, and that failure
+  is a sign the app is working rather than a fault. Stop the app to probe the pins.
+- **Toggling a pin's internal pull is a real edge, which makes the sensors testable with no
+  wiring.** `pinctrl set 23 ip pu` lifts an unconnected input to 1 and `pinctrl set 23 ip pd`
+  returns it, and the kernel reports both to an edge monitor holding the line. That is how the
+  entry/exit sensors were exercised on a bench with nothing attached to GPIO23 or GPIO24.
 - **Gen2 S2 plus a continuously-on carrier makes a static tag go silent after one read.** Measured:
   16.0 callbacks/s on S0 versus **0.1/s on S2**, same tag, same everything else. This is correct
   Gen2 behaviour — S2's inventoried flag persists while the tag is powered — but it means any
@@ -349,6 +394,32 @@ release ever waits on the callback, the symptom at the customer's site is a stop
 expensive failure this product has and the least obviously ours. `CartonRelease` exists as a named
 seam so the ordering is checkable in one line at the call site rather than being a thing that
 quietly does not happen anywhere.
+
+**Tunnel v1 — in Super Fast Mode the sensors own the start and the end of a read, and the count
+and settle are observations rather than exits.** A rising edge on GPIO23 opens the session, a rising
+edge on GPIO24 closes it, and what had happened in between decides the stop reason:
+
+| by the time the carton left | `stopReason` |
+|---|---|
+| count met, population settled | `SETTLED` |
+| count met, still yielding tags | `COUNT_REACHED` |
+| count not met, whatever else | `PACKAGE_EXITED` |
+
+The order matters: a count that was never met is the finding, and a population that settled *short*
+of it does not soften that. `maxDurationMs` stays as the backstop for an exit sensor that never
+fires. With no sensors the mode falls back to opening on the first tag and closing on settle, which
+is not equivalent and is reported as `degraded` in `/api/v1/reader/status`.
+
+**Tunnel v1 — `endedAt` on a sensor-driven carton is when the count was met, not when the carton
+left.** The carton then sits in the field until the conveyor moves it, and reporting that later
+moment would inflate every duration by the dwell time. Measured on the bench: a carton read in
+600 ms and left the zone 4 s later. When the count was never met there is no such moment and
+`endedAt` is when it actually left.
+
+**Tunnel v1 — completeness is judged on the requested SKU, not on everything in the field.**
+`InventoryResult.matchingCount` is the number that matters; `tagCount` is everything that answered.
+Comparing the total logged a perfect carton as *"18 of 2 articles, NOT trustworthy"*, because 16 of
+the 18 bench tags are not GS1 at all.
 
 **Tunnel v1 — `timed: true` runs the whole of `durationMs` even when the count was reached.** It
 looks like a missed optimisation and it is not: the customer may be holding the carton for a
