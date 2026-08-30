@@ -206,10 +206,10 @@ backstop for a carton that neither settles nor leaves — `TIMEOUT`, as now.
 | IN2 rising edge, population had not settled | `PACKAGE_EXITED` |
 | Neither, and the read budget expired | `TIMEOUT` |
 
-> **`COUNT_REACHED` does not occur in Super Fast Mode.** Reaching the count is an observation with a
-> timestamp, not an ending. The enum value stays — managed reading still closes on count and still
-> reports it — but nothing in the Super Fast path may emit it. This is a correction to what I told
-> you in my previous draft of this section; step 2 above is the authority.
+> **With the default settings, `COUNT_REACHED` does not occur in Super Fast Mode.** Reaching the
+> count is an observation with a timestamp, not an ending. It becomes an ending only if the caller
+> deliberately asks for that — see §3.3.1. This is a correction to what I told you in my previous
+> draft of this section; step 2 above is the default and the authority.
 
 **Step 6 is the part most likely to be got subtly wrong, so to be explicit:** `complete` and
 `stopReason` are independent. A carton that settled with 18 of 20 is `SETTLED` with
@@ -228,11 +228,45 @@ count-met moment from step 2 needs somewhere to live — see §6.
 `boolean sensorOwnsTheEnd = gpio.isWatching()` and passes `!sensorOwnsTheEnd` for both `exitOnCount`
 and `exitOnSettle`, so with sensors present both are false and only the exit edge closes.
 
-- `exitOnCount` stays **false**. The count does not close anything — step 2.
+- `exitOnCount` **defaults to false**. The count does not close anything — step 2. But it stays a
+  real, settable flag; see §3.3.1 immediately below.
 - `exitOnSettle` becomes **true**, unconditionally. Settle closes — step 4.
 
 That is the whole change to the close policy. `sensorOwnsTheEnd` no longer describes anything true:
 the sensor owns the *latest possible* end, not the end.
+
+### 3.3.1 `exitOnCount` stays a flag, settable from the API
+
+`exitOnCount` is **not** to be hard-wired to false. Keep it as a real parameter that can be flipped
+per arming, from `POST /api/v1/mode`, without a rebuild or a config change.
+
+| `exitOnCount` | Behaviour |
+|---|---|
+| **`false` — the default** | The §3.3 sequence. Count-met is recorded; settle or the IN2 edge closes the carton. |
+| `true` | Count-met closes the carton immediately, `stopReason: COUNT_REACHED`. Settle and the IN2 edge remain as the other two close conditions for a carton whose count is never met. |
+
+Notes on building it:
+
+- **Optional in the request, defaulting to false when absent.** An arming call that does not mention
+  it must behave exactly as §3.3 describes. A missing field must never be read as `true`.
+- **Same name on the wire as in the code** — `exitOnCount` — unless you have a better one. One name
+  for one concept across `ArmRequest`, `SessionSpec` and the document removes the commonest kind of
+  translation bug, and this flag changes what a carton's result *means*, so it is worth being
+  pedantic about.
+- **`ArmRequest`'s javadoc is already wrong** and gets worse with this change: it says
+  `expectedCount` "ends each read as soon as it is reached". That has not been true since sensors
+  arrived and is the opposite of the default now. Fix it in the same commit.
+- **It is an arming-time decision, not a per-carton one.** It belongs beside `ean` and
+  `expectedCount` in the arming call, and re-arming is how it changes — consistent with the
+  document's existing "no partial update" rule.
+- **`/api/v1/mode` GET should report it**, so an operator can see which way a running tunnel is set
+  without inferring it from results.
+
+Why it is worth keeping rather than deciding once: with it false the reader keeps looking until the
+carton settles or leaves, which is the honest reading and the right default. With it true the reader
+stops the moment the WMS's expected count is satisfied, which is faster and is the right answer on a
+line where the count is trusted absolutely. That is a line-by-line judgement, not a product-wide one,
+and it should not need me or you to rebuild anything to change our minds.
 
 Two follow-ons that are not mechanical:
 
@@ -346,7 +380,10 @@ what it needs to say. Updated list — I will make these changes:
    budget closed it. The mode-specific meaning you documented in §7a goes away.
 5. **`stopReason` and `complete` are independent**, stated explicitly in the document. The WMS
    branches on `stopReason` and it must not infer the count from it — §3.3 step 6.
-6. **The two-sensor assumption**, and the `degraded` fallback.
+6. **`exitOnCount`** on the arming call — optional, default false, and what each setting does to
+   `stopReason` (§3.3.1). The WMS needs to know that the same tunnel can be armed either way and
+   that `COUNT_REACHED` is therefore a value it must handle.
+7. **The two-sensor assumption**, and the `degraded` fallback.
 
 Plus the four invented error slugs from your §2.5 (`invalid_mode`, `timed_required`,
 `expected_count_required`, `invalid_direction`) — going in as documented values.
@@ -365,7 +402,8 @@ path; it says nothing about a real beam's bounce.
 | 3 | Count met, then IN2, never settled | Closes on **IN2**, `PACKAGE_EXITED`, **`complete: true`** — the count was met and the reason does not soften it (§3.3 step 6) |
 | 4 | Settled short of the count, no IN2 | Closes on **settle**, `SETTLED`, `complete: false`. Must **not** report `PACKAGE_EXITED` — the carton had not left |
 | 4b | Neither count nor settle, then IN2 | `PACKAGE_EXITED`, `complete: false` |
-| 4c | Any Super Fast carton | `COUNT_REACHED` **never appears**. If it does, `exitOnCount` got flipped |
+| 4c | Arming call with no `exitOnCount` | Default false. `COUNT_REACHED` **never appears** on any carton in the run |
+| 4d | Arming call with `exitOnCount: true` | Count-met closes immediately, `COUNT_REACHED`, and the later IN2 edge produces no second callback |
 | 5 | Two cartons back to back | Two callbacks, two sequence numbers, no window opened by an IN2 edge. `onCartonLeft` already returns early when `activeSession()` is empty, so this should pass unchanged — confirm it rather than assume it |
 | 6 | RESULT pulse width | Scope or log the achieved width on OUT5 over 100 cartons. **Every** pulse inside 400–600 or 60–200 ms. Report the spread — that number decides whether the encoding survives a loaded JVM |
 | 7 | Verdict before next ZONE_ARRIVE | At the shortest carton pitch you can produce, the pulse completes before the next IN1 edge |
