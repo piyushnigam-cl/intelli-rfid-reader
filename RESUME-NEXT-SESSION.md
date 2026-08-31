@@ -127,7 +127,7 @@ The interface is **closed**. `docs/Intelli-RFID-Reader-DVP12SA211R-PLC-Integrati
 PLC vendor on 2026-08-30 and none of its numbers will move. **Where the code and that document
 disagree, the code is wrong.** Do not round any timing to a nicer figure.
 
-> **Progress, 2026-08-31 — items 1, 2, 3 and 4 are done and pushed.** 107 tests pass, up from 74.
+> **Progress, 2026-08-31 — items 1–5 are done.** 124 tests pass, up from 74.
 >
 > | # | Item | State |
 > |---|---|---|
@@ -135,8 +135,8 @@ disagree, the code is wrong.** Do not round any timing to a nicer figure.
 > | 2 | `exitOnCount` as an API-settable flag | **done** `b0acefd` |
 > | 3 | `RESULT` on OUT5, width-encoded | **done** `d113515` |
 > | 4 | `HEARTBEAT` on OUT6 | **done** `87516ab` |
-> | 5 | `SHUTDOWN_REQUEST` on IN3 | **next** |
-> | 6 | `/api/v1/diagnostics/io` | pending |
+> | 5 | `SHUTDOWN_REQUEST` on IN3 + the shutdown sequence | **done** `9f2492f` |
+> | 6 | `/api/v1/diagnostics/io` | **next — the last one** |
 > | 7 | The "do not" list | partly enforced: `FieldIo.write()` refuses parked channels |
 > | 8 | Bench tests 1–15 | pending — needs the app running against real pins |
 >
@@ -150,6 +150,21 @@ disagree, the code is wrong.** Do not round any timing to a nicer figure.
 > OUT5 pulses landed at **PASS 496–504 ms / FAIL 98–100 ms** over 20 cartons with none outside the
 > decode band. That last number was taken on a near-idle machine and **bench test 6 still wants 100
 > cartons under read load** before it is trusted.
+>
+> **A latent bug found and fixed while doing item 5, worth the laptop knowing.**
+> `GpioEdgeMonitor` built **libgpiod v1** arguments and this CM4 has **v2.2.1**, which renamed all
+> three: `--rising-edge` → `--edges=rising`, the chip → `-c`, `%s.%n` → `%S`. **v2 prints an unknown
+> format specifier literally**, so every edge would have arrived as the text `18 %s.%n`, failed to
+> parse, and left the monitor reporting itself broken while `gpiomon` worked perfectly. It had not
+> bitten only because this unit's site config has `gpio.enabled: false` — it would have failed the
+> instant the sensors were switched on and looked exactly like bad wiring. Now auto-detected from
+> `gpiomon --version`, overridable by `tunnel.v1.gpio.libgpiod-major`, both syntaxes pinned by tests.
+> **The bench rig is v1.6.3 and stays a valid comparison point; this is another axis on which the
+> two machines differ.**
+>
+> **Also: the internal-pull trick for faking an edge does not work on this carrier.** The external
+> 10 kΩ pull-up dominates the internal pull, so an input reads high in both states. Drive the pin
+> instead — `pinctrl set 18 op dl` then `op dh` — verified 2026-08-31, and put it back to `ip pd`.
 >
 > **One decision made rather than asked, and the laptop should hear it:** removing the
 > `matched >= expected` short-circuit from `ResultMapper` also changed **Managed Reading**. A
@@ -184,7 +199,8 @@ disagree, the code is wrong.** Do not round any timing to a nicer figure.
    own thread with nothing else on it**. The PLC faults the line if it sees no transition for 3 s,
    so it must survive a read, a callback retry storm and a spool replay. It means only "the
    application is running" — deliberately not "the module is up".
-5. **← NEXT. `SHUTDOWN_REQUEST` on IN3 (BCM 18) — new firmware** (§4). Five 200 ms pulses inside 5 s;
+5. ~~**`SHUTDOWN_REQUEST` on IN3 (BCM 18) — new firmware**~~ **— DONE.** Pulse count is
+   configurable: `--tunnel.plc.shutdown.pulses=1` for a push-button bench test. Original spec: (§4). Five 200 ms pulses inside 5 s;
    four or six is not a request and is discarded silently. `GpioEdgeMonitor` needs a **third line**
    plus a burst recogniser — and note that adding line 18 changes the `gpiomon` command line and its
    parse. Keep "missing hardware is degradation, not failure": a bench with no PLC must still start.
@@ -194,7 +210,7 @@ disagree, the code is wrong.** Do not round any timing to a nicer figure.
      the sequence exists to prevent. Whole sequence must fit in 60 s.
    - **IN3 is no longer `READER_ENABLE`.** Any code holding the reader up or down on an IN3 *level*
      must go.
-6. **`GET`/`POST /api/v1/diagnostics/io`** (§5a) — ADMIN scope, explicit `ScopeRules` entry rather
+6. **← NEXT. `GET`/`POST /api/v1/diagnostics/io`** (§5a) — ADMIN scope, explicit `ScopeRules` entry rather
    than relying on default-deny. The admin UI's PLC I/O tab is already built against it and shows
    404 until this lands.
    - **`level` is the FIELD sense, not the GPIO level.** Inputs are inverted at the GPIO, so do the

@@ -604,6 +604,37 @@ code is wrong**, and no timing in it may be rounded to a nicer number.
   with backoff, so a verdict dispatched behind it would arrive after the PLC's window had closed —
   a dead WMS would have turned every carton into a fail. Building the result is a decode over one
   carton's tags and costs microseconds; only the send is handed off.
+- **libgpiod v1 and v2 need different `gpiomon` arguments, and the two machines disagree.** The
+  bench rig on Bookworm has **v1.6.3**; the production CM4 on Trixie has **v2.2.1**. v2 renamed all
+  three things the monitor uses: `--rising-edge` → `--edges=rising`, the chip became `-c <chip>`
+  instead of positional, and `%s.%n` became `%S`. Both print `<offset> <seconds>.<nanos>`, so the
+  parse is unchanged and only the arguments differ. `GpioEdgeMonitor` detects the version from
+  `gpiomon --version`; `tunnel.v1.gpio.libgpiod-major` overrides it.
+
+  **Getting it wrong on v2 is not a clean failure, and that is the part worth remembering: an
+  unrecognised format specifier is printed literally.** Every edge arrives as the text
+  `18 %s.%n`, every parse fails, and the monitor declares itself broken and falls back to degraded
+  — while `gpiomon` is detecting edges perfectly. Measured on the production CM4 2026-08-31. It had
+  not bitten yet only because this unit's site config has `gpio.enabled: false`; it would have
+  failed the instant the sensors were switched on, and looked exactly like bad wiring.
+- **The internal-pull trick for faking an edge does not work on the production carrier.** On the
+  bench, `pinctrl set 23 ip pu` / `ip pd` lifts and drops an unconnected input and the kernel
+  reports both as edges. On the v2.x carrier the **external 10 kΩ pull-up dominates the internal
+  pull**, so an input reads high in both states and no edge is produced. Drive the pin instead —
+  `pinctrl set 18 op dl` then `op dh` — which does produce real edges, verified on this board
+  2026-08-31. Put it back to `ip pd` afterwards.
+- **The shutdown request on IN3 is judged after a quiet period, not on its Nth pulse.** Acting the
+  instant the count is reached makes the rule "at least N" rather than **exactly N**, so a six-pulse
+  burst — or an EFT storm on a line sharing its return with ten others — would be accepted on its
+  way past. The tally is judged after `quiet-ms` of silence, which costs about a second against a
+  60 s budget. `tunnel.plc.shutdown.pulses` is configurable for bench work with a push button;
+  **at 1 there is no pattern left and any single edge is a shutdown request**, so a non-default is
+  warned about at start-up.
+- **The serial counter needs no flushing at shutdown, by construction.** `SequenceCounter.next()`
+  calls `channel.force(true)` before returning each number, so the high-water mark is durable at
+  every instant rather than at exit. Step 4 of the shutdown sequence therefore *confirms* — it reads
+  the file back independently of the in-memory counter, which is the only check that would catch the
+  two having drifted — rather than committing anything.
 - **The heartbeat gets its own thread and nothing else ever goes on it.** OUT6 toggles at 1 Hz and
   the PLC stops the conveyor if it sees no transition for 3 s, so anything that can block — a
   callback retrying against a dead WMS, a spool replay, an inventory round — must not be able to sit
