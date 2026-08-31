@@ -493,26 +493,44 @@ expensive failure this product has and the least obviously ours. `CartonRelease`
 seam so the ordering is checkable in one line at the call site rather than being a thing that
 quietly does not happen anywhere.
 
-**Tunnel v1 — in Super Fast Mode the sensors own the start and the end of a read, and the count
-and settle are observations rather than exits.** A rising edge on GPIO23 opens the session, a rising
-edge on GPIO24 closes it, and what had happened in between decides the stop reason:
+**Tunnel v1 — in Super Fast Mode a sensor opens the read, and settle or the exit edge closes it,
+whichever comes first.** A rising edge on J26 IN1 (GPIO23) opens the session. From there **exactly
+two things can close a carton**, and the one that happens first names the stop reason:
 
-| by the time the carton left | `stopReason` |
+| what closed the window | `stopReason` |
 |---|---|
-| count met, population settled | `SETTLED` |
-| count met, still yielding tags | `COUNT_REACHED` |
-| count not met, whatever else | `PACKAGE_EXITED` |
+| the population settled, IN2 not yet seen | `SETTLED` |
+| IN2 rising edge (GPIO24), population had not settled | `PACKAGE_EXITED` |
+| neither, and the read budget expired | `TIMEOUT` |
 
-The order matters: a count that was never met is the finding, and a population that settled *short*
-of it does not soften that. `maxDurationMs` stays as the backstop for an exit sensor that never
-fires. With no sensors the mode falls back to opening on the first tag and closing on settle, which
-is not equivalent and is reported as `degraded` in `/api/v1/reader/status`.
+**The stop reason says what closed the window and nothing about the count.** `stopReason` and
+`complete` are independent and neither softens the other: a carton that settles two articles short
+is `SETTLED` with `complete: false`, and one that meets its count and then leaves before settling is
+`PACKAGE_EXITED` with `complete: true`. There is no "matched >= expected" short-circuit anywhere —
+inferring the reason from the count is exactly what this rule forbids.
 
-**Tunnel v1 — `endedAt` on a sensor-driven carton is when the count was met, not when the carton
-left.** The carton then sits in the field until the conveyor moves it, and reporting that later
-moment would inflate every duration by the dwell time. Measured on the bench: a carton read in
-600 ms and left the zone 4 s later. When the count was never met there is no such moment and
-`endedAt` is when it actually left.
+**Reaching the count does not end a read by default.** It is recorded as `countReachedAt` and the
+read continues; `COUNT_REACHED` therefore does not occur in Super Fast Mode unless the caller armed
+with **`exitOnCount: true`**, which is a real optional flag on `POST /api/v1/mode`, absent meaning
+false. Keep it a flag: false is the honest reading, true is right on a line that trusts its counts
+absolutely, and that is a line-by-line judgement that should not need a rebuild.
+
+Publish **once per carton** — the IN2 edge following a settle-closed carton is consumed and
+discarded, and only an IN1 edge opens a window. `maxDurationMs` stays as the backstop. With no
+sensors the mode falls back to opening on the first tag and closing on settle, which is not
+equivalent and is reported as `degraded` in `/api/v1/reader/status`.
+
+**Corrected 2026-08-31**, from `HANDOFF-LAPTOP-TO-CM4-TUNNEL-05.md` §3.3 — the interface sent to the
+PLC vendor. It replaces an earlier rule in which the exit sensor owned the end outright, the count
+and settle were both merely observed, and a count that was never met beat everything.
+
+**Tunnel v1 — `endedAt` is simply when the read window closed.** Nothing mode-specific. It used to
+be substituted with the moment the count was met, because a sensor-driven carton went on sitting in
+the field until the conveyor moved it and reporting the exit moment inflated every duration by the
+dwell — measured on the bench, a carton read in 600 ms and left the zone 4 s later. **Settle now
+closes a carton, so that dwell is no longer inside the window and there is nothing to correct for.**
+The count-met moment has its own field, `countReachedAt`, because it no longer ends anything and so
+can no longer ride on `endedAt`.
 
 **Tunnel v1 — completeness is judged on the requested SKU, not on everything in the field.**
 `InventoryResult.matchingCount` is the number that matters; `tagCount` is everything that answered.
@@ -523,6 +541,79 @@ the 18 bench tags are not GS1 at all.
 looks like a missed optimisation and it is not: the customer may be holding the carton for a
 deterministic period, and a read that finishes early leaves it in the field. Verified on the bench:
 count met at 189 ms, response returned at 3082 ms.
+
+## The PLC field interface (connector J26)
+
+The tunnel drives a **Delta DVP12SA211R** over eleven opto-isolated field channels. The interface is
+**closed**: `docs/Intelli-RFID-Reader-DVP12SA211R-PLC-Integration.docx` went to the PLC vendor on
+2026-08-30 and their ladder is written against it. **Where the code and that document disagree, the
+code is wrong**, and no timing in it may be rounded to a nicer number.
+
+- **`com.intelli.rfid.tunnel.plc.FieldChannel` is the authoritative channel map** — OUT1–7 on BCM
+  26/20/16/19/21/12/13, IN1–4 on BCM 23/24/18/25. **Do not take channel functions from
+  `docs/PLC-INTEGRATION-DVP12SA2.md` §4**: it still carries the superseded map (`RESULT_OK` /
+  `RESULT_FAIL` on OUT5/OUT6, `SPARE_IN` on IN3) *and describes itself as authoritative*. It
+  disagrees with the `.docx` on five channels. `FieldChannelTest` pins the disagreement so nobody
+  "fixes" the enum to match the stale file.
+- **`IN1`/`IN2` are ambiguous and it will cost someone a day.** The J26 field channels and the
+  SIM7500 module's own GPI pins are both called IN1/IN2 in their own documentation and are different
+  silicon. Everything in this project means the J26 channels. **The module's GPI is deliberately
+  unused** for the inventory trigger: it can start a read faster than we can but cannot take part in
+  the verdict, the heartbeat, the shutdown handshake or the zone state machine.
+- **Field sense is inverted on inputs and not on outputs, and that asymmetry is the day-one bug.**
+  An output asserted at J26 is GPIO **high**; an input asserted at J26 (24 V present) reads GPIO
+  **low**, because the 24 V lights the opto's LED and pulls the pin down. `FieldIo` does the
+  inversion and nothing above it sees a raw level. Get it backwards and the screen, the vendor's
+  drawing and the multimeter all disagree — and the person holding the multimeter is right.
+- **`pinctrl`, not `gpioset`, and the reason is process lifetime.** A level set by `pinctrl` survives
+  the process exiting, because it writes the pad registers directly; `gpioset` *requests* the line
+  and releases it on exit, so holding a level would mean one live process per channel. Register-level
+  writes also do not contend with the `gpiomon` that holds lines 23/24 exclusively.
+- **`pinctrl get` has two output shapes and a parser must take both.** Measured on the production
+  CM4: an input is `12: ip    pd | lo // GPIO12 = input`, a configured output is
+  `12: op -- pd | hi // GPIO12 = output` — note the extra column. Match leniently up to the `|`.
+- **It runs unprivileged.** `/dev/gpiomem` is group `gpio` and the service user is in it, so no part
+  of this needs root. A service user outside that group fails every write.
+- **Measured 2026-08-31, boot state of the eleven channels on the production carrier:** every output
+  (BCM 12/13/16/19/20/21/26) comes up `ip pd | lo` — which is the hardware failsafe that holds
+  `SPEED = 000` from power-on until software drives it, so **do not add anything at start-up that
+  disturbs it**. Every input (BCM 18/23/24/25) comes up `ip pd | hi`: reading high through the
+  carrier's external 10 kΩ pull-up *against* the BCM2711's internal pull-down, which leaves only
+  0.44 V of margin instead of 1.0 V. `PinctrlFieldIo` turns those internal pulls off at start-up.
+  **That is right on the carrier and wrong on a bare bench** — with nothing wired to J26 there is no
+  external pull-up to take over and the pins float, which on IN1 manufactures cartons. Hence
+  `tunnel.plc.disable-input-pulls`.
+- **The verdict on OUT5 is width-encoded, so scheduler latency is a correctness problem.** One
+  pulse per carton: **100 ms = FAIL, 500 ms = PASS**, decoded by the PLC in 60–200 and 400–600 ms
+  bands, with *everything else* — any other width, more than one pulse, or nothing at all — read as
+  FAIL. A 500 ms pulse that lands at 380 ms is not a slow pass, it is a **fail**, and it fails
+  silently at the customer on a carton that was fine. So the width is measured and logged on every
+  pulse, `outOfBand` is counted, and the hold sleeps most of the way then **spins the last 2 ms**.
+  **Measured on the production CM4 2026-08-31 over 20 cartons: PASS 496–504 ms, FAIL 98–100 ms,
+  none outside the band** — but the machine was near idle, and bench test 6 wants 100 cartons under
+  read load before that number is trusted. `ResultSignalHardwareTest` is that measurement and is
+  skipped unless `-Dplc.hardware=true`.
+- **PASS is exactly `complete == true`** — the carton held what was expected. A carton whose count
+  could not be judged at all is *not* a pass: the interface has two answers and no third one, and
+  **there is no "no verdict"** — reaching the end of a carton undecided emits FAIL explicitly,
+  because the PLC reads silence as FAIL anyway and emitting it is the difference between an outcome
+  and a guess that happened to match.
+- **The verdict is signalled on the thread that closed the session, not on the result executor.**
+  Same reason the carton release is: both are physical signals to the conveyor and neither may wait
+  on the WMS. `results` is single-threaded and `callbacks.send()` blocks for up to five attempts
+  with backoff, so a verdict dispatched behind it would arrive after the PLC's window had closed —
+  a dead WMS would have turned every carton into a fail. Building the result is a decode over one
+  carton's tags and costs microseconds; only the send is handed off.
+- **The heartbeat gets its own thread and nothing else ever goes on it.** OUT6 toggles at 1 Hz and
+  the PLC stops the conveyor if it sees no transition for 3 s, so anything that can block — a
+  callback retrying against a dead WMS, a spool replay, an inventory round — must not be able to sit
+  in front of the next toggle. Deadlines are absolute rather than sleeps, because sleeping the
+  half-period accumulates every write's latency into permanent drift.
+- **The heartbeat stops last, and that ordering is load-bearing.** It is a `SmartLifecycle` at
+  `Integer.MIN_VALUE` so Spring stops it after every other bean has flushed. It means only "the
+  application is running", never "the module is up". Dropping it earlier tells the PLC it is safe to
+  cut power while the serial counter is still being written — the exact corruption the shutdown
+  sequence exists to prevent.
 
 ## Conventions
 

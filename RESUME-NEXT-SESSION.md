@@ -127,7 +127,39 @@ The interface is **closed**. `docs/Intelli-RFID-Reader-DVP12SA211R-PLC-Integrati
 PLC vendor on 2026-08-30 and none of its numbers will move. **Where the code and that document
 disagree, the code is wrong.** Do not round any timing to a nicer figure.
 
-1. **Super Fast Mode's close condition changes** (handoff §3.3). Count-met no longer ends a carton —
+> **Progress, 2026-08-31 — items 1, 2, 3 and 4 are done and pushed.** 107 tests pass, up from 74.
+>
+> | # | Item | State |
+> |---|---|---|
+> | 1 | Close condition: settle or the exit edge, not the count | **done** `b0acefd` |
+> | 2 | `exitOnCount` as an API-settable flag | **done** `b0acefd` |
+> | 3 | `RESULT` on OUT5, width-encoded | **done** `d113515` |
+> | 4 | `HEARTBEAT` on OUT6 | **done** `87516ab` |
+> | 5 | `SHUTDOWN_REQUEST` on IN3 | **next** |
+> | 6 | `/api/v1/diagnostics/io` | pending |
+> | 7 | The "do not" list | partly enforced: `FieldIo.write()` refuses parked channels |
+> | 8 | Bench tests 1–15 | pending — needs the app running against real pins |
+>
+> **`com.intelli.rfid.tunnel.plc` now exists and items 5 and 6 both sit on it**: `FieldChannel` is
+> the authoritative channel map, `FieldIo` owns the field-sense inversion, `PinctrlFieldIo` drives
+> the pins, and `HeartbeatDriver` / `ResultSignal` are the two consumers so far.
+>
+> **Measured on this board while building it** — all of it now in `CLAUDE.md`: field outputs boot
+> `ip pd | lo` (the failsafe holding SPEED at 000), field inputs boot `ip pd | hi` with the internal
+> pull-down still opposing the carrier's external pull-up, `pinctrl get` has two output shapes, and
+> OUT5 pulses landed at **PASS 496–504 ms / FAIL 98–100 ms** over 20 cartons with none outside the
+> decode band. That last number was taken on a near-idle machine and **bench test 6 still wants 100
+> cartons under read load** before it is trusted.
+>
+> **One decision made rather than asked, and the laptop should hear it:** removing the
+> `matched >= expected` short-circuit from `ResultMapper` also changed **Managed Reading**. A
+> `timed: true` read that ran its full window with its count met used to report `COUNT_REACHED` and
+> now reports `SETTLED` or `TIMEOUT` on the evidence. Handoff-05 §3.3 is scoped to Super Fast Mode
+> and did not call this path out; one rule over one field was chosen deliberately, because two rules
+> over one field is how `V1Service` and `ResultMapper` drifted apart before. **`countReachedAt` is
+> the name chosen for §6.3's new field**, which the laptop asked to be told.
+
+1. ~~**Super Fast Mode's close condition changes**~~ **— DONE** (handoff §3.3). Count-met no longer ends a carton —
    it is recorded with a timestamp. **Settle or the IN2 edge closes, whichever comes first**; the
    read budget stays as the `TIMEOUT` backstop. In code this is `V1Service.superFastSpec()`:
    `exitOnSettle` becomes unconditionally **true**, `exitOnCount` defaults **false**.
@@ -140,19 +172,19 @@ disagree, the code is wrong.** Do not round any timing to a nicer figure.
      discarded. Only an IN1 edge opens a window.
    - Fix the now-wrong javadoc on `ArmRequest.expectedCount` and `SessionSpec.exitOnSettle` **in the
      same commit** — that javadoc is the only place this policy is written down in code.
-2. **`exitOnCount` stays a real API-settable flag** (§3.3.1) — optional on the arming call,
+2. ~~**`exitOnCount` stays a real API-settable flag**~~ **— DONE** (§3.3.1) — optional on the arming call,
    defaulting to false, absent must never read as true, same name on the wire as in the code, and
    reported by `GET /api/v1/mode`. It is an arming-time decision, not per-carton.
-3. **`RESULT` on OUT5 (BCM 21) — new firmware** (§2.2). One width-encoded pulse per carton:
+3. ~~**`RESULT` on OUT5 (BCM 21) — new firmware**~~ **— DONE** (§2.2). One width-encoded pulse per carton:
    **100 ms = FAIL, 500 ms = PASS**. Exactly one, never a retry. Emit **asynchronously** so a 500 ms
    hold cannot block the next carton, and **log the achieved width** so drift shows up here rather
    than as a customer complaint. There is no "no verdict" — reaching the end undecided emits FAIL.
    The real deadline is the next carton's ZONE_ARRIVE, not the PLC's 60 s window.
-4. **`HEARTBEAT` on OUT6 (BCM 12) — new firmware** (§2.3). 1 Hz, 500 ms high / 500 ms low, **on its
+4. ~~**`HEARTBEAT` on OUT6 (BCM 12) — new firmware**~~ **— DONE** (§2.3). 1 Hz, 500 ms high / 500 ms low, **on its
    own thread with nothing else on it**. The PLC faults the line if it sees no transition for 3 s,
    so it must survive a read, a callback retry storm and a spool replay. It means only "the
    application is running" — deliberately not "the module is up".
-5. **`SHUTDOWN_REQUEST` on IN3 (BCM 18) — new firmware** (§4). Five 200 ms pulses inside 5 s;
+5. **← NEXT. `SHUTDOWN_REQUEST` on IN3 (BCM 18) — new firmware** (§4). Five 200 ms pulses inside 5 s;
    four or six is not a request and is discarded silently. `GpioEdgeMonitor` needs a **third line**
    plus a burst recogniser — and note that adding line 18 changes the `gpiomon` command line and its
    parse. Keep "missing hardware is degradation, not failure": a bench with no PLC must still start.
