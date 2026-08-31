@@ -235,6 +235,15 @@ guessing at signatures.
   they land on whichever tag is strongest — so a commissioning bug that only appears once you target
   a *specific* tag is exactly the shape to expect. A weaker tag still fails at 27 dBm, but honestly:
   `MT_CMD_FAILED_ERR / 0x42b PROTOCOL INSUFFICIENT POWER`, naming one tag to reposition.
+
+  **`MT_CMD_NO_TAG_ERR` has a second cause, and it is not power: a silenced Gen2 session.**
+  2026-08-31, at `writePower = 2700` on tags that had been written successfully before, every
+  TID-targeted write in three separate batches failed with it. The tags were under `session: 2` and
+  had gone quiet — `totalReads` frozen, nothing heard for twelve minutes — so the module was
+  telling the exact truth and the write path had nothing to talk to. **Before suspecting power,
+  check the reader is currently hearing tags at all**: `totalReads` climbing and
+  `secondsSinceLastRead` near zero on `/api/reader/status`. A write cannot reach a tag that is not
+  answering, and the two failures are indistinguishable from the return code alone.
 - **Plain inventory start/stop is NOT rate-limited, and the `MODULE_NEED_RESTART` rule below has
   been over-applied.** Measured on the production module 2026-08-31: **30 `StartReading` /
   `StopReading` cycles in 30 seconds** — 600 ms on, 400 ms off, 60 restarts a minute, 7.5× the
@@ -393,6 +402,16 @@ guessing at signatures.
   read is under a second so mid-box re-answering may not matter), or a Select forcing
   inventoried → A at the start of each box (`SelC_Inventoried_S2` +
   `SelCmd_Action.Mat_SLorA_NMat_no`). Bracket the real persistence before choosing.
+
+  **Worse than that, measured 2026-08-31 with a continuously-on carrier: the silence is not 15 s,
+  it is indefinite.** The population answered once — 94 reads — and then nothing for **twelve
+  minutes** with the carrier up and `secondsSinceLastRead` climbing the whole time. That is correct
+  Gen2 behaviour, because S2's flag is held for as long as the tag stays *powered*, and the ">15 s"
+  figure above was measured across carrier-**off** gaps, which is a different and much gentler
+  case. **Do not run `session: 2` without the carrier actually dropping between cartons**
+  (`tunnel.v1.triggered-carrier`). The unit now runs **S1** by decision, which self-decays even
+  while powered; that choice is unverified against this stock and wants watching for a tag
+  re-answering mid-carton and inflating a count.
 - **RF mode IDs come in three numbering spaces, and `MTR_PARAM_POTL_GEN2_TAGENCODING` accepts two
   of them.** Read `Reader$RFMODE` out of the vendor jar: `RFM_7_EX_SFM = 107` is the Silion E-series
   profile space (100 + profile number), while `RFM_222_EX22 = -16776994 = 0xFF000000 | 222` carries
