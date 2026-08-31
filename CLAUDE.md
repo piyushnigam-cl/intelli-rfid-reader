@@ -10,8 +10,17 @@ hardware behaviour that are not derivable from the code.
 | RFID module | Silion **SIM7500**, built on an Impinj **E710** Gen2 RF chip |
 | Host | Raspberry Pi **Compute Module 4**, on board the reader — this runs the apps |
 | Architecture | **aarch64** — use `libs/aarch64/libModuleAPIJni.so` |
-| Serial port | **Confirmed `/dev/ttyAMA0`** on the CM4 bench rig (2026-08-27). A USB bridge gives `/dev/ttyUSB0` |
-| Region | `RG_IN` is the intent (865–867 MHz Indian band) — but **the bench module refuses it**; see below |
+| Serial port | **Confirmed `/dev/ttyAMA0`** on the CM4 bench rig (2026-08-27) **and on the production v2.x carrier** (2026-08-29, with `disable-bt` + `uart3`; UART3 takes `ttyAMA3`). A USB bridge gives `/dev/ttyUSB0` |
+| Region | `RG_IN` is the intent (865–867 MHz Indian band) — **no module we have accepts it**; run `RG_EU3`, see below |
+
+**On the production v2.x carrier the module is off and held in reset at boot, and neither the app
+nor Linux does anything about it.** `RFID_EN` = GPIO22 (HIGH = on) and `RFID_NRST` = GPIO10
+(LOW = reset) both come up as inputs with the BCM2711's pull-down. Measured 2026-08-29: with GPIO10
+released, `InitReader_Notype` returns **`MT_UNKNOWN_READER_TYPE`** — a wrong answer rather than
+silence, which reads like a baud or SDK-version fault and is neither. Raise the antenna select
+first, then EN, then NRST: `pinctrl set 8 op dh; pinctrl set 9 op dl; pinctrl set 22 op dh;
+pinctrl set 10 op dh`. The bench dev board needs none of this, so it is a production-only failure
+mode. See `CM4-PRODUCTION-BRINGUP.md` step 7.
 
 The apps run **on the reader itself**, not on a PC talking to a remote reader.
 
@@ -40,6 +49,29 @@ Consequences, both directions:
 
 What is worth writing back into this file after a CM4 session: corrected API signatures, module
 quirks, the actual serial port, tuned configuration values, and anything that surprised you.
+
+### Closing a session — do this without being asked again
+
+**When Piyush hints that the session is ending, that hint is the instruction.** "That's it for
+today", "I'm heading off", "let's wrap up", "good night", "we'll continue tomorrow" — treat any of
+them as the trigger and run the whole close-out before replying that you are done. Do not ask
+whether to do it; ask only if something in it would destroy work.
+
+1. **Write the findings into the markdown.** Corrected signatures, module quirks, measured values,
+   anything that surprised you — into this file, and into the runbook or handoff the work belongs
+   to. A fact learned at the module and left in the transcript is lost.
+2. **Update `RESUME-NEXT-SESSION.md`** so the next session can start cold: what changed, what state
+   the unit was left in, and the next actions in order.
+3. **Update memory** — the durable, cross-session facts that are not derivable from the repo.
+4. **Commit and push everything**, in every repository that changed. The workspace root and each
+   app under `apps/` are separate repos with separate remotes, so walk them all rather than
+   committing at the root and assuming it covered the apps. Push, do not just commit — an
+   unpushed commit on this board is invisible to the laptop, and the laptop is where the next
+   design session happens.
+
+The failure this prevents is specific and has already happened: a CM4 session that measured real
+hardware behaviour, wrote none of it down, and pushed nothing, leaving the laptop to design its next
+draft against facts the module had already disproved.
 
 ## Repository layout
 
@@ -92,8 +124,30 @@ such a thing exists.
 
 ## Stack
 
-Java 17, Maven, Spring Boot 3.4.1. Spring Boot was chosen after confirming the CM4 has headroom —
+Java 21, Maven, Spring Boot 3.4.1. Spring Boot was chosen after confirming the CM4 has headroom —
 Actuator health and metrics matter on a reader nobody can walk up to.
+
+**The target moved 17 → 21 on 2026-08-29**, when the production CM4 came up on Debian 13 (Trixie),
+whose archive carries no `openjdk-17-jdk` at all. Taking the platform's maintained default beat
+pinning a JDK the distribution has dropped. **The bench rig is still Java 17 on Bookworm**, so the
+two machines now differ on this axis: a failure on one that will not reproduce on the other is worth
+suspecting here first.
+
+The part that was a decision rather than a measurement is **the vendor JNI under 21**: there is no
+bytecode to recompile in `libModuleAPIJni.so`, so a green build proves nothing about it. The risk
+splits in two, and only the first half is closed:
+
+- **Load and bind: verified 2026-08-29 on the production CM4.** `new Reader()` under Debian's
+  OpenJDK 21.0.12.1 aarch64 triggers `JniModuleAPI`'s static initialiser and returns cleanly, with
+  `java.library.path` pointing at the SDK's own `libs/aarch64`. Core and tunnel also build and pass
+  their 74 tests on 21.
+- **Call time against a real module: closed 2026-08-29 on the production CM4.** Step 8's probes
+  drove a real SIM7500 through the JNI on OpenJDK 21 — identity, every region set and read back,
+  hop tables, and five 1 s inventory sweeps returning **18 of 18 tags each**, with `TAGINFO` structs
+  marshalled back intact (EPC, RSSI, frequency, read count). Nothing on this board needs Java 17.
+
+So the JDK is cleared: if this unit misbehaves at the module, look elsewhere first. The bench rig
+remains on 17 as a comparison point.
 
 ## Build order
 
@@ -159,6 +213,33 @@ guessing at signatures.
   enum values. Permanent lock types are irreversible.
 - **Select filters are sticky module state.** A filter left set makes the reader look broken.
   `TagOperations.clearFilter()` exists for this; call it in a `finally`.
+- **A TID Select filter really does target one tag, and that is what makes batch commissioning
+  possible.** Measured on the production module 2026-08-29 with the whole population in the field:
+  `MTR_PARAM_TAG_FILTER` on bank TID, bit 0, 96-bit pattern, then `WriteTagEpcEx` — the write landed
+  on exactly the targeted tag, the filtered read-back returned it, and **no other tag changed**.
+  Verified independently afterwards by re-reading the field: 8 of 8 claimed writes were on the right
+  tag, and every tag the API reported as failed still carried its old EPC. The order does not
+  matter: filter-then-access works with or without an inventory round in between, and whether or not
+  continuous inventory ran first.
+- **But a filtered *inventory* leaks on the first round after the filter changes.** The first
+  `TagInventory_Raw` after setting a filter returned 2 and 4 tags in two runs where exactly 1
+  matched; every subsequent round returned only the match. Reproducible, and the extra tags were all
+  from the preceding unfiltered round — a stale buffer, not a broken Select. **Single-tag access
+  (`GetTagData` / `WriteTagEpcEx`) never leaked**, which is why commissioning uses it and does not
+  trust a filtered inventory to singulate.
+- **Writing needs more power than reading, and the failure is `MT_CMD_NO_TAG_ERR` rather than
+  anything about power.** Measured 2026-08-29 on tags that were being read perfectly at the time:
+  at `writePower = 2000` (20 dBm) **every** TID-filtered write returned `MT_CMD_NO_TAG_ERR`; at 2700
+  the same writes on the same tags returned `MT_OK_ERR`. The access-password argument makes no
+  difference (`null` and `new byte[4]` behave identically). Unfiltered writes hide this, because
+  they land on whichever tag is strongest — so a commissioning bug that only appears once you target
+  a *specific* tag is exactly the shape to expect. A weaker tag still fails at 27 dBm, but honestly:
+  `MT_CMD_FAILED_ERR / 0x42b PROTOCOL INSUFFICIENT POWER`, naming one tag to reposition.
+- **`ReaderService.whilePaused` nests, and commissioning relies on it.** It stops inventory only if
+  the reader is currently reading, so an outer `whilePaused` around a whole batch makes the inner
+  ones no-ops. That turns three inventory restarts per tag into one per batch — an 18-tag batch used
+  to ask the module for 54 restarts, and four inside thirty seconds is what produces
+  `MODULE_NEED_RESTART`.
 - **Ex10 fast mode and Impinj fast mode are mutually exclusive and both sticky.** `ReaderSession`
   clears the other on every mode change; skipping that gives a reader whose behaviour depends on
   what ran before it. **Corrected 2026-08-28:** on the bench SIM7500 Impinj fast mode cannot be set
@@ -178,7 +259,24 @@ guessing at signatures.
   succeeds but does **not** satisfy it, so `new Reader()` still throws `UnsatisfiedLinkError` — 
   surfacing as an HTTP 500, not a 409. **Every launch command and systemd unit must pass
   `-Djava.library.path=/opt/intelli/lib`.** Verified on the CM4 2026-08-27.
-- **Region is a firmware SKU limit, and the bench module is locked to `RG_EU3`.** Setting each
+- **Region is a firmware SKU limit, the two modules differ, and neither accepts `RG_IN`.** The
+  production SIM7500 on the v2.x carrier accepts **`RG_NA` (1), `RG_EU3` (8), `RG_PRC` (6) and
+  `RG_OPEN` (255)** and refuses everything else with `MT_CMD_FAILED_ERR` — and it **ships set to
+  `RG_NA`**, 902–928 MHz, which is illegal to key up on in India. Region is therefore not a setting
+  that can be left at its default on a production board. Same firmware as the bench module
+  (hw `31.00.00.80`, sw `20.26.03.30`), so the SKU difference is not a version difference.
+  Measured 2026-08-29.
+- **The hop table is writable, and it is how this project reaches the Indian band without `RG_IN`.**
+  `MTR_PARAM_FREQUENCY_HOPTABLE` takes a `HoptableData_ST { int[] htb; int lenhtb; }` in kHz.
+  `RG_EU3`'s stock table is 865700/866300/866900/**867500**, and only the first three are inside
+  India's 865–867 MHz allocation. Writing `{865700, 866300, 866900}` under `RG_EU3` is accepted and
+  reads back as a 3-entry table. Two rules, both measured on the production module 2026-08-29:
+  **the table must be a subset of the region's own grid** (the same channels under `RG_OPEN`, whose
+  grid is a coarse 860–960 MHz 10 MHz ladder, are refused), and **`ParamSet` on the region rewrites
+  the table**, so the hop table must be written *after* the region on every connect.
+  `ReaderSession.applyConfig()` does not do this yet — it should, with the same read-back as the
+  other six.
+- **The bench module is locked to `RG_EU3`.** Setting each
   `Region_Conf` and reading it back is the only way to find out: `MTR_PARAM_RF_SUPPORTEDREGIONS`
   returns `MT_INVALID_PARA`. On the bench SIM7500 every region except `RG_EU3` (8) — `RG_IN` (4) and
   plain `RG_EU` (2) included — is refused with `MT_CMD_FAILED_ERR / 0x10b FAULT_INVALID_REGION`.

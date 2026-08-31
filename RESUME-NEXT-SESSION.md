@@ -1,11 +1,225 @@
 # Resume here — CM4 session, next sitting
 
-Written at the end of 2026-08-28, **updated 2026-08-29**. Everything below is measured on hardware
+Written at the end of 2026-08-28, **updated 2026-08-31**. Everything below is measured on hardware
 unless it says otherwise.
 
-**Read `HANDOFF-CM4-TO-LAPTOP-TUNNEL-03.md` first** — it is the full build report for the `/api/v1`
-layer and it answers the laptop's five audit questions. This file is the short version plus what to
-do next.
+**Read `HANDOFF-LAPTOP-TO-CM4-TUNNEL-05.md` first — it is the current work list.** The PLC interface
+is closed and sent to the vendor, who is writing ladder against it now; it changes Super Fast Mode's
+close condition and adds three pieces of firmware plus one endpoint. The ordered plan is in §−1
+"Next, in order". `HANDOFF-CM4-TO-LAPTOP-TUNNEL-03.md` remains the full build report for the
+`/api/v1` layer and answers the laptop's five audit questions. This file is the short version plus
+what to do next.
+
+---
+
+## −1. If you are on the production CM4, start here — bring-up COMPLETE (2026-08-29)
+
+The v2.x unit is through `CM4-PRODUCTION-BRINGUP.md` **except step 10**. As of 2026-08-29 the
+tunnel runs on this board and serves v1 reads against the real module.
+
+| Step | State |
+|---|---|
+| 0 SDK, 1 packages, 4 native lib, 5 clones, 6 build | **done** |
+| 2 UART | **done, verified** — reader is `/dev/ttyAMA0`, `uart3` took `ttyAMA3` |
+| 3 directories, 6 site config | **done** — `/etc/intelli/intelli-rfid-tunnel/application.yml` installed `root:intelli-sbc 640`, three API keys issued |
+| 7 GPIO enable | **done by hand** — and it needs a third pin, see below |
+| 8 probe | **done: 18 of 18 tags, five sweeps, 27 dBm, `RG_EU3`, Java 21** |
+| 9 run by hand | **done: two v1 reads, 18 distinct EPCs through the full contract path** |
+| 10 systemd | **not started** — the only step left |
+
+### Step 9, what it actually returned
+
+`matched: 0` / `unexpected: 2` / `undecodable: 16` on a 3 s timed read for
+`ean 8905527164445` — the whole 18-tag bench population, and `matched` is 0 only because no tag
+here carries that SKU. `sequence` advanced 1 → 2, `spoolDepth` 0, module 34 °C. First read stopped
+`TIMEOUT`, second `SETTLED`.
+
+- **The site config runs `session: 0`, marked bring-up only.** Packaged `session: 2` plus a
+  continuously-on carrier (the sensors are disabled) makes this tag stock answer once and go silent
+  for >15 s. Revert to 2 when the sensors are live.
+- **`/api/v1/reader/status` needs the INVENTORY scope**, not ADMIN. The operator key gets
+  `403 insufficient_scope` there — scope rules working, not a misconfiguration.
+- **`degraded` is absent and should be**: it only speaks for a broken spool or a reader *armed*
+  for Super Fast Mode. The runbook used to claim otherwise and is corrected.
+- **Open item 5 reproduced on production hardware:** the tags' own EAN `8905190881260` is rendered
+  in read results next to `gtin14: 98905190881260`, but rejected as a *request* parameter with
+  `400 invalid_ean` (mod-10). It is a GTIN-14 variable-measure item, so its 13-digit form is not a
+  valid EAN-13. The read path and the request path disagree about what an `ean` is.
+
+### What the probes settled
+
+- **`/dev/ttyAMA0` is the reader**, on this board as on the bench. Nothing needs renaming.
+- **The vendor JNI is clean at call time on Java 21.** Both halves of that risk are now closed.
+- **`RG_IN` is refused here too.** This module accepts `RG_NA`, `RG_EU3`, `RG_PRC`, `RG_OPEN` — a
+  wider SKU than the bench's, same firmware — and **arrives set to `RG_NA`**, which must not be
+  keyed up in India. Run `RG_EU3`.
+- **The hop table is writable, and that is the India answer.** `RG_EU3` hops
+  865.7/866.3/866.9/**867.5**; the last is outside 865–867. Writing `{865700, 866300, 866900}`
+  under `RG_EU3` sticks. **Setting the region rewrites the table**, so order matters, and
+  `ReaderSession.applyConfig()` does not do it yet.
+- Module: hw `31.00.00.80`, sw `20.26.03.30`, `MODULE_ONE_ANT`, `antportnumbers = 1` — the module
+  itself confirms `antenna-count: 1`. Power reads 5–30 dBm; **the 27 dBm ceiling is the carrier's
+  and the module does not enforce it.** 29 °C idle, 32 °C after five sweeps.
+
+### The thing that will cost you an hour if you forget it
+
+**`RFID_NRST` (GPIO10) has to be driven HIGH, not just `RFID_EN` (GPIO22).** Both boot as inputs
+with the BCM2711 pull-down, so the module comes up powered *and held in reset*. Measured: with
+GPIO10 released, `InitReader_Notype` returns **`MT_UNKNOWN_READER_TYPE`** — which looks like a baud
+or SDK problem and is not. The full sequence, in order:
+
+```bash
+pinctrl set 8 op dh && pinctrl set 9 op dl   # ANT1 first - never key up into an open port
+pinctrl set 22 op dh                          # RFID_EN
+pinctrl set 10 op dh                          # RFID_NRST out of reset
+```
+
+These do not survive a reboot and nothing in the app does them. Step 10's `ExecStartPre` must.
+
+### Commissioning was rewritten this afternoon — read this before writing tags
+
+`POST /api/v1/tags/write` with `count > 1` now **targets each tag by its factory TID** through a
+Select filter, rather than writing whichever tag answers. The old path wrote the wrong tags and
+misreported which: a count=18 batch reported 2 written and 16 failed when five of the "failures"
+were on tags. Both halves of write-then-verify are now pinned to one tag, with a TID read-back
+proving the filter applied, and the whole batch runs inside **one** `whilePaused` instead of three
+inventory restarts per tag.
+
+Proven on hardware 2026-08-29 with 11 tags in the field: **8 written, 3 refused, and 8 of 8 verified
+on the right tag afterwards** — every failure naming its own TID and leaving that tag untouched.
+
+Two things go with it:
+
+- **`write-power-dbm10` must be 2700, not 2000** — and it is, in the site config since
+  2026-08-29. At 20 dBm every targeted write returns `MT_CMD_NO_TAG_ERR` on tags being read
+  perfectly at that moment. Unfiltered writes hid it, because they land on the strongest tag.
+  Do not lower it back towards the packaged default.
+- **The core change is uncommitted and has no test.** `CommissioningController`,
+  `CommissionRequest.targetTids`, `CommissionResponse.Failed.tid`. It was proven at the module, not
+  in CI, and the TID path deserves a test before it is trusted anywhere but this bench.
+
+Serials 1–18, 45, 46, 99, 101–103 and 301–311 are consumed on the bench stock; start above 312.
+`bench-tag-register.jsonl` is stale — it still lists every tag as `to-write`.
+
+### Where the unit was left, end of 2026-08-29
+
+- **Bring-up is COMPLETE.** `intelli-rfid-tunnel.service` is installed, enabled and active, running
+  the config-driven launch with no overrides. The unit raises all four GPIO pins itself in
+  `ExecStartPre`, so a reboot now comes up reading without a person. Source of truth for the file:
+  `~/intelli-rfid-tunnel.service`, and runbook step 10 matches it.
+- **`systemctl {start,stop,restart} intelli-rfid-tunnel`** — and stop it before running any probe:
+  one process owns `/dev/ttyAMA0`.
+- **All 18 bench tags are commissioned** to GTIN-14 `08905527164445`, serials 1–17 plus 312, and
+  `bench-tag-register.jsonl` is reconciled. **All four control tags were written over**, so this
+  bench can no longer exercise `undecodable` or `unexpected` — restore them from `originalEpc`
+  before running contract tests here. See `tools/bench-tag-register.md`.
+- **Nothing is committed.** Docs at the workspace root, `bench-tag-register.{jsonl,md}` and the
+  commissioning change in core are all uncommitted, and nothing has been pushed.
+
+### Next, in order — re-planned 2026-08-31 after the laptop's handoff-05
+
+**The PLC work below is now the largest item in the project and it has an external deadline: the
+vendor is writing ladder against the sent document right now.** It outranks the loose ends in B.
+
+#### A. The PLC interface — `HANDOFF-LAPTOP-TO-CM4-TUNNEL-05.md`
+
+The interface is **closed**. `docs/Intelli-RFID-Reader-DVP12SA211R-PLC-Integration.docx` went to the
+PLC vendor on 2026-08-30 and none of its numbers will move. **Where the code and that document
+disagree, the code is wrong.** Do not round any timing to a nicer figure.
+
+1. **Super Fast Mode's close condition changes** (handoff §3.3). Count-met no longer ends a carton —
+   it is recorded with a timestamp. **Settle or the IN2 edge closes, whichever comes first**; the
+   read budget stays as the `TIMEOUT` backstop. In code this is `V1Service.superFastSpec()`:
+   `exitOnSettle` becomes unconditionally **true**, `exitOnCount` defaults **false**.
+   - `stopReason` and `complete` become **fully independent**. A carton that settles short is
+     `SETTLED` + `complete: false`; one that met its count then left is `PACKAGE_EXITED` +
+     `complete: true`. Neither softens the other.
+   - **`ResultMapper`'s stop-reason precedence must be re-derived** — the old ordering let
+     count-not-met beat everything, and that is wrong twice over now.
+   - Publish **once per carton**: the IN2 edge following a settle-closed carton is consumed and
+     discarded. Only an IN1 edge opens a window.
+   - Fix the now-wrong javadoc on `ArmRequest.expectedCount` and `SessionSpec.exitOnSettle` **in the
+     same commit** — that javadoc is the only place this policy is written down in code.
+2. **`exitOnCount` stays a real API-settable flag** (§3.3.1) — optional on the arming call,
+   defaulting to false, absent must never read as true, same name on the wire as in the code, and
+   reported by `GET /api/v1/mode`. It is an arming-time decision, not per-carton.
+3. **`RESULT` on OUT5 (BCM 21) — new firmware** (§2.2). One width-encoded pulse per carton:
+   **100 ms = FAIL, 500 ms = PASS**. Exactly one, never a retry. Emit **asynchronously** so a 500 ms
+   hold cannot block the next carton, and **log the achieved width** so drift shows up here rather
+   than as a customer complaint. There is no "no verdict" — reaching the end undecided emits FAIL.
+   The real deadline is the next carton's ZONE_ARRIVE, not the PLC's 60 s window.
+4. **`HEARTBEAT` on OUT6 (BCM 12) — new firmware** (§2.3). 1 Hz, 500 ms high / 500 ms low, **on its
+   own thread with nothing else on it**. The PLC faults the line if it sees no transition for 3 s,
+   so it must survive a read, a callback retry storm and a spool replay. It means only "the
+   application is running" — deliberately not "the module is up".
+5. **`SHUTDOWN_REQUEST` on IN3 (BCM 18) — new firmware** (§4). Five 200 ms pulses inside 5 s;
+   four or six is not a request and is discarded silently. `GpioEdgeMonitor` needs a **third line**
+   plus a burst recogniser — and note that adding line 18 changes the `gpiomon` command line and its
+   parse. Keep "missing hardware is degradation, not failure": a bench with no PLC must still start.
+   - **The shutdown ordering is the whole point.** Heartbeat keeps toggling through steps 1–5 and
+     goes low **only after the serial counter is committed and fsynced**. Dropping it at step 1
+     tells the PLC "safe to cut power" while we are still writing — building the exact corruption
+     the sequence exists to prevent. Whole sequence must fit in 60 s.
+   - **IN3 is no longer `READER_ENABLE`.** Any code holding the reader up or down on an IN3 *level*
+     must go.
+6. **`GET`/`POST /api/v1/diagnostics/io`** (§5a) — ADMIN scope, explicit `ScopeRules` entry rather
+   than relying on default-deny. The admin UI's PLC I/O tab is already built against it and shows
+   404 until this lands.
+   - **`level` is the FIELD sense, not the GPIO level.** Inputs are inverted at the GPIO, so do the
+     inversion inside the reader. Get this wrong and the screen, the vendor's drawing and the
+     multimeter all disagree — and the person with the multimeter is right. This is the single most
+     likely thing to get wrong here, and it looks like working software until someone is on a ladder.
+   - `POST` returns **`409 reader_armed`** while Super Fast is armed; `GET` is never refused.
+     Read every channel back after applying and return the read-back, never what was asked for.
+7. **Do not**: drive OUT7 (BCM 13) or read IN4 (BCM 25) — both parked; use the SIM7500's own GPI for
+   the trigger; treat IN3 as a level; emit more than one RESULT pulse.
+8. **Bench tests 1–15 in handoff §7.** Test 6 is the one not to skip: a 380 ms pulse where 500 ms
+   was meant fails as a **silent wrong answer** at the customer, while everything else fails loudly.
+   Edges can still be produced by flipping the pins' internal pulls, as before.
+
+> **Already correct — do not "fix" these** (handoff §0.1): the J26 field-input trigger path, the
+> `stdbuf` wrapper in the gpio config, and the `degraded` fallback and its reporting.
+
+#### B. The board's own loose ends
+
+9. **Test the TID commissioning path.** Proven at the module 2026-08-29, still has no unit test.
+10. **Reboot once and confirm the service comes up reading** — the pins, the UART and the systemd
+    unit have never been exercised together from cold.
+11. **`RG_IN`: the updated vendor Java API doc set was expected today, 2026-08-31.** Everything runs
+    on `RG_EU3` by decision until it lands. When it does, the first question is whether it carries
+    new module firmware or an unlock procedure — **a doc change alone cannot alter what the module
+    accepts.**
+12. **The hop-table narrowing in `applyConfig()`** (open item C in the runbook). Until it lands this
+    board hops 867.5 MHz, outside the Indian allocation, and its channel plan is whatever the last
+    probe left. Region must be written **before** the table, because setting the region rewrites it.
+13. **Re-probe `bench-tag-register.jsonl`.** All 18 tags were written on the 29th, so its `role`
+    values record what was planned on the 28th rather than the state of the rig. The TID keying
+    survives, which is why it was keyed that way. Any test assuming "2 of 18 valid GS1" needs its
+    assumption re-checked against what is actually on the tags.
+
+### One contradiction in the new documents — resolve before building to it
+
+`PLC-INTEGRATION-DVP12SA2.md` §4 carries the **superseded** channel map and calls itself
+authoritative (§4.3: *"§4 above is now the authoritative copy"*). Verified against the `.docx`
+itself on 2026-08-31 — the `.docx` and handoff-05 agree, and the `.md` does not:
+
+| | `PLC-INTEGRATION-DVP12SA2.md` §4 | **The `.docx` + handoff-05 (authoritative)** |
+|---|---|---|
+| OUT5 | `RESULT_OK` | **`RESULT`**, width-encoded |
+| OUT6 | `RESULT_FAIL` | **`HEARTBEAT`** |
+| OUT7 | `SPARE_OUT` | **parked** |
+| IN3 | `SPARE_IN` | **`SHUTDOWN_REQUEST`** |
+| IN4 | `SPARE_IN` | **parked** |
+
+Handoff-05's "Changed?" column is written as a diff *against* that §4 map, so it is the intended
+baseline — but nothing in the file says so. **Take channel functions from the `.docx`, never from
+§4**, and ask the laptop to add a supersession header. Its §8 open item *"locate
+`PLC-Digital-IO-Interface.md`, not present on this machine"* can also be closed: it is here at
+`docs/PLC-Digital-IO-Interface.md`, and handoff-05 §0 already rules it superseded on channel
+assignment and semantics, still sound for electrical reasoning.
+
+**Committed and pushed 2026-08-31** across all four repos — root docs, the TID commissioning change
+in core, the Java 21 poms, `bench-probe/run.sh` and the tag register. Nothing is outstanding.
 
 ---
 
@@ -19,16 +233,17 @@ only one.
 **`CM4-PRODUCTION-BRINGUP.md` is the runbook for that unit**, and it is the first thing to read if
 you are on the new CM4. Fresh flash → packages → UART → SDK → the four clones → build → site config
 → systemd, each step with a verification line. Steps 1–6 are what is installed and working here;
-Step 7 onwards is read off `docs/Hardware-IntelliRFIDv2.md` and **has never been run against the
-v2.x board**.
+steps 7 and 8 have now been run on the v2.x board (§−1), and **steps 3, 9 and 10 are still read off
+`docs/Hardware-IntelliRFIDv2.md` rather than measured**.
 
 Its action box is the part that matters: **five things about that carrier the code does not handle**,
 each enough on its own to make a correctly installed unit read nothing — `RFID_EN` on GPIO22 leaves
 the module **off at boot**; the SIM7500 is **mono-static**, so `antenna-count` is 1 and both antennas
 sit behind an SP4T on GPIO8/9 that nothing drives; **GPIO23/24 are active-LOW field inputs** while
 `GpioEdgeMonitor` is hardcoded to rising edges; the power ceiling is **27 dBm**, not 30; and the
-antenna port must be selected **before** the reader is enabled. Region `RG_IN` is still unanswered
-on the new module and Step 8 answers it in thirty seconds.
+antenna port must be selected **before** the reader is enabled. To that five, add a sixth found on
+the board itself: **`RFID_NRST` on GPIO10 boots low and holds the module in reset** (§−1). Region
+`RG_IN` is answered — refused on this module too; run `RG_EU3` with a narrowed hop table.
 
 **Open item 6 is done: a faulted reader now reconnects on its own** (see §4.6). Verified on hardware
 against a real `IO_RECV_TIMEOUT`.
