@@ -589,8 +589,8 @@ ExecStartPre=+/usr/bin/pinctrl set 22 op dh
 ExecStartPre=+/usr/bin/pinctrl set 10 op dh
 
 ExecStart=/usr/bin/java \
-  -Djava.library.path=/home/intelli-sbc/rfid/intelli-rfid-reader/API-linux-java-v260721/libs/aarch64 \
-  -jar /home/intelli-sbc/rfid/intelli-rfid-reader/apps/intelli-rfid-tunnel/target/intelli-rfid-tunnel-1.0.0-SNAPSHOT.jar \
+  -Djava.library.path=/opt/intelli/lib \
+  -jar /opt/intelli/intelli-rfid-tunnel/intelli-rfid-tunnel.jar \
   --spring.config.additional-location=file:/etc/intelli/intelli-rfid-tunnel/
 
 # A stopped service should be a quiet radio. EN only - NRST stays high, because idle is the
@@ -610,8 +610,16 @@ Four things in there are load-bearing, and each one has cost this project time:
   `InitReader` then answers `MT_UNKNOWN_READER_TYPE` — a wrong answer, not silence. Step 7.
 - **The pin order.** ANT1 select, then `RFID_EN`. Never bring RF up into an unterminated port.
 - **`-Djava.library.path`.** `rfid.reader.native-lib-path` does not substitute for it: the vendor's
-  static initialiser calls `System.loadLibrary`, which reads only `java.library.path`. This unit
-  points at the SDK tree because `/opt/intelli/lib` does not exist here.
+  static initialiser calls `System.loadLibrary`, which reads only `java.library.path`.
+- **The unit runs out of `/opt/intelli`, not the build tree, and that is not cosmetic.** It used to
+  launch `target/intelli-rfid-tunnel-1.0.0-SNAPSHOT.jar` directly, which meant **any `mvn clean` in
+  that directory deleted the jar from under the running service**. Nothing failed at that moment —
+  the JVM already had the file open — so it looked fine until the next restart, when systemd
+  crash-looped on `Unable to access jarfile`. That happened twice on 2026-08-31. Install with
+  `apps/intelli-rfid-tunnel/deploy/install.sh` (needs sudo), which copies the jar under a **stable,
+  unversioned name** and the aarch64 `.so` into `/opt/intelli/lib`. A unit file that has to be
+  edited whenever the project version changes is one that will eventually point at a jar nobody
+  built.
 - **`--spring.config.additional-location`.** Without it the app finds no API keys and refuses to
   start, which is by design.
 

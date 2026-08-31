@@ -116,6 +116,55 @@ Serials 1–18, 45, 46, 99, 101–103 and 301–311 are consumed on the bench st
 - **Nothing is committed.** Docs at the workspace root, `bench-tag-register.{jsonl,md}` and the
   commissioning change in core are all uncommitted, and nothing has been pushed.
 
+### Where this was left, end of 2026-08-31 (evening)
+
+**All six build items of the PLC work are done** (§A below). 141 tests pass, up from 74 this
+morning. The unit is running Super Fast Mode against real sensors and reading cleanly.
+
+**Measured tonight, 8 consecutive cartons — the reader is performing well.** 72 of 72 tag
+detections, every carton `SETTLED` with 9 of 9, durations 2560–2866 ms, RSSI −41.6 to −50.9 dBm with
+~1 dB per-tag stability. The finding that matters: **all 9 tags are found by 1016–1306 ms and the
+rest of every carton is the settle window**, so `settle-ms` is the only lever on carton time. Full
+write-up with charts: **https://claude.ai/code/artifact/e7cdc9d4-8651-44ba-a5ed-b10a30408d83**
+
+**Configuration this unit now runs** (site config `/etc/intelli/intelli-rfid-tunnel/`):
+`session: 1` (S1, chosen after S2 proved unusable — see below), `rssi-threshold-dbm: -72`,
+27 dBm, `RG_EU3`, GPIO enabled watching lines 23/24/18, `shutdown.pulses` set low for bench testing.
+
+**S2 is unusable on this tag stock and it takes the write path down with it.** With a
+continuously-on carrier the population answered once and went silent for **twelve minutes** — not
+the ">15 s" previously on record, which was measured across carrier-*off* gaps. While silent, every
+TID-targeted commissioning write failed with `MT_CMD_NO_TAG_ERR` at 2700, the power the docs
+prescribe. **That is a second cause for that error code and it is now in CLAUDE.md**: before
+suspecting power, check the reader is hearing tags at all.
+
+**The service now installs to `/opt/intelli`** and no longer launches from the Maven build tree.
+It had to: a `mvn clean` in `apps/intelli-rfid-tunnel` deletes the jar from under the running
+service, which fails silently until the next restart and then crash-loops. That happened twice.
+Deploy loop is now `mvn -o package` → `sudo deploy/install.sh` → `sudo systemctl restart`.
+**Confirm the unit file was actually swapped** — as of the last check `ExecStart` still pointed at
+`target/`, so the operator commands may not have been run.
+
+**Open, small, and worth doing early next session:**
+
+1. **`discoverTids()` has no freshness bound.** It reads a ring buffer with no age limit, so when
+   reads stop it confidently names tags last seen an hour ago and commissioning writes at ghosts.
+   This turned one clear failure into four misleading ones tonight. Add a `discovery-max-age` and
+   refuse with the age of the newest sighting.
+2. **`suppressedReads` merges the RSSI reject and the dedup reject** into one counter, so the RSSI
+   threshold is untunable — you cannot see what it is doing. Split it.
+3. **Edge polarity is still unresolved** — a field-asserted input is GPIO *low*, but the monitor
+   watches rising edges, so a 2 s `ZONE_ARRIVE` pulse opens the read on its trailing edge. Left
+   deliberately; Piyush is getting the optical sensor's details before choosing between wiring it to
+   match, `gpiomon --active-low`, or watching falling edges.
+4. **S1 is unverified against this stock.** Watch for a tag re-answering mid-carton and inflating a
+   count, or a carton that will not settle.
+5. **Module temperature was never read** under sustained load. It is now on `/api/reader/status`
+   as `temperatureC`. Bring-up recorded 29 °C idle and 32–34 °C after short bursts; nothing has
+   been measured after an hour of carrier.
+
+---
+
 ### Next, in order — re-planned 2026-08-31 after the laptop's handoff-05
 
 **The PLC work below is now the largest item in the project and it has an external deadline: the

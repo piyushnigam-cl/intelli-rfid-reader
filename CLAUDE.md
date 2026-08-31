@@ -556,6 +556,32 @@ equivalent and is reported as `degraded` in `/api/v1/reader/status`.
 PLC vendor. It replaces an earlier rule in which the exit sensor owned the end outright, the count
 and settle were both merely observed, and a count that was never met beat everything.
 
+**Tunnel v1 — a Super Fast carton is a fast read followed by a fixed wait, and the wait is the
+larger half.** Measured on the production CM4 2026-08-31 across **8 consecutive cartons** (9 tags,
+`session: 1`, 27 dBm, `RG_EU3`, settle 1500 ms): every carton found **all 9 tags by 1016–1306 ms**,
+then spent the rest of its 2560–2866 ms proving nothing further was coming. `durationMs −
+lastNewTagMs` equals the last tag's sighting to the millisecond, so **`settle-ms` is the only lever
+on carton time — the reading is already finished.** Settle fires at **1513–1591 ms**, not 1500: the
+watchdog runs on a ~100 ms tick and overshoots. `PACKAGE_EXITED` cartons in the same session came in
+at ~1.4 s because the IN2 edge cut the wait short, which is exactly what a conveyor's exit sensor is
+for.
+
+**Detection on the bench population is total, and the RSSI filter is discarding nothing.** Same
+measurement: **72 of 72 tag detections**, every carton `SETTLED` with 9 of 9. RSSI **−41.6 to
+−50.9 dBm**, each tag varying only ~1 dB run to run — so every tag sits **20 dB or more above the
+−72 dBm `rssi-threshold-dbm` floor**. Tighten toward −55/−50 to make it mean "the tags in front of
+the antenna", which is also how to stop commissioning's TID discovery picking arbitrary tags out of
+the whole population.
+
+**Singulation order is random and carries no meaning.** One tag was first at 57 ms in one carton and
+nearly last at 1219 ms in another, at unchanged signal strength. Nothing should read meaning into
+arrival order.
+
+**Reads per tag is only 2–3 per carton, which is a thin confidence signal.** Enough for detection,
+but a single dropped read takes a tag to 1 — and the read count is what the contract offers a WMS as
+evidence that a count is trustworthy. Re-measure on a real 40-article carton, where tags shadow each
+other, before relying on it.
+
 **Tunnel v1 — `endedAt` is simply when the read window closed.** Nothing mode-specific. It used to
 be substituted with the moment the count was met, because a sensor-driven carton went on sitting in
 the field until the conveyor moved it and reporting the exit moment inflated every duration by the
