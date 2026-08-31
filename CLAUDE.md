@@ -235,6 +235,19 @@ guessing at signatures.
   they land on whichever tag is strongest — so a commissioning bug that only appears once you target
   a *specific* tag is exactly the shape to expect. A weaker tag still fails at 27 dBm, but honestly:
   `MT_CMD_FAILED_ERR / 0x42b PROTOCOL INSUFFICIENT POWER`, naming one tag to reposition.
+- **Plain inventory start/stop is NOT rate-limited, and the `MODULE_NEED_RESTART` rule below has
+  been over-applied.** Measured on the production module 2026-08-31: **30 `StartReading` /
+  `StopReading` cycles in 30 seconds** — 600 ms on, 400 ms off, 60 restarts a minute, 7.5× the
+  figure the rule quotes — every cycle returning `MT_OK_ERR` and reading ~50 tags, 16 distinct EPCs,
+  no alert of any kind. `StartReading` costs **0–3 ms** and `StopReading` **20–60 ms**.
+
+  **So a triggered carrier is safe at any realistic carton rate**, which is what
+  `tunnel.v1.triggered-carrier` depends on. What this does *not* establish is what caused the
+  original failures: both recorded cases — toggling FastID per read, and commissioning's three
+  restarts per tag — changed a **parameter** alongside each restart (a custom `tagcustomcmd`
+  set, a Select filter). The reconfiguration is the remaining suspect and it has not been isolated,
+  so keep the rule for anything that reconfigures per operation and stop applying it to bare
+  start/stop. `ProbeRestartRate` in `intelli-rfid-reader-test/tools/bench-probe` is the measurement.
 - **`ReaderService.whilePaused` nests, and commissioning relies on it.** It stops inventory only if
   the reader is currently reading, so an outer `whilePaused` around a whole batch makes the inner
   ones no-ops. That turns three inventory restarts per tag into one per batch — an 18-tag batch used

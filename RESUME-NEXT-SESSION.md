@@ -153,6 +153,23 @@ disagree, the code is wrong.** Do not round any timing to a nicer figure.
 > decode band. That last number was taken on a near-idle machine and **bench test 6 still wants 100
 > cartons under read load** before it is trusted.
 >
+> ### The carrier is now triggered, and the restart-rate risk is measured and cleared
+>
+> **Carrier-off-between-cartons was documented as the design and was not implemented.** The carrier
+> ran from boot and nothing in the carton path stopped it; IN1 only opened a *logical* session over
+> a running tag stream. Observed on this board: `session: 2` plus a continuous carrier read 15 tags
+> once and heard **nothing for three minutes** — S2 holds the inventoried flag for as long as the
+> tag stays powered, so a second carton would read empty *permanently*, not for the ">15 s" on
+> record (that figure was measured across carrier-*off* gaps). Fixed in `b5cefd6`:
+> `tunnel.v1.triggered-carrier`, on by default, active only when the sensors are watching.
+>
+> **The risk that could have killed it is measured and gone.** One stop/start per carton looked
+> unsafe against CLAUDE.md's "four restarts in thirty seconds gives `MODULE_NEED_RESTART`".
+> Measured 2026-08-31 with `ProbeRestartRate`: **30 restarts in 30 s, all clean, ~50 tags every
+> cycle**, `StartReading` 0–3 ms, `StopReading` 20–60 ms. The old rule does not apply to bare
+> start/stop — both recorded failures changed a *parameter* alongside each restart, and that is the
+> remaining unisolated suspect.
+>
 > ### The edge polarity is wrong and is NOT yet fixed — decide this before bench testing
 >
 > **Field-asserted on an input is GPIO LOW** (24 V on the pin lights the opto and pulls it down),
