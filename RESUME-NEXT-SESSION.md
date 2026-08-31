@@ -127,7 +127,9 @@ The interface is **closed**. `docs/Intelli-RFID-Reader-DVP12SA211R-PLC-Integrati
 PLC vendor on 2026-08-30 and none of its numbers will move. **Where the code and that document
 disagree, the code is wrong.** Do not round any timing to a nicer figure.
 
-> **Progress, 2026-08-31 — items 1–5 are done.** 124 tests pass, up from 74.
+> **Progress, 2026-08-31 — items 1–6 are ALL done. Section A's build work is complete.**
+> 136 tests pass, up from 74. What is left in A is item 8, the bench tests, which need the app
+> running against real pins.
 >
 > | # | Item | State |
 > |---|---|---|
@@ -136,9 +138,9 @@ disagree, the code is wrong.** Do not round any timing to a nicer figure.
 > | 3 | `RESULT` on OUT5, width-encoded | **done** `d113515` |
 > | 4 | `HEARTBEAT` on OUT6 | **done** `87516ab` |
 > | 5 | `SHUTDOWN_REQUEST` on IN3 + the shutdown sequence | **done** `9f2492f` |
-> | 6 | `/api/v1/diagnostics/io` | **next — the last one** |
+> | 6 | `/api/v1/diagnostics/io` | **done** `7c6024c` + core `d93bdc0` |
 > | 7 | The "do not" list | partly enforced: `FieldIo.write()` refuses parked channels |
-> | 8 | Bench tests 1–15 | pending — needs the app running against real pins |
+> | 8 | Bench tests 1–15 | **next** — needs the app running against real pins |
 >
 > **`com.intelli.rfid.tunnel.plc` now exists and items 5 and 6 both sit on it**: `FieldChannel` is
 > the authoritative channel map, `FieldIo` owns the field-sense inversion, `PinctrlFieldIo` drives
@@ -150,6 +152,35 @@ disagree, the code is wrong.** Do not round any timing to a nicer figure.
 > OUT5 pulses landed at **PASS 496–504 ms / FAIL 98–100 ms** over 20 cartons with none outside the
 > decode band. That last number was taken on a near-idle machine and **bench test 6 still wants 100
 > cartons under read load** before it is trusted.
+>
+> ### The edge polarity is wrong and is NOT yet fixed — decide this before bench testing
+>
+> **Field-asserted on an input is GPIO LOW** (24 V on the pin lights the opto and pulls it down),
+> but `GpioEdgeMonitor` watches **GPIO rising** edges on all three lines. Confirmed empirically on
+> this board 2026-08-31 by driving line 18: a field-assert produced **0** events, the de-assert
+> produced **1**.
+>
+> So against the interface as documented — the PLC asserting a 2 s `ZONE_ARRIVE` pulse — the read
+> window opens on the **trailing** edge, two seconds after the carton arrived. Same for
+> `ZONE_EXIT`. **IN3 is unaffected in substance**: five asserted pulses still give five trailing
+> edges, so the burst count and window still work, shifted by 200 ms.
+>
+> **Left unchanged deliberately, on Piyush's instruction** — the optical sensor may be configured to
+> match instead, and a push button gives a rising edge on *release*, which is fine for manual
+> testing. Three ways out, and the choice is not made:
+>
+> 1. **Wire/configure the sensor** so the channel is de-asserted at the moment of interest. Check it
+>    against the `.docx`, which specifies `ZONE_ARRIVE` as a 2 s *pulse* — inverting at the panel
+>    means the vendor's ladder and the wiring must agree on which state is idle.
+> 2. **`gpiomon -l / --active-low`** — present on both v1 and v2. Flips edge sense so "rising" means
+>    *the channel became active*, matching what `FieldIo` already does for levels and the handoff's
+>    own wording ("a rising edge on IN1", where IN1 is the channel, not the pin). One flag.
+> 3. Watch falling edges explicitly.
+>
+> **Whichever is chosen, note the inconsistency it leaves today:** `/api/v1/diagnostics/io` reports
+> **field sense** (an asserted IN1 shows `HIGH`) while the edge monitor triggers on **raw GPIO**, so
+> on a real PLC the screen shows IN1 asserted at a moment the trigger has not fired. Those two
+> should end up agreeing.
 >
 > **A latent bug found and fixed while doing item 5, worth the laptop knowing.**
 > `GpioEdgeMonitor` built **libgpiod v1** arguments and this CM4 has **v2.2.1**, which renamed all
@@ -210,7 +241,7 @@ disagree, the code is wrong.** Do not round any timing to a nicer figure.
      the sequence exists to prevent. Whole sequence must fit in 60 s.
    - **IN3 is no longer `READER_ENABLE`.** Any code holding the reader up or down on an IN3 *level*
      must go.
-6. **← NEXT. `GET`/`POST /api/v1/diagnostics/io`** (§5a) — ADMIN scope, explicit `ScopeRules` entry rather
+6. ~~**`GET`/`POST /api/v1/diagnostics/io`**~~ **— DONE.** Original spec: (§5a) — ADMIN scope, explicit `ScopeRules` entry rather
    than relying on default-deny. The admin UI's PLC I/O tab is already built against it and shows
    404 until this lands.
    - **`level` is the FIELD sense, not the GPIO level.** Inputs are inverted at the GPIO, so do the
@@ -221,7 +252,7 @@ disagree, the code is wrong.** Do not round any timing to a nicer figure.
      Read every channel back after applying and return the read-back, never what was asked for.
 7. **Do not**: drive OUT7 (BCM 13) or read IN4 (BCM 25) — both parked; use the SIM7500's own GPI for
    the trigger; treat IN3 as a level; emit more than one RESULT pulse.
-8. **Bench tests 1–15 in handoff §7.** Test 6 is the one not to skip: a 380 ms pulse where 500 ms
+8. **← NEXT. Bench tests 1–15 in handoff §7.** Test 6 is the one not to skip: a 380 ms pulse where 500 ms
    was meant fails as a **silent wrong answer** at the customer, while everything else fails loudly.
    Edges can still be produced by flipping the pins' internal pulls, as before.
 

@@ -604,6 +604,17 @@ code is wrong**, and no timing in it may be rounded to a nicer number.
   with backoff, so a verdict dispatched behind it would arrive after the PLC's window had closed —
   a dead WMS would have turned every carton into a fail. Building the result is a decode over one
   carton's tags and costs microseconds; only the send is handed off.
+- **The carton trigger watches GPIO *rising* edges, but a field-asserted input is GPIO *low*.**
+  24 V on an input lights the opto and pulls the pin down, so with the PLC asserting a 2 s
+  `ZONE_ARRIVE` pulse the read window opens on the **trailing** edge — two seconds after the carton
+  arrived. Confirmed on this board 2026-08-31 by driving line 18: a field-assert produced 0 events,
+  the de-assert produced 1. **Unresolved by decision, 2026-08-31**: the optical sensor may be
+  configured to match instead, and on the bench a push button gives a rising edge on *release*.
+  The software fix, if it is chosen, is `gpiomon -l / --active-low` — on both v1 and v2 — which
+  flips edge sense so "rising" means *the channel became active*, matching `FieldIo`. **IN3's burst
+  is unaffected in substance** (five asserted pulses still give five trailing edges). Note the
+  inconsistency this leaves: `/api/v1/diagnostics/io` reports field sense while the edge monitor
+  triggers on raw GPIO, so the screen can show IN1 asserted at a moment the trigger has not fired.
 - **libgpiod v1 and v2 need different `gpiomon` arguments, and the two machines disagree.** The
   bench rig on Bookworm has **v1.6.3**; the production CM4 on Trixie has **v2.2.1**. v2 renamed all
   three things the monitor uses: `--rising-edge` → `--edges=rising`, the chip became `-c <chip>`
