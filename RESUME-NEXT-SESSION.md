@@ -10,12 +10,33 @@ close condition and adds three pieces of firmware plus one endpoint. The ordered
 `/api/v1` layer and answers the laptop's five audit questions. This file is the short version plus
 what to do next.
 
+**Appended 2026-09-01 — a short session, no hardware run.** It answered one question (yes, the IN3
+shutdown is implemented and wired: `ShutdownRequestMonitor` + `ShutdownSequence`, item 5, `9f2492f`)
+and fixed two things that came out of checking:
+
+- **`ShutdownRequestMonitor.onEdge` now traces every edge** with its running tally and its offset
+  into the window. It had to be added because *no level logged an individual pulse* — the two debug
+  lines report only the outcome of a burst, so a five-pulse pattern that failed to fire gave you no
+  way to see how many edges arrived. **Set `logging.level.com.intelli.rfid.tunnel.plc: TRACE`
+  before bench test 5**; the reasoning is now in `CLAUDE.md`. Compiles, 14/14 shutdown tests pass.
+- **Two stale documentation lines corrected**, both found by checking the live unit rather than the
+  file: `CLAUDE.md` said this unit's site config has `gpio.enabled: false` (it is now `true`,
+  watching 23/24/18, which is exactly when the libgpiod-v2 format-specifier trap would bite), and
+  the bring-up table above said step 10 systemd was not started (the service is enabled and active).
+
+**Still true and still the thing to do next: bench tests 1–15, and the edge polarity is still
+undecided.** Nothing in this session touched either. Note before test 5 that the live site config
+runs `shutdown.pulses: 1`, so on this unit *any single IN3 edge is a shutdown request* — the
+committed interface is 5 and the packaged default and the Java default (`PlcProperties:166`) both
+already say 5, so removing line 122 of the site config is all it takes to restore it.
+
 ---
 
 ## −1. If you are on the production CM4, start here — bring-up COMPLETE (2026-08-29)
 
-The v2.x unit is through `CM4-PRODUCTION-BRINGUP.md` **except step 10**. As of 2026-08-29 the
-tunnel runs on this board and serves v1 reads against the real module.
+The v2.x unit is through `CM4-PRODUCTION-BRINGUP.md` **completely, step 10 included**. The
+tunnel runs on this board as an enabled systemd service and serves v1 reads against the real
+module.
 
 | Step | State |
 |---|---|
@@ -25,7 +46,7 @@ tunnel runs on this board and serves v1 reads against the real module.
 | 7 GPIO enable | **done by hand** — and it needs a third pin, see below |
 | 8 probe | **done: 18 of 18 tags, five sweeps, 27 dBm, `RG_EU3`, Java 21** |
 | 9 run by hand | **done: two v1 reads, 18 distinct EPCs through the full contract path** |
-| 10 systemd | **not started** — the only step left |
+| 10 systemd | **done** — `intelli-rfid-tunnel.service` is `enabled` and `active`, up since 2026-08-31 21:25 IST, running from `/opt` (`7f9d75c`). Observed 2026-09-01; the row above had gone stale. Bring-up is complete. |
 
 ### Step 9, what it actually returned
 

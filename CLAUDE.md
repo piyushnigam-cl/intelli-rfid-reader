@@ -683,9 +683,11 @@ code is wrong**, and no timing in it may be rounded to a nicer number.
   **Getting it wrong on v2 is not a clean failure, and that is the part worth remembering: an
   unrecognised format specifier is printed literally.** Every edge arrives as the text
   `18 %s.%n`, every parse fails, and the monitor declares itself broken and falls back to degraded
-  — while `gpiomon` is detecting edges perfectly. Measured on the production CM4 2026-08-31. It had
-  not bitten yet only because this unit's site config has `gpio.enabled: false`; it would have
-  failed the instant the sensors were switched on, and looked exactly like bad wiring.
+  — while `gpiomon` is detecting edges perfectly. Measured on the production CM4 2026-08-31, while
+  this unit's site config still had `gpio.enabled: false` and so had never exercised it. **That
+  config is now `gpio.enabled: true`, watching lines 23/24/18**, which is exactly the moment this
+  would have bitten — and it looks like bad wiring rather than a format string. `libgpiod-major: 0`
+  auto-detects and is the right setting here; only override it if the probe cannot answer.
 - **The internal-pull trick for faking an edge does not work on the production carrier.** On the
   bench, `pinctrl set 23 ip pu` / `ip pd` lifts and drops an unconnected input and the kernel
   reports both as edges. On the v2.x carrier the **external 10 kΩ pull-up dominates the internal
@@ -699,6 +701,17 @@ code is wrong**, and no timing in it may be rounded to a nicer number.
   60 s budget. `tunnel.plc.shutdown.pulses` is configurable for bench work with a push button;
   **at 1 there is no pattern left and any single edge is a shutdown request**, so a non-default is
   warned about at start-up.
+
+  **Debugging the burst needs TRACE, because DEBUG reports only the outcome.** At INFO — the
+  packaged default, and the live site config sets no `logging:` block at all — you get the start-up
+  `Watching IN3 (BCM 18)…` line, the `pulses != 5` warning, and the WARN when a burst is *accepted*,
+  and nothing else. DEBUG on `com.intelli.rfid.tunnel.plc` adds only "burst outran its window" and
+  "burst of N is not a shutdown request", both of which fire after the fact. **Neither level records
+  an individual edge**, and an edge swallowed by `tunnel.v1.gpio.debounce-ms` is logged by
+  `GpioEdgeMonitor` under a different logger again — so a five-pulse pattern that fails to fire
+  leaves no way to see how many edges actually arrived. `ShutdownRequestMonitor.onEdge` therefore
+  traces every edge with its running tally and its offset into the window; set
+  `logging.level.com.intelli.rfid.tunnel.plc: TRACE` for bench test 5.
 - **The serial counter needs no flushing at shutdown, by construction.** `SequenceCounter.next()`
   calls `channel.force(true)` before returning each number, so the high-water mark is durable at
   every instant rather than at exit. Step 4 of the shutdown sequence therefore *confirms* — it reads
