@@ -518,6 +518,18 @@ and `ResultMapper` are now tested against the same population precisely so they 
 of 18 tags carry no GS1 header at all, so a count that included them would close a carton on tags
 that are not articles of the requested SKU and report a short carton as complete.
 
+**Tunnel v1 — a spooled callback carries the URL it was spooled with, and is given up on after
+7 days.** The URL is captured at spool time, so re-arming with a different callback address does not
+redirect a backlog, and **disarming does not stop the replay** — the replay timer retries the spool
+every 60 s independently of arm state, which is the whole point of a spool. Both are correct and
+both look like a bug: on 2026-09-01 two results were retried all day against a WMS that had moved
+address, and read at a glance as disarm not working. Check `callbacks.jsonl` before suspecting the
+arm path. Past `tunnel.v1.callback.max-age-ms` an entry is appended to `callbacks-dead.jsonl` and
+dropped — **abandoned, not discarded**, because the contract promises the WMS that results are
+spooled and replayed. Non-zero depth shows on `/actuator/health` as `abandonedCallbacks`; it is
+deliberately absent from `/api/v1/reader/status`, which cannot gain a field without the document
+changing.
+
 **Tunnel v1 — the carton is released before the callback is sent, never after.** The contract
 promises the WMS that "a slow or unavailable WMS endpoint does not stall the conveyor". If the
 release ever waits on the callback, the symptom at the customer's site is a stopped line — the most
