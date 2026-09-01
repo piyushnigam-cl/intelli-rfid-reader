@@ -746,6 +746,44 @@ code is wrong**, and no timing in it may be rounded to a nicer number.
 - Config values that depend on a site (settle windows, RSSI thresholds, antenna geometry) get a
   comment saying how to tune them from real data, not just a default.
 
+## Deploying to this unit
+
+**The division of labour, agreed 2026-09-01: Claude edits and commits, Piyush deploys.** Claude
+cannot `sudo` here (no tty) and cannot hold a long-running JVM across tool calls, so the deploy is
+three commands in the operator's own terminal:
+
+```bash
+sudo systemctl stop intelli-rfid-tunnel
+cd ~/rfid/intelli-rfid-reader/apps/intelli-rfid-tunnel && mvn -o package
+sudo deploy/install.sh && sudo systemctl start intelli-rfid-tunnel
+```
+
+**Stop first, deliberately.** Until this migration the unit launched straight out of `target/`, so
+a build overwrote the jar under the live JVM — and a `mvn clean` deleted it outright, which is
+invisible until the next restart and then crash-loops on `Unable to access jarfile`. That happened
+twice on 2026-08-31. `install.sh` now copies the jar and the aarch64 `.so` to `/opt/intelli`,
+installs the unit file and reloads systemd, so the build tree is no longer a runtime dependency.
+
+**A log level no longer needs any of this.** `loggers` is exposed on actuator, behind the ADMIN key:
+
+```bash
+curl -X POST -H "X-API-Key: <admin key>" -H 'Content-Type: application/json' \
+     -d '{"configuredLevel":"TRACE"}' \
+     localhost:8081/actuator/loggers/com.intelli.rfid.tunnel.plc
+```
+
+Prefer that over a config edit — a restart re-inits the module and loses the state being
+investigated, which for an intermittent burst on IN3 is the whole point.
+
+**Logs go to `/opt/intelli/logs/intelli-rfid-tunnel.log` as well as journald** (decision
+2026-09-01 — `/opt` keeps the runtime under one prefix, and `/var/log/intelli` has never existed on
+this board). `journalctl -u intelli-rfid-tunnel -f` stays the fast look at a running unit; the file
+is what survives a journald rotation and can be copied off the board. Rolls at 20 MB, 14 files,
+500 MB total. **The directory must be owned by `intelli-sbc`** — `install.sh` does that, and it is
+load-bearing: `/opt` is root-owned and the app is unprivileged, so a root-owned log directory means
+logback cannot open the file and the app **silently** logs only to journald, with nothing looking
+wrong because journald keeps working. Check `ls -l /opt/intelli/logs/` after a deploy.
+
 ## Gotchas
 
 - **Ask the operator to start and stop the apps.** Claude Code on the CM4 cannot reliably manage a

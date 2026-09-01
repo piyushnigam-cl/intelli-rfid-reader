@@ -24,6 +24,29 @@ and fixed two things that came out of checking:
   watching 23/24/18, which is exactly when the libgpiod-v2 format-specifier trap would bite), and
   the bring-up table above said step 10 systemd was not started (the service is enabled and active).
 
+**Then the deploy story was fixed, because the trace log could not be seen without it.** The
+service was still launching out of `target/` — `7f9d75c` changed the repo and nobody ran
+`install.sh`, so `/opt/intelli` held an empty `lib/`. Three changes, all pushed, **none of them
+deployed yet**:
+
+- **`loggers` exposed on actuator** (`cb5b312`), behind the ADMIN key, so a level changes on a
+  running unit without a restart — a restart re-inits the module and loses the burst you were
+  trying to watch.
+- **`install.sh` is now a complete deploy** — jar, aarch64 `.so`, unit file, `daemon-reload`. The
+  unit file committed in `deploy/` was replaced: the old one **would not have started on this
+  board** (`User=intelli`, no such user; `ReadWritePaths=/var/log/intelli`, no such directory; and
+  no `ExecStartPre` pinctrl block at all, so the module would have come up held in reset). The one
+  there now is what has actually been running since 2026-08-31 with the paths moved to `/opt`.
+- **File logging to `/opt/intelli/logs/`** (`b0fb65d`), alongside journald, rolling 20 MB × 14.
+  Piyush's call on the location. The directory must be owned by `intelli-sbc` or logback falls back
+  to journald silently — `install.sh` handles it, but check after the first deploy.
+
+**The agreed division of labour from here: Claude edits and commits, Piyush deploys.** The block is
+in `CLAUDE.md` under "Deploying to this unit".
+
+**First deploy is still pending** — the running jar is from 2026-08-31 20:57 and has none of this in
+it. Until it happens, TRACE on IN3 cannot be seen and `/actuator/loggers` returns 404.
+
 **Still true and still the thing to do next: bench tests 1–15, and the edge polarity is still
 undecided.** Nothing in this session touched either. Note before test 5 that the live site config
 runs `shutdown.pulses: 1`, so on this unit *any single IN3 edge is a shutdown request* — the
