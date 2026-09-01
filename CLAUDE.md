@@ -762,13 +762,24 @@ code is wrong**, and no timing in it may be rounded to a nicer number.
 
 **The division of labour, agreed 2026-09-01: Claude edits and commits, Piyush deploys.** Claude
 cannot `sudo` here (no tty) and cannot hold a long-running JVM across tool calls, so the deploy is
-three commands in the operator's own terminal:
+one command in the operator's own terminal:
 
 ```bash
-sudo systemctl stop intelli-rfid-tunnel
-cd ~/rfid/intelli-rfid-reader/apps/intelli-rfid-tunnel && mvn -o package
-sudo deploy/install.sh && sudo systemctl start intelli-rfid-tunnel
+cd ~/rfid/intelli-rfid-reader/apps/intelli-rfid-tunnel && deploy/redeploy.sh
+#   --core     rebuild intelli-rfid-core first, if core changed
+#   --no-pull  deploy what is already checked out
 ```
+
+**Run it as `intelli-sbc`, not under `sudo`** — it sudoes for the three privileged steps itself.
+Running the whole thing as root runs Maven as root, which writes `/root/.m2` and leaves `target/`
+root-owned, and the next ordinary build then fails on permissions in a way that looks like a broken
+checkout. The script refuses if it finds itself running as root.
+
+**It waits for the JVM to actually exit after the stop, and stops if one survives.** The serial port
+and the JNI library are single-owner: a JVM that outlived `systemctl stop` still holds
+`/dev/ttyAMA0`, and the restarted service then fails to open the module — which reads as a hardware
+fault and is not one. It reports the survivor rather than killing it, since it may be a probe or
+another app in use. `pgrep -x java`, never `pkill -f`, which matches the shell running the script.
 
 **Stop first, deliberately.** Until this migration the unit launched straight out of `target/`, so
 a build overwrote the jar under the live JVM — and a `mvn clean` deleted it outright, which is
