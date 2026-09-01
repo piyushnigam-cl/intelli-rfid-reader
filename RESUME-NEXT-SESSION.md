@@ -47,6 +47,60 @@ in `CLAUDE.md` under "Deploying to this unit".
 **First deploy is still pending** — the running jar is from 2026-08-31 20:57 and has none of this in
 it. Until it happens, TRACE on IN3 cannot be seen and `/actuator/loggers` returns 404.
 
+### THE UNIT IS SHUT DOWN RIGHT NOW — start here
+
+**At 19:41:35 a single edge on IN3 ran the controlled shutdown.** The service is still `active`, but
+the reader is stopped and `CLOSED`, the carrier is down, OUT6 heartbeat is driven low, and
+`/actuator/health` reads `OUT_OF_SERVICE`. Nothing is wrong with the module. **`systemctl restart
+intelli-rfid-tunnel` brings it back** — or just run `deploy/redeploy.sh`, which is wanted anyway.
+
+**It happened twice today, 13:48:50 and 19:41:35, with nothing driving GPIO18 either time.** The
+site config runs `tunnel.plc.shutdown.pulses: 1` for bench work, so *any* single edge is a shutdown
+request, and GPIO18 sits at `ip pn | hi` — internal pull deliberately off, so an unwired input has
+very little noise margin. Both sequences ran correctly in ~130 ms, which is the good news: the
+firmware works. **The lesson is that `pulses: 1` is not safe to leave running**, and it is the
+measured argument for the committed five-pulse burst. Either put it back to 5 or expect this again.
+
+From the outside this looks exactly like a dead reader, so: **check the log for
+`SHUTDOWN REQUESTED` before diagnosing a reader that stopped for no reason.**
+
+Also seen on both shutdowns and worth a small fix: **step 3 throws on an idle reader.** Step 1
+leaves the session CLOSED, so "finish any in-flight tag write" fails with `Reader is not connected`
+even with no write outstanding. It is logged at ERROR and stepped over, so it is harmless — but it
+means every clean shutdown carries an ERROR line, which is how a real one gets ignored.
+
+### The callback spool, and what was cleared
+
+**Disarm was never broken.** Two callbacks were being retried once a minute against
+`192.168.0.126`, a WMS address that had gone away: a spooled entry carries the URL captured when it
+was spooled, and the replay timer runs independently of arm state. Both are correct and both look
+like a bug.
+
+Fixed by an age cap with a dead-letter file (`38a1327`, `cdebbf0`): past
+`tunnel.v1.callback.max-age-ms` — **30 minutes**, Piyush's call after 7 days was judged useless — an
+entry is appended to `callbacks-dead.jsonl` and dropped. Abandoned, not discarded, because the
+contract promises the WMS that results are spooled and replayed. Non-zero depth shows on
+`/actuator/health` as `abandonedCallbacks`, deliberately **not** on `/api/v1/reader/status`, which
+cannot gain a field without the document changing.
+
+**The two stuck entries (seq 707, 708) were moved to the dead-letter file and the spool truncated**,
+verified clear across a replay cycle. Both were complete 9-of-9 `SETTLED` reads and remain in the
+inventory history.
+
+### Deploying, from here on
+
+`deploy/redeploy.sh` — stop, confirm no JVM survives, pull, build, install, start. `--core` to
+rebuild the shared library, `--no-pull` to deploy what is checked out. **Run it as `intelli-sbc`,
+never under sudo**; it refuses, because Maven as root leaves `target/` root-owned. It stops if a JVM
+outlives the shutdown rather than killing it, since a survivor holds `/dev/ttyAMA0` and the restart
+then fails to open the module — which reads as a hardware fault.
+
+**Deployed right now is `cfd194b`** (jar 19:19). The dead-letter code, the 30-minute cap and
+`redeploy.sh` itself are committed and pushed but **not deployed**.
+
+Confirmed working on the deployed build: `/actuator/loggers` answers behind the ADMIN key, and
+`/opt/intelli/logs/intelli-rfid-tunnel.log` is being written.
+
 **Still true and still the thing to do next: bench tests 1–15, and the edge polarity is still
 undecided.** Nothing in this session touched either. Note before test 5 that the live site config
 runs `shutdown.pulses: 1`, so on this unit *any single IN3 edge is a shutdown request* — the

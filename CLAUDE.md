@@ -714,6 +714,18 @@ code is wrong**, and no timing in it may be rounded to a nicer number.
   **at 1 there is no pattern left and any single edge is a shutdown request**, so a non-default is
   warned about at start-up.
 
+  **`pulses: 1` is not merely unsafe in theory — it fired twice unprompted on this board on
+  2026-09-01**, at 13:48:50 and 19:41:35, with nothing driving GPIO18 either time. Each one ran the
+  full controlled shutdown correctly in ~130 ms and left the reader stopped, `CLOSED`, and the
+  heartbeat low, which from the outside looks exactly like a dead reader: `/actuator/health` shows
+  `OUT_OF_SERVICE`, `secondsSinceLastRead` climbs, and nothing reads. **Check for
+  `SHUTDOWN REQUESTED` in the log before diagnosing a reader that has stopped for no reason.**
+  The pin sits at `ip pn | hi` — `PinctrlFieldIo` deliberately disables the internal pull so the
+  carrier's external 10 kΩ pull-up defines the level, which leaves a single unwired input with very
+  little noise margin. This is the measured case for why the committed interface is a five-pulse
+  burst and not a level or a single edge, and it is a reason to put `pulses` back to 5 as soon as
+  bench work allows.
+
   **Debugging the burst needs TRACE, because DEBUG reports only the outcome.** At INFO — the
   packaged default, and the live site config sets no `logging:` block at all — you get the start-up
   `Watching IN3 (BCM 18)…` line, the `pulses != 5` warning, and the WARN when a burst is *accepted*,
@@ -724,6 +736,14 @@ code is wrong**, and no timing in it may be rounded to a nicer number.
   leaves no way to see how many edges actually arrived. `ShutdownRequestMonitor.onEdge` therefore
   traces every edge with its running tally and its offset into the window; set
   `logging.level.com.intelli.rfid.tunnel.plc: TRACE` for bench test 5.
+- **Shutdown step 3 fails on an idle reader, and the sequence is right to carry on.** Step 1 stops
+  inventory and drops the carrier, which leaves the session `CLOSED`; step 3, "finish any in-flight
+  tag write", then throws `ReaderException: Reader is not connected (state=CLOSED)` even when there
+  was no write to finish. Observed on both of 2026-09-01's shutdowns. It is logged at ERROR and
+  stepped over — "not reaching step 6 is the worse failure" — so it costs nothing but a misleading
+  line in the log of every clean shutdown. Worth making step 3 a no-op when no write is outstanding,
+  so that an ERROR there means something.
+
 - **The serial counter needs no flushing at shutdown, by construction.** `SequenceCounter.next()`
   calls `channel.force(true)` before returning each number, so the high-water mark is durable at
   every instant rather than at exit. Step 4 of the shutdown sequence therefore *confirms* — it reads
