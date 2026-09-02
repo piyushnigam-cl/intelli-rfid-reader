@@ -6,11 +6,13 @@ the tree and is reliable; every claim about *module or conveyor behaviour* is in
 marked. Where the hardware contradicts this document, the hardware is right — fix it and write the
 correction back into `CLAUDE.md`.
 
-Version 1.1 · 2026-09-02 · for `apps/intelli-rfid-tunnel` and `apps/intelli-rfid-admin`
+Version 1.2 · 2026-09-02 · for `apps/intelli-rfid-tunnel` and `apps/intelli-rfid-admin`
 
 Changed in 1.1: session 1 measured clean (§3.3) · trigger edge confirmed (§3.1) · Double Pass is three
 passes with per-pass attribution (§5) · fault behaviour decided (§7.1) · the four proposed tests are
 now Tests 3-6 (§6).
+
+Changed in 1.2: IN3 shutdown becomes a held button, not a pulse burst (§7.2).
 
 ---
 
@@ -368,6 +370,40 @@ Two implementation consequences:
 - **The hold must be explicit and it must fail safe.** If the admin app crashes or the operator
   closes the tab mid-test, the tunnel must not sit in a forced state forever. Give the hold a
   deadline — a hold that is not refreshed within, say, 30 s reverts to `AUTO` — and log the revert.
+
+## 7.2 IN3 shutdown — replace the pulse burst with a held button
+
+**The five-pulse protocol was designed for the PLC interface. There is no PLC on this line.** IN3 now
+runs to a physical push button in the panel, and the operator's request is **a level held for 5
+seconds**, not a counted pattern.
+
+Do not read that as `pulses: 1`. A single edge is measured unsafe — it fired twice unprompted on
+2026-09-01 on a bare pin whose only pull was the carrier's external 10 k, each time running a full
+controlled shutdown and leaving something that looked exactly like a dead reader. **A 5 s continuous
+assert is a different signal entirely**: an EFT burst cannot hold a line for five seconds, and the
+button now sits behind 24 V and the field opto through the Tunnel Manager, which is a far better
+noise margin than the unwired pin that misfired. **Sample the level. Do not count edges.**
+
+**Keep the burst.** Make the protocol selectable — `tunnel.plc.shutdown.mode: BURST | HOLD`, default
+`BURST`, with `hold-ms: 5000` — so the wayside and any future PLC site are untouched and the tunnel
+opts in.
+
+Three rules the HOLD path needs and the BURST path never did:
+
+1. **Require an inactive→active transition after start-up before a hold is accepted.** A stuck button
+   or a shorted line reads active forever; without this the unit shuts down again the moment it
+   finishes booting, and you have an unbootable reader with no fault anywhere to find.
+2. **Refuse to act for the first N seconds after start-up**, for the same reason. Make N config.
+3. **Drive O7 `SAFE_TO_POWER_OFF` at the end of the sequence** (§7.1) — it is the only signal the
+   operator gets, because restart is a full power cycle and there is no other way back.
+
+Keep the logging lesson from the burst work: at INFO the log records only the outcome, which is
+useless when the question is *what actually arrived on the pin*. Log the observed level transitions
+and the measured hold duration at DEBUG, and the accepted request at WARN.
+
+**Test it as part of Test 6.** A 4-second press must do nothing. A 5-second press must run the full
+sequence and light O7. A press during a reader fault must still work. And confirm that shorting the
+input to 24 V at boot does **not** shut the unit down.
 
 ## 8. Tunnel-side work
 

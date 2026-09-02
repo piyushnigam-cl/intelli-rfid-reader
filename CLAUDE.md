@@ -841,6 +841,30 @@ code is wrong**, and no timing in it may be rounded to a nicer number.
   pull**, so an input reads high in both states and no edge is produced. Drive the pin instead —
   `pinctrl set 18 op dl` then `op dh` — which does produce real edges, verified on this board
   2026-08-31. Put it back to `ip pd` afterwards.
+- 🔴 **SUPERSEDED FOR THE RELIANCE TUNNEL, 2026-09-02: IN3 is a push button held for 5 seconds, not
+  a pulse burst.** The five-pulse protocol below was designed for the PLC interface, where the only
+  thing that could ask for a shutdown was another machine. **There is no PLC on this line** — IN3 now
+  runs to a physical button in the panel (`docs/Tunnel-Interconnect.md` §8), so the request is a
+  **level held continuously for `hold-ms` (5000)**, not a counted pattern.
+
+  **This is not `pulses: 1` in disguise, and the difference is the whole point.** A single edge was
+  measured unsafe: it fired twice unprompted on a bare pin whose only pull was the carrier's external
+  10 k. A 5 s *continuous* assert cannot be produced by an EFT burst or a floating input, and the
+  button now sits behind 24 V and the field opto through the Tunnel Manager, which is a far better
+  noise margin than the unwired pin that misfired. Sample the level; **do not count edges.**
+
+  Keep the burst — make the protocol selectable (`tunnel.plc.shutdown.mode: BURST | HOLD`, default
+  BURST) so the wayside and any future PLC site are untouched and the tunnel opts in. Three rules the
+  HOLD path needs and the BURST path never did:
+  1. **Require an inactive→active transition after start-up before a hold can be accepted.** A stuck
+     button or a shorted line reads active forever, and without this the unit shuts down again the
+     moment it finishes booting — an unbootable reader with no fault anywhere.
+  2. **Refuse to act for the first N seconds after start-up**, for the same reason.
+  3. **Drive O7 `SAFE_TO_POWER_OFF` at the end of the sequence** — it is the only signal the operator
+     gets, because restart is a full power cycle and there is no other way back.
+
+  Everything below still applies to BURST, and the logging lesson applies to both.
+
 - **The shutdown request on IN3 is judged after a quiet period, not on its Nth pulse.** Acting the
   instant the count is reached makes the rule "at least N" rather than **exactly N**, so a six-pulse
   burst — or an EFT storm on a line sharing its return with ten others — would be accepted on its
