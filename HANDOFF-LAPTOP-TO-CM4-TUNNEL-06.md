@@ -14,7 +14,8 @@ sooner than the fixed window allows.
 
 ## 0. Scope, and what this does NOT touch
 
-This is **not** a change to the §3.3 carton sequence in `HANDOFF-LAPTOP-TO-CM4-TUNNEL-05.md`.
+This is **not** a change to the carton sequence, which is now stated in `CLAUDE.md` under
+"Tunnel v1 — in Super Fast Mode a sensor opens the read".
 
 | Committed in handoff-05 | Status here |
 |---|---|

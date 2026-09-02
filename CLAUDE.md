@@ -73,10 +73,9 @@ reader opto output sinks 1.9 mA at +85 °C and an EZY-S100 control input needs s
 closest published equivalent, Itoh Denki CBM-105, draws 7.3 mA). Wiring:
 `docs/Tunnel-Interconnect.md`.
 
-### J26 functions are remapped for this system
+### J26 functions
 
-The `SPEED0-2` / `DIRECTION` / `RESULT_OK` / `RESULT_FAIL` names in the PLC documents are
-**superseded here**. Pins and BCM numbers are unchanged; only the meanings move.
+`FieldChannel` is the authoritative map and this table mirrors it.
 
 | J26 | Ch | BCM | Reliance tunnel function |
 |---|---|---|---|
@@ -695,8 +694,8 @@ two things can close a carton**, and the one that happens first names the stop r
 > as it stands the trigger fires on beam *clear* — every carton would open its session as it leaves.
 > Use the fix already identified in the GPIO notes: **`gpiomon -l` / `--active-low`, on both libgpiod
 > v1 and v2**, which makes "rising" mean *the channel became active* and matches `FieldIo`. Read
-> "rising edge" throughout this section as *field-active edge* once that lands. **IN3's five-pulse
-> burst is unaffected in substance** — five asserted pulses still give five edges.
+> "rising edge" throughout this section as *field-active edge* once that lands. **IN3 is
+> unaffected** — it is sampled as a level and never reaches the edge monitor.
 
 | what closed the window | `stopReason` |
 |---|---|
@@ -721,9 +720,9 @@ discarded, and only an IN1 edge opens a window. `maxDurationMs` stays as the bac
 sensors the mode falls back to opening on the first tag and closing on settle, which is not
 equivalent and is reported as `degraded` in `/api/v1/reader/status`.
 
-**Corrected 2026-08-31**, from `HANDOFF-LAPTOP-TO-CM4-TUNNEL-05.md` §3.3 — the interface sent to the
-PLC vendor. It replaces an earlier rule in which the exit sensor owned the end outright, the count
-and settle were both merely observed, and a count that was never met beat everything.
+**Corrected 2026-08-31.** It replaces an earlier rule in which the exit sensor owned the end
+outright, the count and settle were both merely observed, and a count that was never met beat
+everything.
 
 **Tunnel v1 — a Super Fast carton is a fast read followed by a fixed wait, and the wait is the
 larger half.** Measured on the production CM4 2026-08-31 across **8 consecutive cartons** (9 tags,
@@ -769,24 +768,22 @@ looks like a missed optimisation and it is not: the customer may be holding the 
 deterministic period, and a read that finishes early leaves it in the field. Verified on the bench:
 count met at 189 ms, response returned at 3082 ms.
 
-## The PLC field interface (connector J26)
+## The field interface (connector J26)
 
-The tunnel drives a **Delta DVP12SA211R** over eleven opto-isolated field channels. The interface is
-**closed**: `docs/Intelli-RFID-Reader-DVP12SA211R-PLC-Integration.docx` went to the PLC vendor on
-2026-08-30 and their ladder is written against it. **Where the code and that document disagree, the
-code is wrong**, and no timing in it may be rounded to a nicer number.
+The reader drives the tunnel over eleven opto-isolated field channels, all of them through the
+**Tunnel Manager**. There is no machine between this application and the drive cards, so every
+channel is a decision this app makes and holds.
 
-- **`com.intelli.rfid.tunnel.plc.FieldChannel` is the authoritative channel map** — OUT1–7 on BCM
-  26/20/16/19/21/12/13, IN1–4 on BCM 23/24/18/25. **Do not take channel functions from
-  `docs/PLC-INTEGRATION-DVP12SA2.md` §4**: it still carries the superseded map (`RESULT_OK` /
-  `RESULT_FAIL` on OUT5/OUT6, `SPARE_IN` on IN3) *and describes itself as authoritative*. It
-  disagrees with the `.docx` on five channels. `FieldChannelTest` pins the disagreement so nobody
-  "fixes" the enum to match the stale file.
+- **`com.intelli.rfid.tunnel.field.FieldChannel` is the authoritative channel map** — OUT1–7 on BCM
+  26/20/16/19/21/12/13, IN1–4 on BCM 23/24/18/25. It is a hard-coded enum on purpose: a channel that
+  could be moved from a config file is a channel that can silently disagree with the copper.
+  `FieldChannelTest` pins every committed function individually, so a change of meaning has to be
+  made deliberately rather than arriving as a diff to a table of numbers.
 - **`IN1`/`IN2` are ambiguous and it will cost someone a day.** The J26 field channels and the
   SIM7500 module's own GPI pins are both called IN1/IN2 in their own documentation and are different
   silicon. Everything in this project means the J26 channels. **The module's GPI is deliberately
   unused** for the inventory trigger: it can start a read faster than we can but cannot take part in
-  the verdict, the heartbeat, the shutdown handshake or the zone state machine.
+  the verdict, the shutdown handshake or the zone state machine.
 - **Field sense is inverted on inputs and not on outputs, and that asymmetry is the day-one bug.**
   An output asserted at J26 is GPIO **high**; an input asserted at J26 (24 V present) reads GPIO
   **low**, because the 24 V lights the opto's LED and pulls the pin down. `FieldIo` does the
@@ -809,39 +806,38 @@ code is wrong**, and no timing in it may be rounded to a nicer number.
   0.44 V of margin instead of 1.0 V. `PinctrlFieldIo` turns those internal pulls off at start-up.
   **That is right on the carrier and wrong on a bare bench** — with nothing wired to J26 there is no
   external pull-up to take over and the pins float, which on IN1 manufactures cartons. Hence
-  `tunnel.plc.disable-input-pulls`.
-- **The verdict on OUT5 is width-encoded, so scheduler latency is a correctness problem.** One
-  pulse per carton: **100 ms = FAIL, 500 ms = PASS**, decoded by the PLC in 60–200 and 400–600 ms
-  bands, with *everything else* — any other width, more than one pulse, or nothing at all — read as
-  FAIL. A 500 ms pulse that lands at 380 ms is not a slow pass, it is a **fail**, and it fails
-  silently at the customer on a carton that was fine. So the width is measured and logged on every
-  pulse, `outOfBand` is counted, and the hold sleeps most of the way then **spins the last 2 ms**.
-  **Measured on the production CM4 2026-08-31 over 20 cartons: PASS 496–504 ms, FAIL 98–100 ms,
-  none outside the band** — but the machine was near idle, and bench test 6 wants 100 cartons under
-  read load before that number is trusted. `ResultSignalHardwareTest` is that measurement and is
-  skipped unless `-Dplc.hardware=true`.
+  `tunnel.field.disable-input-pulls`.
+- **The verdict is two lamps, one lit for `lamps.hold-ms` (5 s) and then dark.** O5 green, O6 red;
+  the other lamp goes out at once, so exactly one is ever lit and both dark is the resting state.
+  A new verdict cancels the previous dwell rather than waiting it out, so back-to-back cartons each
+  get their full 5 s. `hold-ms: 0` latches instead, for a line that reads one carton an hour.
+
+  **The dwell is not a payload, and that distinction is the whole reason a timer is allowed here.**
+  The predecessor on this same O5 encoded the verdict *in the width* — 100 ms FAIL, 500 ms PASS,
+  decoded in 60–200 and 400–600 ms bands — which made scheduler latency a correctness problem: a
+  500 ms pulse delivered at 380 ms was a silent **fail** on a carton that was fine. Here the
+  *channel* carries the meaning and the duration carries none, so a hold that runs long or short is
+  a lamp lit a moment longer, not a wrong answer. **Never encode a second meaning in the dwell**,
+  and never shorten it to something an operator can miss.
 - **PASS is exactly `complete == true`** — the carton held what was expected. A carton whose count
-  could not be judged at all is *not* a pass: the interface has two answers and no third one, and
-  **there is no "no verdict"** — reaching the end of a carton undecided emits FAIL explicitly,
-  because the PLC reads silence as FAIL anyway and emitting it is the difference between an outcome
-  and a guess that happened to match.
+  could not be judged at all is *not* a pass: there are two lamps, two states, and **no "no
+  verdict"** — reaching the end of a carton undecided lights FAIL explicitly, because that is the
+  difference between an outcome and a guess that happened to match.
 - **The verdict is signalled on the thread that closed the session, not on the result executor.**
-  Same reason the carton release is: both are physical signals to the conveyor and neither may wait
+  Same reason the carton release is: both are physical signals at the tunnel and neither may wait
   on the WMS. `results` is single-threaded and `callbacks.send()` blocks for up to five attempts
-  with backoff, so a verdict dispatched behind it would arrive after the PLC's window had closed —
-  a dead WMS would have turned every carton into a fail. Building the result is a decode over one
-  carton's tags and costs microseconds; only the send is handed off.
+  with backoff, so a verdict queued behind it would light minutes late — a dead WMS would have
+  turned every carton's lamp into a lie. Setting two pin levels costs microseconds; only the send is
+  handed off.
 - **The carton trigger watches GPIO *rising* edges, but a field-asserted input is GPIO *low*.**
-  24 V on an input lights the opto and pulls the pin down, so with the PLC asserting a 2 s
-  `ZONE_ARRIVE` pulse the read window opens on the **trailing** edge — two seconds after the carton
-  arrived. Confirmed on this board 2026-08-31 by driving line 18: a field-assert produced 0 events,
-  the de-assert produced 1. **Unresolved by decision, 2026-08-31**: the optical sensor may be
-  configured to match instead, and on the bench a push button gives a rising edge on *release*.
-  The software fix, if it is chosen, is `gpiomon -l / --active-low` — on both v1 and v2 — which
-  flips edge sense so "rising" means *the channel became active*, matching `FieldIo`. **IN3's burst
-  is unaffected in substance** (five asserted pulses still give five trailing edges). Note the
-  inconsistency this leaves: `/api/v1/diagnostics/io` reports field sense while the edge monitor
-  triggers on raw GPIO, so the screen can show IN1 asserted at a moment the trigger has not fired.
+  24 V on an input lights the opto and pulls the pin down, so as it stands the read window opens on
+  beam *clear* rather than on the carton arriving. Confirmed on this board 2026-08-31 by driving
+  line 18: a field-assert produced 0 events, the de-assert produced 1. **Decided 2026-09-02: fix it
+  in software** with `gpiomon -l / --active-low` — on both v1 and v2 — which flips edge sense so
+  "rising" means *the channel became active*, matching `FieldIo`. IN3 is unaffected: it is sampled
+  as a level and never reaches the edge monitor. Note the inconsistency until that lands:
+  `/api/v1/diagnostics/io` reports field sense while the edge monitor triggers on raw GPIO, so the
+  screen can show IN1 asserted at a moment the trigger has not fired.
 - **libgpiod v1 and v2 need different `gpiomon` arguments, and the two machines disagree.** The
   bench rig on Bookworm has **v1.6.3**; the production CM4 on Trixie has **v2.2.1**. v2 renamed all
   three things the monitor uses: `--rising-edge` → `--edges=rising`, the chip became `-c <chip>`
@@ -863,60 +859,45 @@ code is wrong**, and no timing in it may be rounded to a nicer number.
   pull**, so an input reads high in both states and no edge is produced. Drive the pin instead —
   `pinctrl set 18 op dl` then `op dh` — which does produce real edges, verified on this board
   2026-08-31. Put it back to `ip pd` afterwards.
-- 🔴 **SUPERSEDED FOR THE RELIANCE TUNNEL, 2026-09-02: IN3 is a push button held for 5 seconds, not
-  a pulse burst.** The five-pulse protocol below was designed for the PLC interface, where the only
-  thing that could ask for a shutdown was another machine. **There is no PLC on this line** — IN3 now
-  runs to a physical button in the panel (`docs/Tunnel-Interconnect.md` §8), so the request is a
-  **level held continuously for `hold-ms` (5000)**, not a counted pattern.
+- **IN3 is a push button held for 5 seconds — a level, sampled, never a counted pattern.**
+  Implemented 2026-09-02 in `field/ShutdownRequestMonitor`, which polls `FieldIo.read(IN3)` every
+  `sample-ms` (250) on its own thread. It is deliberately **not** on `GpioEdgeMonitor`: a level is
+  the thing being measured, and reading it through `pinctrl` also stays clear of the exclusive claim
+  `gpiomon` takes on every line it watches. IN3 is therefore no longer on that command line at all.
 
-  **This is not `pulses: 1` in disguise, and the difference is the whole point.** A single edge was
-  measured unsafe: it fired twice unprompted on a bare pin whose only pull was the carrier's external
-  10 k. A 5 s *continuous* assert cannot be produced by an EFT burst or a floating input, and the
-  button now sits behind 24 V and the field opto through the Tunnel Manager, which is a far better
-  noise margin than the unwired pin that misfired. Sample the level; **do not count edges.**
+  **Releasing abandons the hold outright — nothing is banked.** Two four-second presses are not an
+  eight-second hold, so a line chattering asserted/released, which is what noise looks like, can
+  never accumulate its way to a request.
 
-  Keep the burst — make the protocol selectable (`tunnel.plc.shutdown.mode: BURST | HOLD`, default
-  BURST) so the wayside and any future PLC site are untouched and the tunnel opts in. Three rules the
-  HOLD path needs and the BURST path never did:
-  1. **Require an inactive→active transition after start-up before a hold can be accepted.** A stuck
-     button or a shorted line reads active forever, and without this the unit shuts down again the
-     moment it finishes booting — an unbootable reader with no fault anywhere.
-  2. **Refuse to act for the first N seconds after start-up**, for the same reason.
-  3. **Drive O7 `SAFE_TO_POWER_OFF` at the end of the sequence** — it is the only signal the operator
-     gets, because restart is a full power cycle and there is no other way back.
+  **Why a hold and not an edge, measured.** A single edge fired twice unprompted on this board on
+  2026-09-01, at 13:48:50 and 19:41:35, with nothing driving GPIO18 either time. Each ran the full
+  controlled shutdown correctly in ~130 ms and left the reader stopped and `CLOSED` — which from
+  outside looks exactly like a dead reader: `/actuator/health` shows `OUT_OF_SERVICE`,
+  `secondsSinceLastRead` climbs, and nothing reads. **Check for `SHUTDOWN REQUESTED` in the log
+  before diagnosing a reader that has stopped for no reason.** A continuous 5 s assert cannot be
+  produced by an EFT burst or a floating input, and the button now sits behind 24 V and the field
+  opto through the Tunnel Manager rather than on a bare pin.
 
-  Everything below still applies to BURST, and the logging lesson applies to both.
+  **Two start-up guards, and both are needed**, because a stuck button or a shorted line reads
+  asserted forever and would otherwise shut the unit down on every boot — an unbootable reader with
+  no fault anywhere to explain it, on a line where restart is a full power cycle with an engineer at
+  the panel.
+  1. **`require-release-first`** is the one that holds: a hold may only begin from an observed
+     released→asserted transition, so a line never seen released can never start one. The verdict is
+     latched at the *start* of the assert, so a later release cannot retroactively bless it.
+  2. **`startup-grace-ms` (30 s)** is the weaker second guard — on its own it only *delays* the
+     shutdown of a stuck line.
 
-- **The shutdown request on IN3 is judged after a quiet period, not on its Nth pulse.** Acting the
-  instant the count is reached makes the rule "at least N" rather than **exactly N**, so a six-pulse
-  burst — or an EFT storm on a line sharing its return with ten others — would be accepted on its
-  way past. The tally is judged after `quiet-ms` of silence, which costs about a second against a
-  60 s budget. `tunnel.plc.shutdown.pulses` is configurable for bench work with a push button;
-  **at 1 there is no pattern left and any single edge is a shutdown request**, so a non-default is
-  warned about at start-up.
+  **`hold-ms` is 5000 and a non-default is warned about at start-up**; so is turning
+  `require-release-first` off. The monitor measures uptime from its **first sample**, not from
+  construction, so the grace and the samples share one clock and cannot be defeated by the two
+  disagreeing.
 
-  **`pulses: 1` is not merely unsafe in theory — it fired twice unprompted on this board on
-  2026-09-01**, at 13:48:50 and 19:41:35, with nothing driving GPIO18 either time. Each one ran the
-  full controlled shutdown correctly in ~130 ms and left the reader stopped, `CLOSED`, and the
-  heartbeat low, which from the outside looks exactly like a dead reader: `/actuator/health` shows
-  `OUT_OF_SERVICE`, `secondsSinceLastRead` climbs, and nothing reads. **Check for
-  `SHUTDOWN REQUESTED` in the log before diagnosing a reader that has stopped for no reason.**
-  The pin sits at `ip pn | hi` — `PinctrlFieldIo` deliberately disables the internal pull so the
-  carrier's external 10 kΩ pull-up defines the level, which leaves a single unwired input with very
-  little noise margin. This is the measured case for why the committed interface is a five-pulse
-  burst and not a level or a single edge, and it is a reason to put `pulses` back to 5 as soon as
-  bench work allows.
+  **Debugging needs TRACE.** At INFO you get the start-up `Watching IN3 (BCM 18)…` line and the WARN
+  when a hold is accepted, and nothing else; DEBUG adds only the assert and the abandon. Every
+  sample's running hold time is at TRACE — set
+  `logging.level.com.intelli.rfid.tunnel.field: TRACE` for bench test 5.
 
-  **Debugging the burst needs TRACE, because DEBUG reports only the outcome.** At INFO — the
-  packaged default, and the live site config sets no `logging:` block at all — you get the start-up
-  `Watching IN3 (BCM 18)…` line, the `pulses != 5` warning, and the WARN when a burst is *accepted*,
-  and nothing else. DEBUG on `com.intelli.rfid.tunnel.plc` adds only "burst outran its window" and
-  "burst of N is not a shutdown request", both of which fire after the fact. **Neither level records
-  an individual edge**, and an edge swallowed by `tunnel.v1.gpio.debounce-ms` is logged by
-  `GpioEdgeMonitor` under a different logger again — so a five-pulse pattern that fails to fire
-  leaves no way to see how many edges actually arrived. `ShutdownRequestMonitor.onEdge` therefore
-  traces every edge with its running tally and its offset into the window; set
-  `logging.level.com.intelli.rfid.tunnel.plc: TRACE` for bench test 5.
 - **Shutdown step 3 fails on an idle reader, and the sequence is right to carry on.** Step 1 stops
   inventory and drops the carrier, which leaves the session `CLOSED`; step 3, "finish any in-flight
   tag write", then throws `ReaderException: Reader is not connected (state=CLOSED)` even when there
@@ -930,16 +911,14 @@ code is wrong**, and no timing in it may be rounded to a nicer number.
   every instant rather than at exit. Step 4 of the shutdown sequence therefore *confirms* — it reads
   the file back independently of the in-memory counter, which is the only check that would catch the
   two having drifted — rather than committing anything.
-- **The heartbeat gets its own thread and nothing else ever goes on it.** OUT6 toggles at 1 Hz and
-  the PLC stops the conveyor if it sees no transition for 3 s, so anything that can block — a
-  callback retrying against a dead WMS, a spool replay, an inventory round — must not be able to sit
-  in front of the next toggle. Deadlines are absolute rather than sleeps, because sleeping the
-  half-period accumulates every write's latency into permanent drift.
-- **The heartbeat stops last, and that ordering is load-bearing.** It is a `SmartLifecycle` at
-  `Integer.MIN_VALUE` so Spring stops it after every other bean has flushed. It means only "the
-  application is running", never "the module is up". Dropping it earlier tells the PLC it is safe to
-  cut power while the serial counter is still being written — the exact corruption the shutdown
-  sequence exists to prevent.
+- **There is no liveness heartbeat, and that is a real loss to be aware of.** OUT6 used to toggle
+  at 1 Hz so a watchdog could stop the line after 3 s of silence — a *hardware* liveness signal that
+  survived a hung JVM. OUT6 is the red lamp now and nothing replaces that signal: a wedged
+  application leaves every output wherever it last set it. What limits the damage is that O1 is
+  released by the read budget rather than held by a running loop, so a carton cannot be stranded
+  indefinitely by a stall alone. **If a liveness signal is ever wanted back it needs its own channel
+  and its own thread** — nothing else may ever go on that thread, because a callback retrying
+  against a dead WMS would sit in front of the next toggle.
 
 ## Conventions
 
@@ -993,11 +972,11 @@ installs the unit file and reloads systemd, so the build tree is no longer a run
 ```bash
 curl -X POST -H "X-API-Key: <admin key>" -H 'Content-Type: application/json' \
      -d '{"configuredLevel":"TRACE"}' \
-     localhost:8081/actuator/loggers/com.intelli.rfid.tunnel.plc
+     localhost:8081/actuator/loggers/com.intelli.rfid.tunnel.field
 ```
 
 Prefer that over a config edit — a restart re-inits the module and loses the state being
-investigated, which for an intermittent burst on IN3 is the whole point.
+investigated, which for an intermittent shutdown request on IN3 is the whole point.
 
 **Logs go to `/opt/intelli/logs/intelli-rfid-tunnel.log` as well as journald** (decision
 2026-09-01 — `/opt` keeps the runtime under one prefix, and `/var/log/intelli` has never existed on

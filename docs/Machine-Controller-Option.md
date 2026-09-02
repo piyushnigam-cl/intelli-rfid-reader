@@ -1,5 +1,11 @@
 # Replacing the PLC — what it would actually take
 
+> **This option was ADOPTED, 2026-09-01.** The Reliance tunnel has no PLC: the reader drives the
+> conveyor itself, through the Tunnel Manager. This note is therefore the *rationale* for the
+> current design rather than a proposal — read it for why, and read
+> `com.intelli.rfid.tunnel.field.FieldChannel` and `docs/Tunnel-Interconnect.md` for what was
+> actually built. Where the two differ, the code and the interconnect document are right.
+
 **2026-08-22 · options note, nothing designed or built.**
 Companion to `Board-v3-Digital-IO-Change-Request.md` and `Board-Warehouse-Variant-Proposal.md`.
 
@@ -95,7 +101,7 @@ the outcome can change the architecture.
 Not cost. A small PLC is a few hundred dollars and comes with certification, spares in every
 distributor, and an installer base that already knows it. On price alone this loses.
 
-**The argument is the recovery loop.** `PLC-Digital-IO-Interface.md` §6 proposes that when the tag
+**The argument is the recovery loop.** The field I/O draft of the time proposed that when the tag
 count is short as the pallet reaches the end of the zone, the reader slows the conveyor, stops it, or
 reverses it for a re-scan — issuing a Gen2 Select to reset the inventoried flags before each reverse
 pass so the tags answer again.

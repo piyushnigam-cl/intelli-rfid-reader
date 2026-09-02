@@ -328,7 +328,7 @@ probe that answered §3.2 produced the register as a side effect.
 
 **Resolved 2026-08-30 — all 18 tags were written on the 29th.** How many to write is a closed
 question and is not to be reopened. The consequence that does matter is that the register's EPC
-column is now stale; the TID keying survives. See `HANDOFF-LAPTOP-TO-CM4-TUNNEL-05.md` §9.
+column is now stale; the TID keying survives.
 
 ---
 

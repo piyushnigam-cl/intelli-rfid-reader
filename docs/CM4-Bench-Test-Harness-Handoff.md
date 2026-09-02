@@ -13,16 +13,17 @@ passes with per-pass attribution (§5) · fault behaviour decided (§7.1) · the
 now Tests 3-6 (§6).
 
 Changed in 2.0, and this is a substantive revision: §2 and §3 were rewritten against `origin/main`
-after 17 tunnel and 6 core commits landed. **The whole PLC field-IO layer already exists**, five of
-seven output channels now collide with the Reliance map (§3), the carrier is already triggered rather
-than continuous, and five claims from v1.0 are withdrawn (§3A.6). IN3 shutdown becomes a held button
-rather than a pulse burst (§7.2).
+after 17 tunnel and 6 core commits landed. The whole field-IO layer already exists, the carrier is
+already triggered rather than continuous, and five claims from v1.0 are withdrawn (§3A.6).
 
 Changed in 2.1: reframed — this is the job of making the tunnel app the machine controller, and the
-tests are its acceptance criteria (§1, §14). **The TUNNEL profile is now the default, not PLC** — the
-earlier reasoning that the wayside needed PLC was wrong, the package exists only in this app. Adds
-the three behavioural changes a channel rename would miss (§3.1) and the admin PLC tab that breaks
-under TUNNEL (§3.2).
+tests are its acceptance criteria (§1, §14).
+
+Changed in 2.2 (2026-09-02, on the CM4): **§3 and §7.2 are now records of work done, not
+instructions.** The channel map is migrated, the field package is renamed to
+`com.intelli.rfid.tunnel.field` / `tunnel.field.*`, the verdict lamps hold levels, the heartbeat and
+the width-encoded RESULT are deleted, IN3 is a held button, and the admin tab takes its labels from
+the reader. No profile switch was built and none should be. §8's work list is updated to match.
 
 ---
 
@@ -42,13 +43,14 @@ criteria for the change, not a separate activity — §13 says what "pass" means
 
 Three consequences worth stating before anything else:
 
-- **The `com.intelli.rfid.tunnel.plc` package is now misnamed.** It is the tunnel's own field-IO
-  layer. Keep the code — it is good and it is tested — but nobody should read the package or the
-  `tunnel.plc.*` config prefix as evidence that a PLC exists. Rename if it is cheap; if not, say so
-  in the package javadoc so the next reader is not misled.
-- **Nothing outside this app uses it.** I checked: `intelli-rfid-core`, `-wayside`, `-reader-test`
-  and `-admin` contain no reference to `tunnel.plc`, `FieldChannel`, `HeartbeatDriver` or
-  `ResultSignal`. The layer is the tunnel app's alone, and the tunnel app is the Reliance product.
+- **The field-IO layer is `com.intelli.rfid.tunnel.field`, binding `tunnel.field.*`** — renamed
+  2026-09-02, along with `FieldProperties` and `FieldConfiguration`. 🔴 **A site `application.yml`
+  written before that date still has a `plc:` key, which now binds nothing.** Spring ignores unknown
+  properties, so this fails **silently** and every value in that block reverts to its packaged
+  default. Check `/etc/intelli/intelli-rfid-tunnel/application.yml` before blaming the pins.
+- **Nothing outside this app uses the layer.** `intelli-rfid-core`, `-wayside` and `-reader-test`
+  contain no reference to it, and `-admin` reaches it only over `/api/v1/diagnostics/io`. It is the
+  tunnel app's alone, and the tunnel app is the Reliance product.
 - **The customer contract does not move.** `/api/v1/**` is unchanged. The new test surface is
   `/api/test/**`, ADMIN scope.
 
@@ -58,19 +60,19 @@ Three consequences worth stating before anything else:
 date, and several of its "findings" were already fixed.** This section replaces it. Everything below
 was read from `origin/main` in both repos.
 
-**The whole PLC field-IO layer exists.** `com.intelli.rfid.tunnel.plc`:
+**The whole field-IO layer exists.** `com.intelli.rfid.tunnel.field`:
 - **`FieldIo`** interface — `write`, `diagnosticWrite` (the only way to drive a *parked* channel),
   `read`, `readAll`, `problem`, `isUsable`. Everything above it speaks **field sense**, never GPIO
   level. That is the inversion boundary this document asked for; it is built.
 - **`PinctrlFieldIo`** — shells `pinctrl`, one process per call. Chosen over `gpioset` deliberately:
   `pinctrl` writes the pad registers so a level survives process exit, and it does not contend with
-  the `gpiomon` holding lines 23/24/18.
+  the `gpiomon` holding lines 23/24.
 - **`FieldChannel`** — the channel map, as a **hard-coded enum, explicitly not configurable**.
-- **`HeartbeatDriver`** (OUT6, 1 Hz), **`ResultSignal`** (OUT5, width-encoded verdict),
-  **`ShutdownRequestMonitor`** + **`ShutdownSequence`** (IN3), **`DiagnosticsIoController`**
+- **`VerdictLamps`** (O5 green / O6 red, latched levels), **`ShutdownRequestMonitor`** (IN3, a
+  sampled level) + **`ShutdownSequence`**, **`DiagnosticsIoController`**
   (`/api/v1/diagnostics/io`, ADMIN scope).
-- `tunnel.plc.*` config: `enabled`, `command`, `disable-input-pulls`, plus `heartbeat.*`, `result.*`
-  and `shutdown.*` blocks.
+- `tunnel.field.*` config: `enabled`, `command`, `disable-input-pulls`, plus `lamps.*` and
+  `shutdown.*` blocks.
 
 **The carrier is already triggered, not continuous.** `tunnel.v1.triggered-carrier: true`. Armed and
 idle means the antenna is **off**; it comes up on the IN1 edge via `ensureReading()` and drops in
@@ -91,73 +93,60 @@ v1.0 claimed. `recoveries()` and `lastRecoveryAt()` are exposed.
   simulator with runtime delay/status, `V1Contract` + `POST /api/admin/validate`, and a UI of three
   static files with no build step. No charting library anywhere.
 
-**Instrumentation you get free, and should use in the tests:** `ResultSignal.emitted()`,
-`outOfBand()`, `lastWidthMs()`, `widestMs()`, `narrowestMs()` — **any non-zero `outOfBand` means a
-carton was decoded wrongly downstream**. Baseline measured 2026-08-31 over 20 cartons: PASS
-496–504 ms, FAIL 98–100 ms, none out of band — **but not under read load**, which is exactly what
-these tests apply. `HeartbeatDriver` exposes `toggles()`, `lateToggles()`, `lastToggleAt()`.
+**The width instrumentation is gone with the pulse.** `ResultSignal`'s `outOfBand` / `lastWidthMs`
+counters existed because a 500 ms pulse delivered at 380 ms was silently a FAIL; lamps hold a level,
+so there is no width to measure and nothing to be out of band. The 2026-08-31 baseline (PASS
+496–504 ms, FAIL 98–100 ms over 20 cartons) is now only of historical interest — **and bench test 6
+no longer needs its 100-carton timing run.** Assert the lamp *state* after each carton instead.
 
-## 3. 🔴 The channel map now collides with the Reliance design — resolve this first
+## 3. ✅ The channel map migration — DONE, 2026-09-02
 
-`FieldChannel` is a hard-coded enum transcribed from the **PLC** integration document. The Reliance
-tunnel is a different machine on the same board, and five of the seven outputs disagree:
+`FieldChannel` now carries the Reliance functions outright. There is no profile switch and no legacy
+map: the earlier plan for `profile: TUNNEL | PLC` was dropped once it was clear the field package
+exists only in this app, and this app is the Reliance product. A map you can select is a map that
+can come up wrong.
 
-| Ch | BCM | Today (PLC) | Reliance tunnel | Verdict |
-|---|---|---|---|---|
-| OUT1 | 26 | `SPEED0` | `EnC_ExC_RUN` | conflict — a 3-bit speed word becomes three independent lines |
-| OUT2 | 20 | `SPEED1` | `RZC_RUN_A` | conflict |
-| OUT3 | 16 | `SPEED2` | `RZC_RUN_B` | conflict |
-| OUT4 | 19 | `DIRECTION` | `RZC_REVERSE` | compatible in spirit, one bit either way |
-| OUT5 | 21 | `RESULT`, **width-encoded** 100 ms FAIL / 500 ms PASS | `LAMP_PASS` | **direct conflict** |
-| OUT6 | 12 | `HEARTBEAT`, 1 Hz | `LAMP_FAIL` | **direct conflict, and it breaks the watchdog** |
-| OUT7 | 13 | parked | `SAFE_TO_POWER_OFF` | free — the one output with no argument |
+| Ch | BCM | Function | Note |
+|---|---|---|---|
+| OUT1 | 26 | `EnC_ExC_RUN` | one channel, two cards in parallel. **Normally asserted** |
+| OUT2 | 20 | `RZC_RUN_A` | with O3, the speed ladder |
+| OUT3 | 16 | `RZC_RUN_B` | A alone 100 %, A+B 75 %, B alone 50 %, neither stop |
+| OUT4 | 19 | `RZC_REVERSE` | a level, meaningless while the RZC is stopped |
+| OUT5 | 21 | `LAMP_PASS` | green, latched |
+| OUT6 | 12 | `LAMP_FAIL` | red, latched |
+| OUT7 | 13 | `SAFE_TO_POWER_OFF` | the only signal the operator gets |
 
-**The migration is coherent, because the consumer of the PLC semantics no longer exists.** The
-width-encoding on OUT5 was forced by having one wire to spare; with two lamps there are two wires and
-no decode ambiguity. The heartbeat existed so the PLC could fault the line after 3 s of silence —
-**and, critically, so that heartbeat absence was the "safe to cut power" handshake.** With no PLC
-there is nobody to receive either, which is precisely why the operator has chosen O7 =
-`SAFE_TO_POWER_OFF` and `power-off-os: true` instead.
+**Three behavioural changes came with it, and none of them would have fallen out of a rename.**
 
-**Make the channel map selectable — `tunnel.plc.profile: TUNNEL | PLC`, and TUNNEL is the DEFAULT.**
-An earlier draft of this document said default `PLC`, on the reasoning that the wayside needed it.
-**That was wrong** — the `plc` package exists only in this app, and this app is the Reliance product.
-Shipping a unit that comes up in PLC mode unless somebody remembers a config key is the wrong
-failure. `PLC` is retained as the legacy profile for a site that still has one; nothing depends on it
-today. Keep `ResultSignal` and `HeartbeatDriver` intact and simply not started under TUNNEL.
+- **Speed is a pair of run lines, not a word.** There is no 3-bit encoder anywhere any more; three
+  speeds on RZC only, and O1 is plain run/stop for EnC and ExC together. Anything that still thinks
+  in `0..7` is a bug.
+- **The lamps are a 5 s dwell, and the dwell carries no meaning.** `VerdictLamps` lights one, puts
+  the other out, and schedules it dark after `lamps.hold-ms` on its own daemon thread — never on the
+  caller's, which has just closed a carton and is on its way to releasing the conveyor. The
+  `outOfBand` counter and the spin-the-last-2-ms hold are gone with the width encoding: the *channel*
+  says pass or fail now, so a hold that runs long or short is a lamp lit a moment longer rather than
+  a wrong answer. `hold-ms: 0` latches. Do not encode anything in the duration.
+- **There is no liveness heartbeat, and that is a real loss.** The 1 Hz toggle was a *hardware*
+  liveness signal that survived a hung JVM; nothing replaces it, and the reader's liveness is now
+  only visible over HTTP. It is acceptable because the failsafe still holds — outputs reset low, so
+  a dead reader stops the line rather than running it — but it was a decision, not an accident. If
+  it is ever wanted back it needs its own channel and its own thread.
 
-Same shape as the `BURST | HOLD` decision in §7.2: one board, two machines, one config key each time.
+**Renamed with it:** the package is `com.intelli.rfid.tunnel.field` and the prefix is
+`tunnel.field.*`. See the warning in §1 about a stale `plc:` key in the site config.
 
-### 3.1 What actually changes in behaviour, not just in names
+### 3.2 ✅ The admin Field I/O tab — DONE in the same change
 
-Three of these are behavioural and will not fall out of a channel rename:
+`apps/intelli-rfid-admin/.../app.js` no longer holds a copy of the channel functions. It keeps only
+pins and BCM numbers, which are a property of the board, and **takes the `function` string from
+`GET /api/v1/diagnostics/io` on every Read** — so the screen cannot drift from `FieldChannel` again,
+which is exactly how it came to be showing `SPEED0 (LSB)`.
 
-- **Speed stops being a word and becomes per-conveyor run lines.** Today OUT1–3 are `SPEED0/1/2`, a
-  3-bit code with 8 values and `000` = stop. Under TUNNEL there is no speed word: **O1 is run/stop for
-  EnC and ExC together, and O2+O3 are RZC's Run A and Run B as a pair** — A only = 100 %, A+B = 75 %,
-  B only = 50 %, neither = stop. Three speeds, not eight, and only on RZC. Delete the speed-word
-  encoder rather than remapping it; anything that still thinks in `0..7` is a bug waiting to happen.
-- 🔴 **The lamps need a level, not a pulse.** `ResultSignal` emits **one 100 ms or 500 ms pulse per
-  carton** — correct for a PLC input that latches it, useless on a lamp, where it is a blink nobody
-  sees. Under TUNNEL, PASS and FAIL are **levels held until the next carton opens**, and a lamp dwell
-  (`tunnel.plc.result.lamp-dwell-ms`, a few seconds) so a verdict on the last carton of a shift is
-  still visible. Exactly one of the two is ever lit; both dark means no carton has been read yet.
-  **This is the change most likely to be done as a rename and silently be wrong.**
-- **The heartbeat has no consumer.** Under TUNNEL, `HeartbeatDriver` is not started and OUT6 is the
-  FAIL lamp. Note what is lost: heartbeat absence was a *hardware* liveness signal that survived a
-  hung JVM. Nothing replaces it — the reader's liveness is now only visible over HTTP, and O7 is a
-  shutdown indicator, not a watchdog. That is acceptable because the failsafe still holds (outputs
-  reset low, so a dead reader stops the line), but it should be a decision, not an accident.
-
-### 3.2 The admin PLC tab breaks under TUNNEL — fix it in the same change
-
-`apps/intelli-rfid-admin/src/main/resources/static/app.js` hardcodes the channel map in
-`PLC_OUTPUTS` — `OUT1: 'SPEED0 (LSB)'`, `OUT2: 'SPEED1'`, `OUT3: 'SPEED2 (MSB)'` — and renders a
-decoded `SPEED n of 7` pill. Under TUNNEL those labels are wrong and the pill is meaningless.
-
-**Drive the labels from the server**, not from a copy in JavaScript: `GET /api/v1/diagnostics/io`
-already returns `function` per channel, so render that string and drop the hardcoded table and the
-speed decode. The tab then follows the profile automatically and cannot drift again.
+The `SPEED n of 7` pill is gone. In its place: an **RZC** pill decoding O2/O3 as the drive card does
+(100 / 75 / 50 / STOP, with reverse shown only while it is moving) and a **LAMPS** pill showing the
+verdict pair — including "both lit", which is not a verdict the reader ever produces and is
+therefore a wiring finding. The tab is `Field I/O`.
 
 ## 3A. Fixes still outstanding — verified, not assumed
 
@@ -177,7 +166,7 @@ works on both v1 and v2 — so "rising" means *the channel became active* and ma
 Unchanged: with the sensors watching, nothing opens a session without an edge; without them, the mode
 falls back to first-tag open and reports `degraded`. Add the test endpoint that pulses the lines
 (§8.2). Two new details from the current tree:
-- **`tunnel.plc.disable-input-pulls` defaults to `true`**, which turns the internal pull-downs off on
+- **`tunnel.field.disable-input-pulls` defaults to `true`**, which turns the internal pull-downs off on
   IN1–IN4 so the carrier's external 10 k defines the level. **On a bare bench with nothing wired to
   J26, set it `false` or IN1 floats and manufactures phantom cartons.**
 - `tunnel.v1.gpio.debounce-ms` is 50 and **must not go past ~150**, or it eats the IN3 burst.
@@ -213,7 +202,7 @@ zone: session {}` at INFO. Add the event.
   window closed, and `countReachedAt` and `settledAt` are separate fields.
 - ~~"`recover-*` keys bind to nothing."~~ They are live.
 - ~~"Put the IO screen at `/api/test/io`, not under `/api/v1`."~~ `/api/v1/diagnostics/io` is built,
-  ADMIN-scoped and driven by the admin PLC tab. Leave it; do not churn a working screen for purity.
+  ADMIN-scoped and driven by the admin Field I/O tab. Leave it; do not churn a working screen for purity.
 
 ## 4. Test 1 — Static
 
@@ -429,39 +418,44 @@ Two implementation consequences:
   closes the tab mid-test, the tunnel must not sit in a forced state forever. Give the hold a
   deadline — a hold that is not refreshed within, say, 30 s reverts to `AUTO` — and log the revert.
 
-### 7.2 IN3 shutdown — replace the pulse burst with a held button
+### 7.2 ✅ IN3 shutdown — the held button, DONE 2026-09-02
 
-**The five-pulse protocol was designed for the PLC interface. There is no PLC on this line.** IN3 now
-runs to a physical push button in the panel, and the operator's request is **a level held for 5
-seconds**, not a counted pattern.
+IN3 runs to a physical push button in the panel and the request is **a level held for `hold-ms`
+(5000)**, sampled every `sample-ms` (250). The five-pulse burst is deleted, not made selectable: it
+was designed for a PLC interface and there is no PLC on this line, and a protocol you can select is
+a protocol that can come up as the wrong one.
 
-Do not read that as `pulses: 1`. A single edge is measured unsafe — it fired twice unprompted on
-2026-09-01 on a bare pin whose only pull was the carrier's external 10 k, each time running a full
-controlled shutdown and leaving something that looked exactly like a dead reader. **A 5 s continuous
-assert is a different signal entirely**: an EFT burst cannot hold a line for five seconds, and the
-button now sits behind 24 V and the field opto through the Tunnel Manager, which is a far better
-noise margin than the unwired pin that misfired. **Sample the level. Do not count edges.**
+`ShutdownRequestMonitor` polls `FieldIo.read(IN3)` on its own thread and is deliberately **not** on
+`GpioEdgeMonitor` — a level is what is being measured, and reading it through `pinctrl` stays clear
+of the exclusive claim `gpiomon` takes on the lines it watches. **IN3 is therefore no longer on that
+`gpiomon` command line**, and `tunnel.v1.gpio.shutdown-line` is gone.
 
-**Keep the burst.** Make the protocol selectable — `tunnel.plc.shutdown.mode: BURST | HOLD`, default
-`BURST`, with `hold-ms: 5000` — so the wayside and any future PLC site are untouched and the tunnel
-opts in.
+**Releasing abandons the hold; nothing is banked.** Two four-second presses are not an eight-second
+hold, so a line chattering asserted/released — which is what noise looks like — can never accumulate
+its way to a request.
 
-Three rules the HOLD path needs and the BURST path never did:
+Both start-up guards are built, because a stuck button or a shorted line reads asserted forever and
+would otherwise shut the unit down on every boot:
 
-1. **Require an inactive→active transition after start-up before a hold is accepted.** A stuck button
-   or a shorted line reads active forever; without this the unit shuts down again the moment it
-   finishes booting, and you have an unbootable reader with no fault anywhere to find.
-2. **Refuse to act for the first N seconds after start-up**, for the same reason. Make N config.
-3. **Drive O7 `SAFE_TO_POWER_OFF` at the end of the sequence** (§7.1) — it is the only signal the
-   operator gets, because restart is a full power cycle and there is no other way back.
+1. **`require-release-first` (default true)** — a hold may only begin from an observed
+   released→asserted transition. The verdict is latched at the *start* of the assert, so a later
+   release cannot retroactively bless it. This is the one that actually holds.
+2. **`startup-grace-ms` (30 000)** — refuses to act at all early on. The weaker guard: alone it only
+   *delays* the shutdown of a stuck line.
 
-Keep the logging lesson from the burst work: at INFO the log records only the outcome, which is
-useless when the question is *what actually arrived on the pin*. Log the observed level transitions
-and the measured hold duration at DEBUG, and the accepted request at WARN.
+Uptime is measured from the **first sample**, not from construction, so the grace and the samples
+share one clock. A non-default `hold-ms`, and turning `require-release-first` off, both warn at
+start-up.
+
+**Logging:** INFO gives the start-up line and the accepted request; DEBUG adds the assert and the
+abandon; **TRACE gives every sample with its running hold time**, which is the level to use when the
+question is what actually arrived on the pin. `logging.level.com.intelli.rfid.tunnel.field: TRACE`.
 
 **Test it as part of Test 6.** A 4-second press must do nothing. A 5-second press must run the full
 sequence and light O7. A press during a reader fault must still work. And confirm that shorting the
-input to 24 V at boot does **not** shut the unit down.
+input to 24 V at boot does **not** shut the unit down — then releasing it must arm the button rather
+than leave it dead for the life of the process. `ShutdownRequestMonitorTest` pins all of that at the
+unit level (10 tests); the bench run is the wiring proof.
 
 ## 8. Tunnel-side work
 
@@ -470,8 +464,10 @@ diagnostic ones. Say so in its javadoc: it is not the contract, it must not appe
 documentation, and it should be behind the `ADMIN` scope in `ScopeRules`.
 
 ### 8.1 Fixes, in this order
-1. **`tunnel.plc.profile: PLC | TUNNEL`** (§3) — the channel map becomes two named maps instead of one
-   hard-coded enum. Nothing else can be trusted until the outputs mean what the panel thinks.
+1. ~~**The channel map**~~ **— DONE** (§3). `FieldChannel` carries the Reliance functions, the lamps
+   hold levels, the heartbeat and the width-encoded RESULT are gone, and the package and config
+   prefix are `field` / `tunnel.field.*`. **Update the site `application.yml`'s `plc:` key before the
+   next deploy** — it now binds nothing, silently.
 2. **`session: 1`** in `application.yml` (§3A.3). One line.
 3. **Polarity on the edge monitor** (§3A.1) — `gpiomon -l` / `--active-low` on both libgpiod majors,
    behind `tunnel.v1.gpio.active-low`, default true.
@@ -487,10 +483,9 @@ documentation, and it should be behind the `ADMIN` scope in `ScopeRules`.
   `tunnel.v1.gpio.enabled` is false** so it cannot be mistaken for a production trigger.
 - `POST /api/test/conveyor` — `{mode: "AUTO"|"HOLD", ttlMs}`. `HOLD` forces O1 low with the deadline
   from §7; `AUTO` returns it to the state machine.
-- `GET /api/test/io` — the actual state of all 7 outputs and 4 inputs, so the admin app can show
-  lamps and so the fault test (§6.4) can assert what O1 did. The admin UI's PLC tab already expects
-  something like this at `/api/v1/diagnostics/io` and gets a 404; put it here instead and repoint the
-  tab — **do not add a diagnostics path under `/api/v1`.**
+- `GET /api/test/io` — the actual state of all 7 outputs and 4 inputs, so the fault test (§6.4) can
+  assert what O1 did. Note this duplicates `/api/v1/diagnostics/io`, which exists and is what the
+  admin Field I/O tab already drives; prefer repointing to that over adding a second shape.
 - `POST /api/test/select/reset` — issue the Select-to-A on demand, so the gap sweep (§6.3) can be run
   with and without it.
 
@@ -500,7 +495,7 @@ documentation, and it should be behind the `ADMIN` scope in `ScopeRules`.
 write a second one. What is missing is the layer above:
 
 - A **`ConveyorController`** that owns the O1 state machine (§7) and the fault behaviour (§7.1),
-  writing through `FieldIo` under the `TUNNEL` profile.
+  writing through `FieldIo`.
 - A **real `CartonRelease`** bean — it is still the logging stub, still wired
   `@ConditionalOnMissingBean` in `V1Configuration`, and still called before the carrier drop and the
   verdict. That ordering is the contract promise that a slow WMS never stalls the conveyor; keep it.
@@ -575,10 +570,8 @@ settle) and per tag (EPC tail, seen n/N, mean RSSI, range, reads per carton, fir
 
 ## 11. Order of work
 
-1. **The `TUNNEL` channel profile** (§3, §8.1), **including the three behavioural changes in §3.1** —
-   run lines instead of a speed word, lamps as levels not pulses, heartbeat not started. Everything
-   downstream is meaningless until OUT1–OUT7 mean what the panel says they mean. Fix the admin PLC
-   tab in the same change (§3.2) or you will be debugging against wrong labels all week.
+1. ~~**The channel map and the admin tab**~~ **— DONE** (§3, §3.2). Remaining on this item: the site
+   `application.yml` still has the old `plc:` key, which binds nothing.
 2. **`session: 1`**, the edge polarity, the carton event (§8.1 items 2–4). All small.
 3. **Test 3, the canary tag.** Before a single number is collected.
 4. **`ConveyorController` + real `CartonRelease`** (§8.3), then §7's O1 behaviour. **Verify the
@@ -639,10 +632,10 @@ run proves nothing in either direction and must not be averaged into anything.
 
 Two cross-cutting criteria that apply to every test above:
 
-- **`ResultSignal.outOfBand()` must be zero**, if the pulse path is still live in whatever profile you
-  are running. A non-zero value means a verdict would be decoded wrongly downstream, and the
-  2026-08-31 baseline was measured with the reader idle — these tests are the first time it is
-  measured under read load.
+- **Exactly one verdict lamp lit for ~5 s after each carton, then both dark.** "Both lit" is a
+  wiring fault and is flagged as such on the admin Field I/O tab. Look within the dwell — polling
+  `/api/v1/diagnostics/io` a minute later legitimately shows both dark, and that is not a finding.
+  This replaces the old out-of-band width check, which went away with the width encoding.
 - **No `degraded` string on `/api/v1/reader/status`** for the duration of a run. A degraded reader can
   still produce plausible numbers, which is exactly why it has to be an explicit check rather than
   something noticed afterwards.

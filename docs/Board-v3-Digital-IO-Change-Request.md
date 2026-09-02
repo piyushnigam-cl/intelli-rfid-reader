@@ -1,5 +1,11 @@
 # Change request — digital I/O, IntelliRFID v3
 
+> **Superseded in premise, 2026-09-01.** This note was written when the Reliance tunnel was expected
+> to have a PLC. **It does not: the reader drives the conveyor itself**, through the Tunnel Manager.
+> References to a PLC below are the *context this was argued in*, not a description of the system —
+> the current field interface is `com.intelli.rfid.tunnel.field.FieldChannel` and
+> `docs/Tunnel-Interconnect.md`. Kept because the electrical reasoning is still sound.
+
 **To:** whoever draws the next revision of `intelli-rfid-v2`
 **From:** the tunnel software side
 **Date:** 2026-08-22 · against hardware rev `0861de5`
