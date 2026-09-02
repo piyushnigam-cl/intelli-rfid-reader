@@ -1,0 +1,12 @@
+# One line-ending for everyone. Three machines see these files: the CM4 (Linux),
+# the laptop (Windows, core.autocrlf on), and the desktop bridge VM (Linux). Without
+# this, a Windows checkout rewrites every .md to CRLF and the next Linux session sees
+# the whole file as changed — 1357 no-op lines on 2026-09-02, which is why this exists.
+* text=auto eol=lf
+
+*.docx binary
+*.pdf  binary
+*.jar  binary
+*.png  binary
+*.zip  binary
+*.pyc  binary
