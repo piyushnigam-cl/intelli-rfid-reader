@@ -6,7 +6,7 @@ the tree and is reliable; every claim about *module or conveyor behaviour* is in
 marked. Where the hardware contradicts this document, the hardware is right — fix it and write the
 correction back into `CLAUDE.md`.
 
-Version 2.0 · 2026-09-02 · for `apps/intelli-rfid-tunnel` and `apps/intelli-rfid-admin`
+Version 2.1 · 2026-09-02 · for `apps/intelli-rfid-tunnel` and `apps/intelli-rfid-admin`
 
 Changed in 1.1: session 1 measured clean (§3.3) · trigger edge confirmed (§3.1) · Double Pass is three
 passes with per-pass attribution (§5) · fault behaviour decided (§7.1) · the four proposed tests are
@@ -18,17 +18,39 @@ seven output channels now collide with the Reliance map (§3), the carrier is al
 than continuous, and five claims from v1.0 are withdrawn (§3A.6). IN3 shutdown becomes a held button
 rather than a pulse burst (§7.2).
 
+Changed in 2.1: reframed — this is the job of making the tunnel app the machine controller, and the
+tests are its acceptance criteria (§1, §14). **The TUNNEL profile is now the default, not PLC** — the
+earlier reasoning that the wayside needed PLC was wrong, the package exists only in this app. Adds
+the three behavioural changes a channel rename would miss (§3.1) and the admin PLC tab that breaks
+under TUNNEL (§3.2).
+
 ---
 
-## 1. What we are building and why
+## 1. What changed this morning, and what it means for this app
 
-The operator needs to characterise the tunnel on the bench and then on the moving rig, and get a
-number he can show Reliance. Two tests were specified; four more are proposed here because the two
-as specified will not survive contact with what we already know about this module.
+**The PLC is bypassed. The reader is now the machine controller.**
 
-The admin app is the console. The tunnel app grows a small **test control surface** and a couple of
-missing events. **Nothing in `/api/v1/**` changes** — that is the customer contract, issued to
-Reliance, and it is not the bench surface. Everything new goes on the diagnostic side.
+The tunnel app was built against a PLC interface: it emitted a 3-bit speed word, a width-encoded
+verdict and a heartbeat, and another machine decided what the conveyor did. **There is no longer
+another machine.** The Intelli-RFID Reader drives three EZY-S100 driver cards through the Tunnel
+Manager, reads two SICK W26 sensors, lights two lamps, and owns the conveyor state machine itself.
+`docs/Tunnel-Interconnect.md` is the wiring; `CLAUDE.md` has the names and the J26 remap.
+
+**So this is not a bench-harness job with some incidental refactoring. It is: make the tunnel app the
+machine controller, then prove it with six tests that must pass.** The tests are the acceptance
+criteria for the change, not a separate activity — §13 says what "pass" means for each one.
+
+Three consequences worth stating before anything else:
+
+- **The `com.intelli.rfid.tunnel.plc` package is now misnamed.** It is the tunnel's own field-IO
+  layer. Keep the code — it is good and it is tested — but nobody should read the package or the
+  `tunnel.plc.*` config prefix as evidence that a PLC exists. Rename if it is cheap; if not, say so
+  in the package javadoc so the next reader is not misled.
+- **Nothing outside this app uses it.** I checked: `intelli-rfid-core`, `-wayside`, `-reader-test`
+  and `-admin` contain no reference to `tunnel.plc`, `FieldChannel`, `HeartbeatDriver` or
+  `ResultSignal`. The layer is the tunnel app's alone, and the tunnel app is the Reliance product.
+- **The customer contract does not move.** `/api/v1/**` is unchanged. The new test surface is
+  `/api/test/**`, ADMIN scope.
 
 ## 2. What already exists — verified against `origin/main`, 2026-09-02
 
@@ -94,17 +116,48 @@ tunnel is a different machine on the same board, and five of the seven outputs d
 width-encoding on OUT5 was forced by having one wire to spare; with two lamps there are two wires and
 no decode ambiguity. The heartbeat existed so the PLC could fault the line after 3 s of silence —
 **and, critically, so that heartbeat absence was the "safe to cut power" handshake.** With no PLC
-there is nobody to receive it, which is precisely why the operator has chosen O7 =
+there is nobody to receive either, which is precisely why the operator has chosen O7 =
 `SAFE_TO_POWER_OFF` and `power-off-os: true` instead.
 
-**Do not delete the PLC layer.** The wayside and any future PLC site need it, and it is measured and
-tested. **Make the channel map selectable** — `tunnel.plc.profile: PLC | TUNNEL`, defaulting to
-`PLC` — so `FieldChannel` becomes two named maps rather than one enum. Under `TUNNEL`: no heartbeat,
-no width-encoded result, OUT5/OUT6 as plain lamps, OUT7 as the shutdown indicator, and OUT1–OUT4 as
-the conveyor lines in §7. Keep `ResultSignal` and `HeartbeatDriver` intact and simply not started.
+**Make the channel map selectable — `tunnel.plc.profile: TUNNEL | PLC`, and TUNNEL is the DEFAULT.**
+An earlier draft of this document said default `PLC`, on the reasoning that the wayside needed it.
+**That was wrong** — the `plc` package exists only in this app, and this app is the Reliance product.
+Shipping a unit that comes up in PLC mode unless somebody remembers a config key is the wrong
+failure. `PLC` is retained as the legacy profile for a site that still has one; nothing depends on it
+today. Keep `ResultSignal` and `HeartbeatDriver` intact and simply not started under TUNNEL.
 
-That is the same shape as the `BURST | HOLD` decision in §7.2. One board, two machines, one config
-key each time.
+Same shape as the `BURST | HOLD` decision in §7.2: one board, two machines, one config key each time.
+
+### 3.1 What actually changes in behaviour, not just in names
+
+Three of these are behavioural and will not fall out of a channel rename:
+
+- **Speed stops being a word and becomes per-conveyor run lines.** Today OUT1–3 are `SPEED0/1/2`, a
+  3-bit code with 8 values and `000` = stop. Under TUNNEL there is no speed word: **O1 is run/stop for
+  EnC and ExC together, and O2+O3 are RZC's Run A and Run B as a pair** — A only = 100 %, A+B = 75 %,
+  B only = 50 %, neither = stop. Three speeds, not eight, and only on RZC. Delete the speed-word
+  encoder rather than remapping it; anything that still thinks in `0..7` is a bug waiting to happen.
+- 🔴 **The lamps need a level, not a pulse.** `ResultSignal` emits **one 100 ms or 500 ms pulse per
+  carton** — correct for a PLC input that latches it, useless on a lamp, where it is a blink nobody
+  sees. Under TUNNEL, PASS and FAIL are **levels held until the next carton opens**, and a lamp dwell
+  (`tunnel.plc.result.lamp-dwell-ms`, a few seconds) so a verdict on the last carton of a shift is
+  still visible. Exactly one of the two is ever lit; both dark means no carton has been read yet.
+  **This is the change most likely to be done as a rename and silently be wrong.**
+- **The heartbeat has no consumer.** Under TUNNEL, `HeartbeatDriver` is not started and OUT6 is the
+  FAIL lamp. Note what is lost: heartbeat absence was a *hardware* liveness signal that survived a
+  hung JVM. Nothing replaces it — the reader's liveness is now only visible over HTTP, and O7 is a
+  shutdown indicator, not a watchdog. That is acceptable because the failsafe still holds (outputs
+  reset low, so a dead reader stops the line), but it should be a decision, not an accident.
+
+### 3.2 The admin PLC tab breaks under TUNNEL — fix it in the same change
+
+`apps/intelli-rfid-admin/src/main/resources/static/app.js` hardcodes the channel map in
+`PLC_OUTPUTS` — `OUT1: 'SPEED0 (LSB)'`, `OUT2: 'SPEED1'`, `OUT3: 'SPEED2 (MSB)'` — and renders a
+decoded `SPEED n of 7` pill. Under TUNNEL those labels are wrong and the pill is meaningless.
+
+**Drive the labels from the server**, not from a copy in JavaScript: `GET /api/v1/diagnostics/io`
+already returns `function` per channel, so render that string and drop the hardcoded table and the
+speed decode. The tab then follows the profile automatically and cannot drift again.
 
 ## 3A. Fixes still outstanding — verified, not assumed
 
@@ -522,8 +575,10 @@ settle) and per tag (EPC tail, seen n/N, mean RSSI, range, reads per carton, fir
 
 ## 11. Order of work
 
-1. **The `TUNNEL` channel profile** (§3, §8.1). Everything downstream is meaningless until OUT1–OUT7
-   mean what the panel says they mean.
+1. **The `TUNNEL` channel profile** (§3, §8.1), **including the three behavioural changes in §3.1** —
+   run lines instead of a speed word, lamps as levels not pulses, heartbeat not started. Everything
+   downstream is meaningless until OUT1–OUT7 mean what the panel says they mean. Fix the admin PLC
+   tab in the same change (§3.2) or you will be debugging against wrong labels all week.
 2. **`session: 1`**, the edge polarity, the carton event (§8.1 items 2–4). All small.
 3. **Test 3, the canary tag.** Before a single number is collected.
 4. **`ConveyorController` + real `CartonRelease`** (§8.3), then §7's O1 behaviour. **Verify the
@@ -565,7 +620,37 @@ settle) and per tag (EPC tail, seen n/N, mean RSSI, range, reads per carton, fir
   high-water sequence, and there is no retention or size cap. A long test campaign will make start-up
   slow. Rotate the spool directory between campaigns.
 
-## 13. Questions back to the operator
+## 13. What "pass" means — the acceptance criteria
+
+The operator's instruction is that **these tests must pass**, so each one needs a verdict, not just a
+chart. A test is **INVALID** rather than FAILED whenever the canary is missing (Test 3) — an invalid
+run proves nothing in either direction and must not be averaged into anything.
+
+| Test | PASS when | FAIL on |
+|---|---|---|
+| **1 Static** | every run has `matchingCount == expectedCount`; canary seen in every run; the v1 callback conforms (`V1Contract` clean) on every run; O1 stayed LOW for the whole test | any run short or over; any contract violation; O1 asserted at any point |
+| **2 Dynamic, single pass** | as Test 1, plus O1 low from the EnS edge and high again on every outcome including `TIMEOUT`; carton duration within the band you record on the first clean run | O1 stuck low after an outcome; a carton stopped in the zone |
+| **2 Dynamic, double pass** | as above; O1 low across **all three** passes; `passBoundaries[]` present and pass 2 + pass 3 yields reported | O1 released at the first ExS edge; missing pass attribution |
+| **3 Canary** | the canary EPC appears in 100 % of runs across every other test | any absence — and that invalidates the run it was absent from, wherever it happened |
+| **4 Empty field** | zero tags, no session opened, no verdict emitted | any tag at all; a phantom carton (check `disable-input-pulls`) |
+| **5 Gap sweep** | a stated minimum gap at which carton 2 still reads complete, with `recoveries` unchanged across the whole sweep | `recoveries` incremented, or `MODULE_NEED_RESTART` in the log — **stop the sweep, that is a hardware result** |
+| **6 Fault injection** | carton exits forward; red lamp lights and holds; a `TIMEOUT` / `complete:false` result **and its callback** are delivered; reader recovers and `recoveries` advances by exactly one | no result emitted; carton trapped; red lamp dark or cleared early |
+| **Shutdown (§7.2)** | a 4 s press does nothing; a 5 s press runs the sequence and lights O7; input shorted at boot does **not** shut down | any unprompted shutdown; O7 lit before the counter is closed |
+
+Two cross-cutting criteria that apply to every test above:
+
+- **`ResultSignal.outOfBand()` must be zero**, if the pulse path is still live in whatever profile you
+  are running. A non-zero value means a verdict would be decoded wrongly downstream, and the
+  2026-08-31 baseline was measured with the reader idle — these tests are the first time it is
+  measured under read load.
+- **No `degraded` string on `/api/v1/reader/status`** for the duration of a run. A degraded reader can
+  still produce plausible numbers, which is exactly why it has to be an explicit check rather than
+  something noticed afterwards.
+
+Record the verdicts as a set, not one at a time. A suite where five pass and one is invalid is not a
+partial pass — it is a suite that has not run.
+
+## 14. Questions back to the operator
 
 1. ~~Where does EnS sit relative to the EnC/RZC transfer?~~ **Closed 2026-09-02.** The operator will
    tune the EnS position on the rig so that reading starts at the right moment *and* the entry
