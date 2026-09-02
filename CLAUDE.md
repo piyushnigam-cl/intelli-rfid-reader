@@ -183,6 +183,28 @@ The failure this prevents is specific and has already happened: a CM4 session th
 hardware behaviour, wrote none of it down, and pushed nothing, leaving the laptop to design its next
 draft against facts the module had already disproved.
 
+### Handoffs travel through git, not as files
+
+**A handoff document is not delivered by handing the operator a file. It is delivered by committing
+it and pushing it, so the other session pulls it.** The two sessions share one repository and that is
+the whole point of the split.
+
+The rule, because the laptop cannot push:
+
+1. Write the document into `docs/` — markdown is the artefact of record; a `.docx` alongside it is a
+   convenience for reading, never the deliverable.
+2. **Commit it.**
+3. **Tell the operator to push, in the same breath.** The bridge VM has no AWS credentials, so the
+   commit and the push are two halves of one action and the second half needs a human. Saying "the
+   document is ready" without the push command leaves it stranded.
+4. The other session pulls and reads it from `docs/`.
+
+**A document that is committed but unpushed has not been handed over.** Neither has one that was only
+attached to a chat message. If a session ends with either, the work did not arrive.
+
+The same applies in reverse: when the CM4 records a correction, it goes into `CLAUDE.md` and is
+pushed, not described in a chat reply that the laptop session will never see.
+
 ## Repository layout
 
 Each app is its **own git repository**, remoted to AWS CodeCommit in `ap-south-1`. The project root
