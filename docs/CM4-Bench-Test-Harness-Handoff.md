@@ -6,13 +6,17 @@ the tree and is reliable; every claim about *module or conveyor behaviour* is in
 marked. Where the hardware contradicts this document, the hardware is right — fix it and write the
 correction back into `CLAUDE.md`.
 
-Version 1.2 · 2026-09-02 · for `apps/intelli-rfid-tunnel` and `apps/intelli-rfid-admin`
+Version 2.0 · 2026-09-02 · for `apps/intelli-rfid-tunnel` and `apps/intelli-rfid-admin`
 
 Changed in 1.1: session 1 measured clean (§3.3) · trigger edge confirmed (§3.1) · Double Pass is three
 passes with per-pass attribution (§5) · fault behaviour decided (§7.1) · the four proposed tests are
 now Tests 3-6 (§6).
 
-Changed in 1.2: IN3 shutdown becomes a held button, not a pulse burst (§7.2).
+Changed in 2.0, and this is a substantive revision: §2 and §3 were rewritten against `origin/main`
+after 17 tunnel and 6 core commits landed. **The whole PLC field-IO layer already exists**, five of
+seven output channels now collide with the Reliance map (§3), the carrier is already triggered rather
+than continuous, and five claims from v1.0 are withdrawn (§3A.6). IN3 shutdown becomes a held button
+rather than a pulse burst (§7.2).
 
 ---
 
@@ -26,152 +30,137 @@ The admin app is the console. The tunnel app grows a small **test control surfac
 missing events. **Nothing in `/api/v1/**` changes** — that is the customer contract, issued to
 Reliance, and it is not the bench surface. Everything new goes on the diagnostic side.
 
-## 2. Read this before you write anything
+## 2. What already exists — verified against `origin/main`, 2026-09-02
 
-You have more already built than you think. From a full read of both trees:
+**v1.0 of this document was written against a tree 17 tunnel commits and 6 core commits out of
+date, and several of its "findings" were already fixed.** This section replaces it. Everything below
+was read from `origin/main` in both repos.
 
-**In the tunnel app / core — exists, reuse it:**
-- `GET /api/inventory/completed?since=<seq>&limit=<n>` reads the **JSONL spool** and returns whole
-  `InventoryResult` records. This is the report's data source. **Do not build a new reporting
-  endpoint.**
-- The spool record `InventoryResult` already carries everything the analytical report needs:
-  `durationMs, lastNewTagMs, closeReason, expectedTags, tagCount, matchingCount, marginalCount,
-  complete, totalReads, countReachedAt, settledAt, sequence` and `tags[]` =
-  `InventoryTag(epc, tid, reads, bestRssi, antennas, firstSeen, lastSeen)` — **for every tag, not
-  just the GS1-decodable ones.**
-- `TagBroadcaster.publishEvent(name, payload)` already exists and `InventoryService.finish()` already
-  publishes an `inventory` event with the whole `InventoryResult` on every carton close.
-- `GpioEdgeMonitor` reads GPIO23/24 through `stdbuf -oL gpiomon`. `V1Service.onCartonEntered` /
-  `onCartonLeft` are the seams.
-- `POST /api/reader/config` changes **session, target, Q, rf-mode, power, RSSI threshold, dedup
-  window** at runtime, stopping and restarting inventory around the change.
-- `CartonRelease` is a named interface with a logging-only implementation, wired
-  `@ConditionalOnMissingBean` in `V1Configuration`. **That is your seam for the conveyor outputs** —
-  provide a real bean and nothing else has to move.
+**The whole PLC field-IO layer exists.** `com.intelli.rfid.tunnel.plc`:
+- **`FieldIo`** interface — `write`, `diagnosticWrite` (the only way to drive a *parked* channel),
+  `read`, `readAll`, `problem`, `isUsable`. Everything above it speaks **field sense**, never GPIO
+  level. That is the inversion boundary this document asked for; it is built.
+- **`PinctrlFieldIo`** — shells `pinctrl`, one process per call. Chosen over `gpioset` deliberately:
+  `pinctrl` writes the pad registers so a level survives process exit, and it does not contend with
+  the `gpiomon` holding lines 23/24/18.
+- **`FieldChannel`** — the channel map, as a **hard-coded enum, explicitly not configurable**.
+- **`HeartbeatDriver`** (OUT6, 1 Hz), **`ResultSignal`** (OUT5, width-encoded verdict),
+  **`ShutdownRequestMonitor`** + **`ShutdownSequence`** (IN3), **`DiagnosticsIoController`**
+  (`/api/v1/diagnostics/io`, ADMIN scope).
+- `tunnel.plc.*` config: `enabled`, `command`, `disable-input-pulls`, plus `heartbeat.*`, `result.*`
+  and `shutdown.*` blocks.
 
-**In the admin app — exists, reuse it:**
-- `/proxy/**` → `ReaderHttp`: any method, any path, any body to the tunnel, with `X-API-Key` injected
-  server-side and `X-Elapsed-Ms` on every response. You do not need to write an HTTP client.
-- `CallbackController` + `CallbackStore`: a working WMS simulator, 200-record history, three-valued
-  token check, runtime-settable **delay** and **response status** for fault injection, and it already
-  runs `V1Contract.check(RESULT, …)` on every inbound callback.
-- `V1Contract` + `POST /api/admin/validate?shape=` — a document-derived validator that shares no code
-  with the server. Keep using it; it is the only thing that can actually fail the contract.
-- `ExchangeLog` (500 entries) + `GET /api/admin/log/export` as JSONL.
-- `POST /api/admin/config` mutates base URL, key, timeout, callback delay and status at runtime.
-- The UI is **three static files, no build step** — `static/index.html`, `app.js`, `app.css`. A new
-  screen is one `<section data-panel="…">` plus one `<nav>` button. Buttons that only hit an endpoint
-  need no JavaScript: the `[data-call]` delegated dispatcher handles them.
+**The carrier is already triggered, not continuous.** `tunnel.v1.triggered-carrier: true`. Armed and
+idle means the antenna is **off**; it comes up on the IN1 edge via `ensureReading()` and drops in
+`onSuperFastCarton`. Disarming returns it to continuous. This matters for two things in this
+document — see §3.3 and Test 5.
 
-**Does not exist and you will have to build it:** any charting (no library, no `package.json`,
-nothing), any notion of a "run" or a test scenario, any persistence across an admin restart, and any
-analysis of the JSONL.
+**Fault recovery is real.** `FaultRecoveryPolicy` + a `rfid-supervise` daemon thread; the backoff
+resets only after `recover-stable-ms` of health, deliberately not on a successful reconnect.
+`recover-on-fault` / `recover-max-delay-ms` / `recover-stable-ms` are **live keys**, not the dead ones
+v1.0 claimed. `recoveries()` and `lastRecoveryAt()` are exposed.
 
-## 3. Fix these first — they will make the tests lie
+**Still true and still needed:**
+- `GET /api/inventory/completed?since=<seq>&limit=` reads the JSONL spool and returns whole
+  `InventoryResult` records — **the report's data source. Do not build a new one.**
+- `InventoryTag(epc, tid, reads, bestRssi, antennas, firstSeen, lastSeen)` for **every** tag.
+- `CartonRelease` **is still a logging-only stub**, called before the carrier drop and the verdict.
+- The admin app: `/proxy/**` with the key injected server-side, `CallbackController` as a WMS
+  simulator with runtime delay/status, `V1Contract` + `POST /api/admin/validate`, and a UI of three
+  static files with no build step. No charting library anywhere.
 
-### 3.1 The edge polarity is wrong for real sensors 🔴 — CONFIRMED, change it
+**Instrumentation you get free, and should use in the tests:** `ResultSignal.emitted()`,
+`outOfBand()`, `lastWidthMs()`, `widestMs()`, `narrowestMs()` — **any non-zero `outOfBand` means a
+carton was decoded wrongly downstream**. Baseline measured 2026-08-31 over 20 cartons: PASS
+496–504 ms, FAIL 98–100 ms, none out of band — **but not under read load**, which is exactly what
+these tests apply. `HeartbeatDriver` exposes `toggles()`, `lateToggles()`, `lastToggleAt()`.
 
-`GpioEdgeMonitor.commandLine()` hardcodes `gpiomon --rising-edge`. With the W26 wired as
-`docs/Tunnel-Interconnect.md` specifies — PNP, 24 V present = carton present — the opto pulls the
-GPIO **low**, so **carton arrival is a FALLING edge**. As it stands the tunnel will trigger on beam
-*clear*, not beam *break*: every carton will open its session as it leaves.
+## 3. 🔴 The channel map now collides with the Reliance design — resolve this first
 
-**The operator has confirmed this: change the trigger edge.** Add `tunnel.v1.gpio.active-low`
-(default **true**, because that is how the board is wired) and select `--falling-edge` from it. Do
-not hardcode the other polarity instead — the bench technique in §3.2 asserts by pulling the pin the
-other way, so both senses have to work.
+`FieldChannel` is a hard-coded enum transcribed from the **PLC** integration document. The Reliance
+tunnel is a different machine on the same board, and five of the seven outputs disagree:
 
-### 3.2 Super Fast Mode cannot be exercised on a static bench without sensor edges 🔴
+| Ch | BCM | Today (PLC) | Reliance tunnel | Verdict |
+|---|---|---|---|---|
+| OUT1 | 26 | `SPEED0` | `EnC_ExC_RUN` | conflict — a 3-bit speed word becomes three independent lines |
+| OUT2 | 20 | `SPEED1` | `RZC_RUN_A` | conflict |
+| OUT3 | 16 | `SPEED2` | `RZC_RUN_B` | conflict |
+| OUT4 | 19 | `DIRECTION` | `RZC_REVERSE` | compatible in spirit, one bit either way |
+| OUT5 | 21 | `RESULT`, **width-encoded** 100 ms FAIL / 500 ms PASS | `LAMP_PASS` | **direct conflict** |
+| OUT6 | 12 | `HEARTBEAT`, 1 Hz | `LAMP_FAIL` | **direct conflict, and it breaks the watchdog** |
+| OUT7 | 13 | parked | `SAFE_TO_POWER_OFF` | free — the one output with no argument |
 
-Armed `SUPERFAST` with `gpio.isWatching()` true, **nothing opens a session until a real edge
-arrives** — a static test will simply hang. With gpio *not* watching, `V1Service.arm` falls back to
-`setAutoTriggerSpec(armedSpec)`, sessions open on the first tag and close on count/settle, and the
-status reports `degraded`. That fallback is explicitly *not equivalent* to the real thing, so a
-static test that runs in it is not testing Super Fast Mode.
+**The migration is coherent, because the consumer of the PLC semantics no longer exists.** The
+width-encoding on OUT5 was forced by having one wire to spare; with two lamps there are two wires and
+no decode ambiguity. The heartbeat existed so the PLC could fault the line after 3 s of silence —
+**and, critically, so that heartbeat absence was the "safe to cut power" handshake.** With no PLC
+there is nobody to receive it, which is precisely why the operator has chosen O7 =
+`SAFE_TO_POWER_OFF` and `power-off-os: true` instead.
 
-**Use the documented bench technique**: `pinctrl set 23 ip pu` raises an unconnected input and
-`pinctrl set 23 ip pd` returns it, and the kernel reports both to an edge monitor holding the line.
-That is how the entry/exit sensors were exercised with nothing attached. Add a test-only endpoint
-(§7.1) that pulses the lines, so the static test drives the **production** Super Fast Mode path.
+**Do not delete the PLC layer.** The wayside and any future PLC site need it, and it is measured and
+tested. **Make the channel map selectable** — `tunnel.plc.profile: PLC | TUNNEL`, defaulting to
+`PLC` — so `FieldChannel` becomes two named maps rather than one enum. Under `TUNNEL`: no heartbeat,
+no width-encoded result, OUT5/OUT6 as plain lamps, OUT7 as the shutdown indicator, and OUT1–OUT4 as
+the conveyor lines in §7. Keep `ResultSignal` and `HeartbeatDriver` intact and simply not started.
 
-Two things to remember: `gpiomon` holds the lines exclusively — a `gpioget` or a second `gpiomon`
-gets `Device or resource busy`, and that failure means the app is working. And with §3.1 done, the
-pulse has to produce a *falling* edge, so the sequence is `pu` (idle) then `pd` (assert).
+That is the same shape as the `BURST | HOLD` decision in §7.2. One board, two machines, one config
+key each time.
 
-### 3.3 Session — S1 is what we run, and it works 🟢 MEASURED, but the config disagrees
+## 3A. Fixes still outstanding — verified, not assumed
 
-**Measured by the operator 2026-09-02: with `session: 1` the tunnel re-reads the same tags a few
-seconds later with no problem.** That is the S2 persistence problem gone, and it settles an option
-that `CLAUDE.md` had listed as untested. S1's inventoried flag self-decays in 500 ms–5 s even while
-the tag is powered, which is exactly the behaviour a carton-at-a-time tunnel wants.
+### 3A.1 The trigger edge is still wrong 🔴 CONFIRMED STILL BROKEN
 
-**But `application.yml` still says `session: 2`.** That is live config drift: the committed default is
-not what the rig runs. **Change it to 1 and record why in the same commit**, or the next person to
-deploy from the repo will reproduce the old fault and spend a day on it. Check the running value
-before believing any low tag count — a leftover S2 reads exactly like a broken reader, and that has
-already cost this project a day once.
+`GpioEdgeMonitor.commandLine()` no longer hardcodes `--rising-edge` — it detects libgpiod v1 vs v2
+and emits `--edges=rising` or `--rising-edge` accordingly. **But there is still no active-low or
+polarity option of any kind**, and `FieldChannel` documents inputs as inverted (field-asserted = GPIO
+low). So the monitor watches a rising GPIO edge, which with the Reliance wiring is **beam clear**.
+The two halves of the codebase disagree with each other and nothing reconciles them.
 
-**The Select-to-A reset is therefore no longer a blocker — but it is still worth building.** There is
-no Gen2 Select anywhere in the codebase (I grepped `SelC_Inventoried`, `Mat_SLorA`,
-`MTR_PARAM_TAG_MULTISELECTORS` — vendor demos only). What it buys now is *determinism* rather than a
-fix:
+The operator has decided: **change it.** Add the polarity option — `gpiomon -l` / `--active-low`
+works on both v1 and v2 — so "rising" means *the channel became active* and matches `FieldIo`.
 
-- S1 decay is a **timing window, not a guarantee**. The spec range is 500 ms–5 s and it varies with
-  silicon and temperature. A carton read that closes in 600 ms and immediately reverses (§5) can
-  begin its return pass while some tags are still in state B, so they answer late or not at all —
-  and on a three-pass cycle that shows up as a tag "found on pass 3" when it was really in the field
-  the whole time. **The per-pass attribution in §5 is only trustworthy with the Select in place.**
-- One `ParamSet` on `MTR_PARAM_TAG_MULTISELECTORS` before each pass removes the dependency entirely.
+### 3A.2 Static Super Fast Mode still cannot be triggered 🔴 CONFIRMED
 
-Build it as `resetInventoriedFlag()`, called from `InventoryService.openSession(SessionSpec)` and at
-**each direction change**. Note that the tunnel leaves the carrier on between cartons so
-`ensureReading()` will not re-enter `startReading()` — it needs an explicit call, not a hook on start.
-Keep the session selector (S0/S1/S2) on the test screen anyway: `session` is runtime-settable through
-`POST /api/reader/config`, and being able to reproduce the S2 failure on demand is worth having.
+Unchanged: with the sensors watching, nothing opens a session without an edge; without them, the mode
+falls back to first-tag open and reports `degraded`. Add the test endpoint that pulses the lines
+(§8.2). Two new details from the current tree:
+- **`tunnel.plc.disable-input-pulls` defaults to `true`**, which turns the internal pull-downs off on
+  IN1–IN4 so the carrier's external 10 k defines the level. **On a bare bench with nothing wired to
+  J26, set it `false` or IN1 floats and manufactures phantom cartons.**
+- `tunnel.v1.gpio.debounce-ms` is 50 and **must not go past ~150**, or it eats the IN3 burst.
 
-Two things that have not changed: **the gap sweep (§6.3) is still the test that finds the throughput
-ceiling**, S1 or not — it just measures a mechanical and read-time limit now rather than a Gen2 one.
-And **S0 remains wrong for continuous-carrier bench work** (16.0 callbacks/s on S0 versus 0.1/s on S2
-for a static tag), so if anyone reaches for S0 to "make the static test work", they have picked the
-one session that breaks it.
+### 3A.3 Session — the config still says 2 🟠 CONFIRMED
 
-### 3.4 `StreamRelay` cannot carry the live feed as written 🟠
+`rfid.reader.session: 2` is still in `application.yml`, and the operator measures S1 clean. Change
+it. Note what the current comment records, because it is the other half of the story: **continuous
+carrier + session 2 read 15 tags once and heard nothing for three minutes.** The carrier-off window
+between cartons is what resets the flag today — there is no Select doing it. With `triggered-carrier`
+plus S1 you are protected twice over.
 
-Two defects, both in `apps/intelli-rfid-admin/.../StreamRelay.java`:
-- It **flattens every upstream event name to `tag`**, because it forwards only lines starting with
-  `data:` and discards the `event:` lines. So `inventory` (a completed carton) is indistinguishable
-  from `tags` (a read batch). Pass the event name through.
-- It **does not send `X-API-Key`**, so against a tunnel with `rfid.security.enabled: true` it gets
-  401 while `/proxy` calls succeed. Add the header from `AdminProperties.Reader.apiKey`.
+**The Gen2 Select is still absent.** `TagOperations.withFilter()` now exists, but it is a *match*
+Select used only by commissioning to target a TID, cleared in a `finally`. Nothing resets an
+inventoried flag. Per-pass attribution in §5 still wants it.
 
-Also: one upstream connection per browser client, and no server-side reconnect. Acceptable for a
-bench console; know it before you debug a "missing" event.
+### 3A.4 `StreamRelay` still flattens events and sends no key 🟠 CONFIRMED
 
-### 3.5 There is no carton-open event 🟠
+Unchanged in the admin app.
 
-`TagBroadcaster` only ever emits `subscribed`, `tags` and `inventory`. Nothing fires on the entry
-edge, on `openSession`, or on arm/disarm — `V1Service.onCartonEntered` only logs. The UI cannot show
-"carton in progress" and cannot time trigger-to-first-tag.
+### 3A.5 There is still no carton-open event 🟠 CONFIRMED
 
-Add `broadcaster.publishEvent("carton", …)` in `onCartonEntered` with the session id, the sequence
-and the edge timestamp. Small change, and the whole live view depends on it.
+`TagBroadcaster` publishes exactly three names anywhere in either repo: `subscribed`, `tags`, and
+`inventory` (on close only). Nothing fires on carton open, the IN1 edge, arm/disarm, the verdict
+pulse or a shutdown request. Zone entry is observable **only from the log line** `Carton entered the
+zone: session {}` at INFO. Add the event.
 
-### 3.6 The TID already works — but do not read per-tag data out of the v1 result 🟠
-
-**The reader-side TID path is done and correct — trust it.** `ReaderSession.toTagRead()` splits the
-trailing 12 bytes off `EpcId` on the `0xE2` allocation class whenever `fast-id: true` (it is), and
-`TagRead`, `InventoryTag`, `MatchedTag` and `Unexpected` all carry `tid`. Nothing needs building for
-FastID. The caveat below is about **one DTO dropping the field**, not about the radio.
-
-`ReadResult.Undecodable` carries only `epc` and `reason` — **no TID, no RSSI, no reads, no timing.**
-On this bench population 16 of 18 tags carry no GS1 header, so a screen built on the v1 result will
-show most of the population as bare EPC strings with nothing else.
-
-The bench data source is `InventoryTag` — from `/api/inventory/**`, the `inventory` SSE event, or the
-spool. It carries `epc, tid, reads, bestRssi, antennas, firstSeen, lastSeen` for **every** tag.
-Use the v1 callback for **contract fidelity** (does the customer-facing path still produce a
-conforming result?) and the diagnostic surface for **the numbers**. That is exactly the split
-`CLAUDE.md` mandates.
+### 3A.6 Withdrawn from v1.0 — do not act on these
+- ~~"No code drives any J26 output."~~ False; `PinctrlFieldIo` drives all seven.
+- ~~"`GpioEdgeMonitor` hardcodes `--rising-edge`."~~ False; it detects the libgpiod version. The
+  *polarity* problem is real, the hardcoding claim was not.
+- ~~"`ResultMapper` rewrites `endedAt` to `countReachedAt`."~~ Removed. `endedAt` is simply when the
+  window closed, and `countReachedAt` and `settledAt` are separate fields.
+- ~~"`recover-*` keys bind to nothing."~~ They are live.
+- ~~"Put the IO screen at `/api/test/io`, not under `/api/v1`."~~ `/api/v1/diagnostics/io` is built,
+  ADMIN-scoped and driven by the admin PLC tab. Leave it; do not churn a working screen for purity.
 
 ## 4. Test 1 — Static
 
@@ -203,11 +192,15 @@ session (S0/S1/S2) · a "reset inventoried flag between runs" checkbox once §3.
 
 **At the end of the run set**, render the full analytical report (§10).
 
-**Traps:** §3.2 (you must pulse the GPIO lines), §3.3 (S2 will empty runs 2..N), and note that
-`ResultMapper` rewrites `endedAt` to `countReachedAt` when the stop reason is `PACKAGE_EXITED`, so
-`durationMs` is trigger-to-count, not trigger-to-exit. That is deliberate — the carton then sits in
-the field until the conveyor moves it and reporting the later moment would inflate every duration by
-the dwell time.
+**Traps:** §3A.2 — you must pulse the GPIO lines, and set `disable-input-pulls: false` on a bare
+bench or IN1 will manufacture cartons on its own. §3A.3 — check the running session before believing
+a low count.
+
+**`durationMs` now means what it says.** The old substitution of `endedAt` with `countReachedAt` has
+been removed; `countReachedAt` and `settledAt` are separate fields on the result. Show all three —
+the gap between `countReachedAt` and `endedAt` **is** the settle cost, and it is the only lever on
+carton time, because the measurement on this rig is that every tag was already found by ~1.0–1.3 s
+and the rest of a 2.5–2.9 s carton was spent proving nothing more was coming.
 
 ## 5. Test 2 — Dynamic
 
@@ -286,6 +279,18 @@ from EnC and ExC sharing O1. That is a better number than the one we were going 
 
 Run it under S2 as well, once, deliberately — it reproduces the old failure and gives you the
 before/after that justifies staying on S1.
+
+> 🔴 **The gap sweep has a hardware hazard the other tests do not, and it is not about reads.**
+> `triggered-carrier: true` means **one inventory stop/start per carton**. Shortening the gap raises
+> the restart rate, and this module has raised
+> `MT_HARDWARE_ALERT_ERR_BY_TOO_MANY_RESET (0xfefe: MODULE_NEED_RESTART)` **from four inventory
+> restarts inside thirty seconds** and stopped reading. A sweep down to a 2 s gap is 15 restarts a
+> minute.
+> **Walk the ladder downwards and stop at the first sign of trouble** — watch `recoveries` on
+> `/api/reader/status` and the log for `MODULE_NEED_RESTART` between every step. If you need the
+> short end of the ladder, run it with `triggered-carrier: false` and a continuous carrier so no
+> restart is involved, and report the two configurations separately. **The restart limit may turn out
+> to be the throughput ceiling rather than settle time** — which would be a finding, and a good one.
 
 Run pairs of cartons at decreasing gaps — 30 s, 20, 15, 10, 5, 3, 2 — and find the smallest gap at
 which carton 2 still reads complete. That number is the throughput ceiling, it is the customer-facing
@@ -371,7 +376,7 @@ Two implementation consequences:
   closes the tab mid-test, the tunnel must not sit in a forced state forever. Give the hold a
   deadline — a hold that is not refreshed within, say, 30 s reverts to `AUTO` — and log the revert.
 
-## 7.2 IN3 shutdown — replace the pulse burst with a held button
+### 7.2 IN3 shutdown — replace the pulse burst with a held button
 
 **The five-pulse protocol was designed for the PLC interface. There is no PLC on this line.** IN3 now
 runs to a physical push button in the panel, and the operator's request is **a level held for 5
@@ -411,11 +416,17 @@ Everything new lives under **`/api/test/**`**, a third surface alongside the con
 diagnostic ones. Say so in its javadoc: it is not the contract, it must not appear in customer
 documentation, and it should be behind the `ADMIN` scope in `ScopeRules`.
 
-### 8.1 Fixes (do these first — §3)
-1. `tunnel.v1.gpio.active-low`, default true, selecting `--falling-edge`.
-2. `resetInventoriedFlag()` — the Gen2 Select-to-A, called from `InventoryService.openSession` and at
-   each direction change.
-3. `broadcaster.publishEvent("carton", …)` on the entry edge.
+### 8.1 Fixes, in this order
+1. **`tunnel.plc.profile: PLC | TUNNEL`** (§3) — the channel map becomes two named maps instead of one
+   hard-coded enum. Nothing else can be trusted until the outputs mean what the panel thinks.
+2. **`session: 1`** in `application.yml` (§3A.3). One line.
+3. **Polarity on the edge monitor** (§3A.1) — `gpiomon -l` / `--active-low` on both libgpiod majors,
+   behind `tunnel.v1.gpio.active-low`, default true.
+4. **`broadcaster.publishEvent("carton", …)`** on the entry edge (§3A.5), with the session id, the
+   sequence and the edge timestamp.
+5. **`resetInventoriedFlag()`** — the Gen2 Select-to-A through `MTR_PARAM_TAG_MULTISELECTORS`, called
+   from `InventoryService.openSession` and at each direction change (§3A.3, §5). Not a blocker under
+   S1; needed for trustworthy per-pass attribution.
 
 ### 8.2 New endpoints
 - `POST /api/test/gpio/pulse` — `{line: 23|24, holdMs}`. Shells `pinctrl` to produce one real edge of
@@ -430,22 +441,27 @@ documentation, and it should be behind the `ADMIN` scope in `ScopeRules`.
 - `POST /api/test/select/reset` — issue the Select-to-A on demand, so the gap sweep (§6.3) can be run
   with and without it.
 
-### 8.3 The conveyor output implementation
-Provide a real `CartonRelease` bean and a `FieldIo` class behind it. `CartonRelease` is already a
-named seam wired `@ConditionalOnMissingBean` in `V1Configuration`, so nothing else has to move.
+### 8.3 The conveyor outputs — build on `FieldIo`, do not replace it
 
-Rules `FieldIo` must enforce, all of them from `docs/Hardware-IntelliRFIDv2.md`:
-- **Outputs are active-HIGH at the GPIO; inputs are active-LOW.** One `activeHigh` flag cannot serve
-  both — hide the inversion inside `FieldIo` and let no caller see a raw edge constant.
-- **Never move a field output onto GPIO 2–8.** They reset pull-up; the seven outputs are all ≥ 9 so
-  they reset low, which is what makes a dead reader stop the line.
-- The output GPIOs are non-contiguous (26, 20, 16, 19, 21, 12, 13) — there is no single masked
-  `GPSET0` write. Use the table.
-- Disable the internal pull on GPIO 18, 23, 24, 25.
+**`FieldIo` and `PinctrlFieldIo` already exist and already enforce the inversion boundary.** Do not
+write a second one. What is missing is the layer above:
 
-Java has no GPIO binding here and pi4j is unproven on this kernel. **Prove pi4j v2 over libgpiod
-early, especially bias/no-pull control**, and if it fights you, shelling `pinctrl` is acceptable for
-the bench harness — but say so in the code, because it is not acceptable for the shipped product.
+- A **`ConveyorController`** that owns the O1 state machine (§7) and the fault behaviour (§7.1),
+  writing through `FieldIo` under the `TUNNEL` profile.
+- A **real `CartonRelease`** bean — it is still the logging stub, still wired
+  `@ConditionalOnMissingBean` in `V1Configuration`, and still called before the carrier drop and the
+  verdict. That ordering is the contract promise that a slow WMS never stalls the conveyor; keep it.
+- `tunnel.test.o1-drop-delay-ms` (default 0) so the EnS position can be tuned on the rig without a
+  rebuild.
+
+The rules `FieldIo` already enforces, restated so nobody undoes them: outputs are active-HIGH at the
+GPIO and inputs active-LOW, hidden inside the boundary; the seven outputs are all on GPIO ≥ 9 so they
+reset low and a dead reader stops the line — **never move one onto GPIO 2–8**; the output GPIOs are
+non-contiguous, so there is no masked `GPSET0` write.
+
+One thing to check rather than assume: `PinctrlFieldIo` spawns a process per call. The O1 state
+machine writes on every carton edge, which is fine, but if anything ends up writing per *read* that
+cost will show. Measure it before putting a write anywhere near the dispatch path.
 
 ### 8.4 Config to add
 `tunnel.test.canary-epc` (§6.1), `tunnel.test.hold-ttl-ms`, and make `read-duration-ms` settable
@@ -506,19 +522,21 @@ settle) and per tag (EPC tail, seen n/N, mean RSSI, range, reads per carton, fir
 
 ## 11. Order of work
 
-1. §3.1 edge polarity, §3.5 carton event — small, and everything else is easier with them.
-2. §6.1 canary tag. Do it before collecting a single number.
-3. §8.3 `FieldIo` + real `CartonRelease`, then §7's O1 behaviour. Verify the failsafe by killing
-   reader power with the belt running **before** trusting anything else.
-4. **`session: 1` in `application.yml`** (§3.3) — one line, and it stops the repo disagreeing with
-   the rig.
+1. **The `TUNNEL` channel profile** (§3, §8.1). Everything downstream is meaningless until OUT1–OUT7
+   mean what the panel says they mean.
+2. **`session: 1`**, the edge polarity, the carton event (§8.1 items 2–4). All small.
+3. **Test 3, the canary tag.** Before a single number is collected.
+4. **`ConveyorController` + real `CartonRelease`** (§8.3), then §7's O1 behaviour. **Verify the
+   failsafe by killing reader power with the belt running before trusting anything else.**
 5. §8.2 `/api/test/gpio/pulse`, then **Test 1 static**. Under S1 this should now just work; if runs
-   2..N come back empty, check the running session before anything else.
-6. **Test 4** empty-field, then **Test 5** gap sweep. The gap sweep is the number for Reliance.
-7. §3.3 the Select-to-A reset, and `passBoundaries[]` on the result (§5).
+   2..N come back empty, check the running session first.
+6. **Test 4** empty-field, then **Test 5** gap sweep — walking *down* the ladder and watching
+   `recoveries` at every step, per the hazard note in Test 5.
+7. The Select-to-A reset, and `passBoundaries[]` on the result (§5).
 8. **Test 2 dynamic**, single pass; then Double Pass, which needs step 7 for trustworthy per-pass
    attribution.
-9. **Test 6** fault injection last — it is the one that can leave the rig in a strange state.
+9. **§7.2 the IN3 HOLD protocol**, then **Test 6** fault injection last — it is the one that can
+   leave the rig in a strange state.
 
 ## 12. Traps, collected
 
