@@ -15,6 +15,116 @@ hardware behaviour that are not derivable from the code.
 
 The apps run **on the reader itself**, not on a PC talking to a remote reader.
 
+### Thermal — the first real measurement, and what it does and does not settle
+
+**MEASURED 2026-09-02 (operator): at 30 dBm the reported module temperature stays well below 40 °C.**
+That is the first thermal data this project has ever had, and it is far better than the vendor's own
+coupon (29×29 mm FR4, 28 °C ambient, **15 dBm**: baseplate 70 °C, E710 70 °C, PA surface 81 °C). The
+v2.1 board's thermal path is evidently much better than that coupon — believe the measurement.
+
+**It does not by itself license 30 dBm, and the reason is a number no board can improve.**
+`Rth_PA = 25.6 °C/W is fixed inside the module`. Back-calculating the vendor coupon (11 °C of PA-to-
+baseplate delta at 15 dBm) gives a PA dissipating ~0.43 W there; at 30 dBm with ~35 % drain
+efficiency it dissipates ~1.9 W, so **the PA sits roughly 45–50 °C above whatever the reported
+temperature is.** A reported 38 °C therefore implies a PA near 85–90 °C — at the module's 90 °C
+cutout, at bench ambient. INFERRED, not measured: it rests on the assumed PA efficiency.
+
+**Duty cycling protects the baseplate but not the PA**, because their thermal time constants differ
+by orders of magnitude — the baseplate averages over minutes, the PA junction reaches most of its
+rise within a 3 s carrier-on burst. So the tunnel's ~15 % duty makes the *case* figure comfortable
+and leaves the *per-burst* PA rise unchanged.
+
+**What is therefore still unanswered:** the ambient the test ran at, whether the board was in its
+sealed enclosure, how long it ran (a metal enclosure takes 20–40 min to reach steady state), and
+**which sensor the number comes from** — the E710 die reading is not the PA. Until those are on
+record, `read-power-dbm10: 3000` stays but **enable the E710 E7 temperature-throttle** so the module
+degrades read rate instead of hitting the cutout mid-carton, and log CC33 per PA-enable.
+Radiated power is a **separate, still-open question** — 30 dBm conducted plus antenna gain against
+the Indian 865–867 MHz limit has nothing to do with heat.
+
+## Naming — the Reliance warehouse tunnel
+
+From 2026-09-01 the Reliance tunnel **drives the conveyor itself; there is no PLC**. Use these names
+in code, comments, documentation and drawings — they are what the customer and the panel drawings
+say.
+
+| Name | Short | What it is |
+|---|---|---|
+| **Intelli-RFID Reader** | reader | The enclosure holding the IntelliRFID v2.1 board (CM4 + SIM7500) |
+| **Tunnel Manager** | TM | The interposer box: field-side drive conditioning for the reader's 7 outputs, pass-through for its 4 inputs |
+| **Entry Conveyor** | EnC | EZY-S100 driver card + motorised roller, upstream of the read zone |
+| **Reading Zone Conveyor** | RZC | EZY-S100 + roller inside the read zone — the only one with speed and reverse control |
+| **Exit Conveyor** | ExC | EZY-S100 + roller, downstream of the read zone |
+| **Entry Sensor** | EnS | SICK W26 photoelectric at the entry of the read zone |
+| **Exit Sensor** | ExS | SICK W26 photoelectric at the exit of the read zone |
+
+"the reader" and "TM" are the user's shorthand and mean exactly those two boxes.
+**The reader never drives a field device directly.** Every output goes through the TM, because a
+reader opto output sinks 1.9 mA at +85 °C and an EZY-S100 control input needs several mA (the
+closest published equivalent, Itoh Denki CBM-105, draws 7.3 mA). Wiring:
+`docs/Tunnel-Interconnect.md`.
+
+### J26 functions are remapped for this system
+
+The `SPEED0-2` / `DIRECTION` / `RESULT_OK` / `RESULT_FAIL` names in the PLC documents are
+**superseded here**. Pins and BCM numbers are unchanged; only the meanings move.
+
+| J26 | Ch | BCM | Reliance tunnel function |
+|---|---|---|---|
+| 1 | OUT1 | 26 | `EnC_ExC_RUN` — Run A of EnC **and** ExC together. **Normally asserted**, see below |
+| 2 | OUT2 | 20 | `RZC_RUN_A` |
+| 3 | OUT3 | 16 | `RZC_RUN_B` |
+| 4 | OUT4 | 19 | `RZC_REVERSE` |
+| 5 | OUT5 | 21 | `LAMP_PASS` (green) |
+| 6 | OUT6 | 12 | `LAMP_FAIL` (red) |
+| 7 | OUT7 | 13 | `SAFE_TO_POWER_OFF` — lamp beside the shutdown button; lit only once the counter is closed and the filesystem is read-only |
+| 8 | — | — | `FIELD_COM` — the single field 0 V for all 11 channels |
+| 9 | IN1 | 23 | `ENTRY_SENSOR` ← EnS |
+| 10 | IN2 | 24 | `EXIT_SENSOR` ← ExS |
+| 11 | IN3 | 18 | `SHUTDOWN_REQUEST` ← panel push button, 5 s press |
+| 12 | IN4 | 25 | spare |
+
+RZC speed is Run A and Run B **as a pair**: A only = 100 %, A+B = 75 %, B only = 50 %, neither =
+stop. EnC and ExC have Run A only, so they are run/stop at 100 % and share one channel — which is
+why O1 drives two card inputs in parallel and the TM has to be sized for it.
+
+**IN3 shutdown, and the restart that follows it.** A 5 s press starts the shutdown sequence; O7's
+lamp says when the counter is closed and it is safe to remove 24 V. **Restart is a full power cycle
+and there is no other way** — a shut-down CM4 does not come back on its own and nothing in this
+system wakes it, so there is no remote recovery and a press means an engineer at the panel. The
+SAMD21 could physically do it (it holds `CM4_EN` off its own 24 V) but **nothing implements that and
+this system does not use it** — do not write code that assumes otherwise.
+
+### O1 is a state machine, not a level
+
+**O1 is HIGH by default — EnC and ExC run whenever a carton is not being read.** It drops LOW when
+EnS sees a package (RZC takes over the carton) and goes HIGH again the moment the read finishes,
+**on any outcome** — SETTLED, COUNT_REACHED, PACKAGE_EXITED or TIMEOUT.
+
+Four things follow, and three of them are not obvious:
+
+- **The backstop is load-bearing.** "Any outcome" must include the ones that are not outcomes: a read
+  that never closes, a reader fault, a supervisor reconnect. If no outcome arrives, O1 stays low and
+  the line is stopped with a box in the tunnel. `tunnel.max-duration-ms` must release O1 too, and the
+  fault path must define O1 explicitly rather than leaving it wherever it was.
+- **At boot the line does not run.** Outputs reset low, so EnC and ExC are stopped until the app is up
+  and armed. That is the correct failsafe — a dead reader stops the line, it does not run it — but
+  someone will power the panel up, see a dead conveyor and think the drive is broken. Say so in the
+  operator instruction.
+- **EnC and ExC share one channel, so the line is serialised.** The previous carton cannot discharge
+  while the current one is being read. Cycle time is read + discharge, not max(read, discharge). That
+  is a throughput ceiling bought with the channel budget, and the way out of it is RS-485, which
+  addresses all three cards independently.
+- **Stopping EnC the instant EnS fires drags the carton.** EnS is at the *entry* of the read zone, so
+  at that moment the leading edge is on RZC and the trailing edge is still on EnC. Either delay the
+  EnC stop by the transfer time, or place EnS far enough downstream that the carton is fully
+  transferred when it fires. **Unresolved — decide from the real geometry.**
+
+**We supply the cards' control power**, which is the `+` / `-` pair on the left of the vendor's
+"PNP IO Control Wiring Principle" drawing: its switches `S1`/`S2`/`S3` are the TM's outputs and its
+`-` is our control 0 V on the card's `Com` pin. **The cards' `DC+`/`DC-` motor supply is a separate
+supply, provided by others, and is out of scope** — it must never share a rail with the control 24 V.
+
 ## How this project is worked on
 
 Two machines with two different roles. Know which one you are.
@@ -239,6 +349,14 @@ guessing at signatures.
   `recovering` flag on the fault and lowers it only when the reader is genuinely OPEN/READING, or
   when `connect()`/`disconnect()` says an operator has taken over.
 
+  **Fault behaviour on the Reliance tunnel, decided 2026-09-02: the package exits forward and the red
+  lamp comes on.** O4 released, RZC driven until the carton is clear, O1 high to discharge, O6
+  asserted. The carton is reported as `TIMEOUT` / `complete: false` and the callback still goes — a
+  carton that leaves unread and produces no result is one the WMS thinks never existed. This applies
+  to a *module* fault, where the JVM is alive to act; a dead JVM or lost 24 V drives every output low
+  and the lamp is dark, which is the failsafe and is correct. **Consequence to resolve: discharging
+  also starts EnC, because EnC and ExC share O1, so the next carton is fed into a failed tunnel.**
+
   Verified on hardware 2026-08-29 with a real `IO_RECV_TIMEOUT`: five failed attempts backing off
   5→10→20→40→60 s while the module was unreachable, recovery with inventory restarted the moment it
   was reachable again, and a second fault a minute later recovered in 5.5 s on the reset delay.
@@ -272,6 +390,14 @@ guessing at signatures.
   bench test that leaves the carrier on and uses S2 looks like a broken reader. It is also the
   thing that makes the tunnel's carrier-off-between-boxes design necessary rather than merely
   thermally convenient. Use S0 for continuous-carrier bench work; S2 belongs with triggered RF.
+- **We run `session: 1` and it is clean. MEASURED 2026-09-02: the same tags re-read a few seconds
+  later with no problem.** S1's inventoried flag self-decays in 500 ms–5 s even while the tag is
+  powered, which is what a carton-at-a-time tunnel wants. **`application.yml` still says `session: 2`
+  — that is live config drift; the committed default is not what the rig runs.** The S2 note below
+  stands as the reason S1 was chosen, and as what you will see if the session is ever left at 2.
+  Caveat: S1 decay is a timing window, not a guarantee, so a read that closes fast and immediately
+  reverses can start its return pass with some tags still in state B. The Select-to-A reset is
+  therefore still worth building — for determinism now, not as a fix.
 - **Gen2 S2 inventoried flags persist for more than 15 s on our tag stock — carrier-off does not
   clear them quickly.** Measured: with S2, a first read found all 18 tags; every subsequent read
   found **zero**, at carrier-off gaps of both 4 s and 15 s. An S0 control at a 3 s gap read 18/18
@@ -396,8 +522,14 @@ seam so the ordering is checkable in one line at the call site rather than being
 quietly does not happen anywhere.
 
 **Tunnel v1 — in Super Fast Mode the sensors own the start and the end of a read, and the count
-and settle are observations rather than exits.** A rising edge on GPIO23 opens the session, a rising
+and settle are observations rather than exits.** The EnS edge on GPIO23 opens the session, the ExS
 edge on GPIO24 closes it, and what had happened in between decides the stop reason:
+
+> **Edge polarity — corrected 2026-09-02.** Earlier text here said *rising* edge, which came from the
+> bench technique of toggling an unconnected pin's internal pull. **With a real sensor wired it is a
+> FALLING edge at the GPIO**: field 24 V present ⇒ opto conducts ⇒ GPIO reads LOW. Code must trigger
+> on the *field-active* edge, resolved inside `FieldIo`, and never on a literal `RISING` constant.
+
 
 | by the time the carton left | `stopReason` |
 |---|---|
