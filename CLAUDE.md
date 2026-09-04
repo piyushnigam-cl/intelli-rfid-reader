@@ -930,6 +930,64 @@ channel is a decision this app makes and holds.
   line in the log of every clean shutdown. Worth making step 3 a no-op when no write is outstanding,
   so that an ERROR there means something.
 
+- **The IN3 shutdown is a real ordered `systemctl poweroff`, and the risk was never the shutdown —
+  it was the lamp saying "safe" one phase too early. Fixed 2026-09-04.** From this board's own
+  `man bootup`, a systemd shutdown has two phases: units run up to `final.target`, and *then*
+  `systemd-poweroff.service` replaces PID 1 with `systemd-shutdown`, which is what unmounts the
+  remaining filesystems, **remounts root read-only and syncs**. `umount.target` covers everything
+  except root, and root is the one that matters.
+
+  `intelli-shutdown-lamp.service` was `After=umount.target Before=final.target`, so it drove O6 dark
+  in phase one — while `/` was still mounted rw with dirty pages waiting on the final sync. Its own
+  comment claimed dark "cannot be reached before the filesystems are quiesced"; it could. An
+  operator quick with the panel switch was cutting power during that sync, which is exactly the
+  corruption the whole sequence exists to prevent, reached by a different route.
+
+  **The fix is that the lamp is no longer a unit.** `deploy/intelli-lamp.shutdown` installs to
+  `/usr/lib/systemd/system-shutdown/`, which `systemd-shutdown` runs *after* the root remount-ro and
+  immediately before power is cut (`man systemd-halt.service`). `/usr/bin/pinctrl` and
+  `/dev/gpiomem` are both still available there. **It must be 0755** — systemd-shutdown silently
+  skips a file it cannot execute, and the symptom is a lamp that never goes dark on a board that is
+  off, which reads as a hung shutdown and appears in no log. It puts the lamp out for `poweroff` and
+  `halt` only: on `reboot` the board is coming back, so dark would be a lie for the few seconds
+  until it does, and the app clears both lamps at start-up anyway.
+
+- **Step 5 now actually syncs, and until 2026-09-04 it did not.** It was called "flush every
+  outstanding write; leave storage safe to interrupt" while only awaiting `CallbackSender.awaitQuiet()`
+  — which is *network* quiescence. `JsonlSpool.append` is a plain appending `Files.writeString` with
+  **no fsync**, and this board's `dirty_expire_centisecs` is 3000, so up to **30 seconds** of carton
+  results could be sitting in page cache when the button was pressed. `ShutdownSequence.systemSync()`
+  forks `/bin/sync` after the callback flush; it is injected like `exit` so tests can pin the order
+  without forking anything. This is what makes the *blink* phase survivable if 24 V is pulled early;
+  it is the other half of the lamp fix, not a substitute for it. A failing sync is logged and step 6
+  is still reached.
+
+- **What is genuinely NOT a corruption risk here, so nobody re-derives it.** `sudo systemctl poweroff`
+  is the same call `sudo poweroff` makes — no `--force`, no direct `reboot(2)`. The 120 ms an
+  operator perceives as "instant" is the app's five steps only; the OS phase runs at full length
+  after it. What it is *not* like is bare `sudo shutdown`, which is `shutdown -h +1` and waits a
+  full minute before doing anything — that is the comparison that makes IN3 feel abrupt. Root is
+  `ext4 rw,noatime` with the default `data=ordered`, so metadata is journalled and even a hard cut
+  gives a journal replay, not a broken filesystem: what a cut costs is recent *data*, which shows up
+  as NUL-filled tails in whatever was being appended. It is eMMC, not an SD card.
+
+- **A NUL run inside a text file is the fingerprint of a hard power cut, and it dates the cut.**
+  Found 2026-09-04: 3377 NUL bytes in `intelli-rfid-tunnel.log` immediately before a boot line, and
+  1689 at the tail of `spool/inventory-2026-09-04.jsonl`. ext4 had journalled the inode's new size
+  but the data blocks never reached the card. **Both read paths in `JsonlSpool` catch a bad line and
+  skip it at DEBUG**, so the app starts and runs normally over the damage and nothing ever complains
+  — check for it explicitly rather than waiting to be told. Trim with `truncate -s <last good byte>`.
+  Related trap: **the CM4 has no RTC that survives an unclean cut**, so the boot after one restores a
+  stale timestamp and the log appears to go *backwards*. Two files whose contents say 15:17 can sit
+  after a boot line stamped 15:15. Do not reconstruct a timeline from the clock alone — PIDs are the
+  reliable ordering (a low PID means a fresh boot).
+
+- **journald on this board is volatile: `/var/log/journal` exists but is empty**, so
+  `journalctl --list-boots` shows only the current boot and the entire transcript of a shutdown is
+  gone at the next start. That is why a question like "did that poweroff unmount cleanly?" has to be
+  answered from `/opt/intelli/logs/` and the kernel ring buffer instead. Make it persistent with
+  `sudo systemd-tmpfiles --create --prefix /var/log/journal && sudo systemctl restart systemd-journald`.
+
 - **The serial counter needs no flushing at shutdown, by construction.** `SequenceCounter.next()`
   calls `channel.force(true)` before returning each number, so the high-water mark is durable at
   every instant rather than at exit. Step 4 of the shutdown sequence therefore *confirms* — it reads
