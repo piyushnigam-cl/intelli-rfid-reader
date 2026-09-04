@@ -114,7 +114,7 @@ can come up wrong.
 | OUT4 | 19 | `RZC_REVERSE` | a level, meaningless while the RZC is stopped |
 | OUT5 | 21 | `LAMP_PASS` | green, latched |
 | OUT6 | 12 | `LAMP_FAIL` | red, latched |
-| OUT7 | 13 | `SAFE_TO_POWER_OFF` | the only signal the operator gets |
+| OUT7 | 13 | **spare** | parked 2026-09-04; the shutdown lamp is O6, blinking / lit / dark |
 
 **Three behavioural changes came with it, and none of them would have fallen out of a rename.**
 

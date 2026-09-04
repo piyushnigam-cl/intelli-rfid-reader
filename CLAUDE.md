@@ -85,7 +85,7 @@ closest published equivalent, Itoh Denki CBM-105, draws 7.3 mA). Wiring:
 | 4 | OUT4 | 19 | `RZC_REVERSE` |
 | 5 | OUT5 | 21 | `LAMP_PASS` (green) |
 | 6 | OUT6 | 12 | `LAMP_FAIL` (red) |
-| 7 | OUT7 | 13 | `SAFE_TO_POWER_OFF` — lamp beside the shutdown button; lit only once the counter is closed and the filesystem is read-only |
+| 7 | OUT7 | 13 | **spare** — parked 2026-09-04, was `SAFE_TO_POWER_OFF`. Earmarked for the liveness heartbeat |
 | 8 | — | — | `FIELD_COM` — the single field 0 V for all 11 channels |
 | 9 | IN1 | 23 | `ENTRY_SENSOR` ← EnS |
 | 10 | IN2 | 24 | `EXIT_SENSOR` ← ExS |

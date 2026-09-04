@@ -88,7 +88,7 @@ have never moved.
 | 4 | OUT4 | **19** | `RZC_REVERSE` |
 | 5 | OUT5 | **21** | `LAMP_PASS` (green) |
 | 6 | OUT6 | **12** | `LAMP_FAIL` (red) |
-| 7 | OUT7 | **13** | `SAFE_TO_POWER_OFF` |
+| 7 | OUT7 | **13** | **spare** (parked 2026-09-04; was `SAFE_TO_POWER_OFF`) |
 | 8 | FIELD_COM | — | shared return, all 11 channels |
 | 9 | IN1 | **23** | `ENTRY_SENSOR` ← EnS |
 | 10 | IN2 | **24** | `EXIT_SENSOR` ← ExS |

@@ -5,8 +5,9 @@ every hardware-dependent figure is inference from datasheets, not observation �
 rule in `CLAUDE.md`. Figures marked **UNVERIFIED** need a vendor answer or a bench measurement before
 anyone cuts a cable.
 
-Version 0.5 · 2026-09-02 — control power is ours; motor supply out of scope; O7 = SAFE_TO_POWER_OFF;
-restart after shutdown is a full power cycle; power budget added (§4.1); 30 dBm thermal measurement
+Version 0.6 · 2026-09-04 — **O7 is withdrawn: the shutdown indication is ONE lamp on O6, and no
+lamp is to be fitted to O7** (§11.6); control power is ours; motor supply out of scope; restart
+after shutdown is a full power cycle; power budget added (§4.1); 30 dBm thermal measurement
 
 ---
 
@@ -153,7 +154,7 @@ Direct pin-for-pin. No cross-overs, no conditioning in the cable.
 | 4 | OUT4 | 19 | TM-O4 in | `RZC_REVERSE` |
 | 5 | OUT5 | 21 | TM-O5 in | `LAMP_PASS` |
 | 6 | OUT6 | 12 | TM-O6 in | `LAMP_FAIL` |
-| 7 | OUT7 | 13 | TM-O7 in | `SAFE_TO_POWER_OFF` |
+| 7 | OUT7 | 13 | TM-O7 in | **spare** — parked, see §11.6 |
 | 8 | FIELD_COM | — | TM FIELD_COM | **The single field 0 V for all 11 channels** |
 | 9 | IN1 | 23 | TM-I1 (bare pass-through) | `ENTRY_SENSOR` |
 | 10 | IN2 | 24 | TM-I2 (bare pass-through) | `EXIT_SENSOR` |
@@ -178,7 +179,7 @@ and button all read the same way.
 | **O4** | TB2-4 | **Reverse of RZC** | Runs opposite to the default direction |
 | **O5** | TB2-5 | **PASS lamp, green** | See §9 for the current question |
 | **O6** | TB2-6 | **FAIL lamp, red** | |
-| **O7** | TB2-7 | **SAFE TO POWER OFF lamp**, beside the shutdown button | Asserted only after the CM4 has closed the serial counter and remounted read-only. See §11.6 |
+| **O7** | TB2-7 | **nothing — spare** | Terminate the core and leave it. **Do not fit a lamp here**; the shutdown indication is O6 alone. See §11.6 |
 
 ### 7.1 How this maps onto the vendor's own PNP diagram
 
@@ -280,14 +281,19 @@ is the whole reason for the TM.
 | O2, O3, O4 | ≥ 50 mA | one card input, 7× margin on the class figure |
 | **O1** | **≥ 100 mA** | two card inputs in parallel |
 | **O5, O6** | **≥ 500 mA, or drive the lamps through an interposing relay** | see below |
-| **O7** | same as O5/O6 | it drives a lamp too — see the note below |
+| **O7** | none — spare | drives nothing; terminate the core only |
 
-> **Lamp current is an open question, and it now covers three channels.** A 24 V LED beacon element
-> is typically 20–50 mA and is trivial. A filament lamp, a multi-tier tower, or a tower with a
-> sounder can be 200–500 mA with a cold-inrush multiple on top, and inrush into a photorelay is how
-> they die. **Specify the lamp part numbers and their steady and inrush currents before fixing the TM
-> output stage**, or put interposing relays on O5, O6 and O7 and stop worrying about it. The SAFE TO
-> POWER OFF indicator is a small panel pilot light and will be the easy one of the three.
+> **Lamp current is an open question, and it covers two channels.** A 24 V LED beacon element is
+> typically 20–50 mA and is trivial. A filament lamp, a multi-tier tower, or a tower with a sounder
+> can be 200–500 mA with a cold-inrush multiple on top, and inrush into a photorelay is how they
+> die. **Specify the lamp part numbers and their steady and inrush currents before fixing the TM
+> output stage**, or put interposing relays on O5 and O6 and stop worrying about it.
+>
+> **O6 carries a second duty and it changes the choice of lamp.** It is the FAIL lamp during
+> running *and* the shutdown indicator, where it **blinks at roughly 2 Hz** for the length of the
+> shutdown. Pick a lamp and a TM output stage that can actually blink at that rate: a filament lamp
+> is too slow to give a convincing blink and an interposing relay switching 2 Hz continuously for
+> the duration of a shutdown is being asked to do something a photorelay would do better.
 
 ## 10. Equipment settings that must be made before installation
 
@@ -344,13 +350,43 @@ is the whole reason for the TM.
    serial-number high-water file, the one file whose corruption silently duplicates serials. The IN3
    press must trigger: stop inventory → all conveyors stopped → finish or abort the in-flight write →
    fsync and close the counter → sync, remount read-only → then it is safe to cut power.
-   **`O7 = SAFE_TO_POWER_OFF` — decided 2026-09-02.** O7 drives a lamp mounted beside the shutdown
-   button. It is **de-asserted at boot and throughout normal running**, and is asserted only at the
-   end of the sequence above, once the counter is fsynced and closed and the filesystem is remounted
-   read-only. The operator's instruction is one line: *press and hold for five seconds, wait for the
-   lamp, then cut power.* Because the reader's outputs are off at boot and off when the reader is
-   dead, **an unpowered or crashed reader shows the lamp dark, not lit** — the failure direction is
-   the safe one.
+   **ONE LAMP, ON O6 — changed 2026-09-04. Version 0.5 of this document specified a second lamp on
+   O7; it is withdrawn, and no lamp is to be fitted to O7.** The shutdown indication is O6, the same
+   red lamp that shows a failed carton, and it carries three states rather than two channels
+   carrying one each:
+
+   | O6 | meaning |
+   |---|---|
+   | **blinking** (~2 Hz) | the shutdown sequence is running |
+   | **solid lit** | the application has stopped; the OS is still coming down |
+   | **dark** | **the board is down. 24 V may be removed.** |
+
+   Three states on one channel say everything two channels said, and they say one thing two could
+   not: *how far along it is*. The operator's instruction is still one line — *press and hold for
+   five seconds, wait for the lamp to go out, then cut power* — but a blink that has stopped
+   blinking now tells them the wait is nearly over rather than leaving them staring at an unlit lamp
+   wondering whether anything happened.
+
+   **Dark is produced in exactly one place**, and that is what makes it trustworthy: a script at
+   `/usr/lib/systemd/system-shutdown/`, which `systemd-shutdown` runs *after* it has remounted the
+   root filesystem read-only. It is deliberately not a systemd unit — a unit, however late it is
+   ordered, still runs in the first phase of the shutdown, before that remount, and would light
+   "safe to remove power" while the filesystem was still being flushed. That was a real defect on
+   this build, found and fixed on 2026-09-04.
+
+   **The failure direction is still the safe one, and it is now safe in both directions.** A
+   pinctrl level outlives the process that set it, so the lamp stays lit through the halt until
+   24 V is actually removed. A reader that is unpowered or crashed shows the lamp dark — but a
+   crashed reader has not been asked to shut down, and an operator only reads this lamp after
+   pressing the button. A shutdown that *fails* (a missing sudoers grant, say) leaves it **lit**,
+   never dark: lit says "not yet" and the operator falls back to the documented worst-case wait.
+
+   **What O7 is now: a terminated spare.** Wire the core, land it on TB2-7, fit nothing. It is
+   parked in the reader's own channel map, so the application refuses to drive it and only the
+   wiring screen can, which is how its continuity gets proven at commissioning like every other
+   channel. It is the only free output on J26, and it is **earmarked** — if the 1 Hz liveness
+   heartbeat is ever wanted back (a hardware signal that survives a hung JVM and lets a watchdog
+   stop the line), it belongs here. Do not spend it on anything smaller without settling that.
    - **Restart is a full power cycle. Decided 2026-09-02, and it is the only way.** A CM4 that has
      been shut down does not come back on its own, and nothing in this system wakes it. So the
      complete procedure is: **hold the button 5 s → wait for the SAFE TO POWER OFF lamp → remove
@@ -395,16 +431,17 @@ serial transaction completing.
 |---|---|---|
 | 1 | EZY-S100 control-input current and thresholds at 24 V, over temperature | Final TM output-stage rating |
 | 2 | Is the EZY-S100 signal terminal isolated from `DC-`? | The 0 V bond plan, §4 |
-| 3 | Lamp part numbers, steady current and inrush — all three lamps | O5/O6/O7 rating, §9 |
+| 3 | Lamp part numbers, steady current and inrush — **and whether O6's can blink at 2 Hz** | O5/O6 rating, §9 |
 | 4 | Exact SICK W26 ordering codes, and light- vs dark-switching | §10 |
 | 5 | Where the shutdown button is mounted — panel interior or keyswitch, **not** the operator face | §11.6 |
 | 6 | Which speed-range figure is real | Belt speed, §10 |
 | 7 | Safety assessment and the E-stop / STO architecture | Everything mechanical |
 | 8 | Is the reader permitted to reverse the conveyor at all? | Whether O4 is used |
 
-Closed since 0.1: **O7 is now `SAFE_TO_POWER_OFF`** (§11.6); **restart after shutdown is a full
-power cycle and there is no other way** (§11.6); and the two-supply bonding question is gone now that
-the motor supply is out of scope (§4) — what remains of it is the card isolation question, item 2.
+Closed since 0.1: **the shutdown indication is one lamp on O6 and O7 is spare** (§11.6, changed in
+0.6 — 0.5 had O7 as `SAFE_TO_POWER_OFF`); **restart after shutdown is a full power cycle and there is
+no other way** (§11.6); and the two-supply bonding question is gone now that the motor supply is out
+of scope (§4) — what remains of it is the card isolation question, item 2.
 
 ## 14. Commissioning checks
 
