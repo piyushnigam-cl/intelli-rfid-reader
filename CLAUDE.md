@@ -734,12 +734,36 @@ watchdog runs on a ~100 ms tick and overshoots. `PACKAGE_EXITED` cartons in the 
 at ~1.4 s because the IN2 edge cut the wait short, which is exactly what a conveyor's exit sensor is
 for.
 
+**`settle-ms` is 800 on the production unit from 2026-09-04, down from the packaged 1500.** The
+window only has to exceed the largest gap between consecutive *new* EPCs inside one carton, and that
+is far smaller than the window was: measured over 20 cartons (sequences 733–752, 16–18 tags),
+**median worst-gap 231 ms, worst 406 ms** — 1500 was 3.7× the worst case. 800 keeps 2× and takes the
+carton from ~2.8 s to ~2.0 s, with the reading itself (last new EPC at 1098–1409 ms) untouched.
+**Derive it that way rather than by feel**: from the spool, sort each result's tag `firstSeen`
+values, diff consecutive ones, take the worst across many cartons, double it. The bench population
+is 18 unshadowed tags, so a real 40-article carton will have longer gaps and this number must be
+re-derived there — **too low reads a carton short and reports it complete, with no other symptom.**
+
 **Detection on the bench population is total, and the RSSI filter is discarding nothing.** Same
 measurement: **72 of 72 tag detections**, every carton `SETTLED` with 9 of 9. RSSI **−41.6 to
 −50.9 dBm**, each tag varying only ~1 dB run to run — so every tag sits **20 dB or more above the
-−72 dBm `rssi-threshold-dbm` floor**. Tighten toward −55/−50 to make it mean "the tags in front of
-the antenna", which is also how to stop commissioning's TID discovery picking arbitrary tags out of
-the whole population.
+−72 dBm `rssi-threshold-dbm` floor**.
+
+**That measurement used to end "tighten toward −55/−50". Do not — it was wrong, and a larger
+sample disproves it.** MEASURED 2026-09-04 on the production unit, per-tag `bestRssi` over 20
+consecutive cartons (sequences 733–752, 18 distinct EPCs): tag medians run **−29 to −46 dBm**, but
+the **weakest single detection is −61 dBm**. One article (`…0138`) swings **−61 to −27 dBm** carton
+to carton while every other tag varies by a few dB — it moves in the box, and it alone sets the
+floor. **A −55 threshold would have dropped every read of that tag in its weak cartons**, reporting
+an 18-article population as a complete 17. The `~1 dB run to run` figure above came from 9 tags
+sitting still; it does not survive a population that is handled.
+
+The rule that generalises: **the threshold must clear the weakest detection of the weakest article,
+not the median of the population**, and the two are 17 dB apart here. `−72` leaves 11 dB below the
+worst case and is what this unit runs. **A too-tight threshold is silent** — it does not log, it
+shortens cartons and reports them complete. Tighten only with evidence of a neighbouring carton
+bleeding in; there is none on this rig, where all 18 EPCs appear in 13–20 of the 20 cartons and
+every one is a genuine member of the population.
 
 **Singulation order is random and carries no meaning.** One tag was first at 57 ms in one carton and
 nearly last at 1219 ms in another, at unchanged signal strength. Nothing should read meaning into
