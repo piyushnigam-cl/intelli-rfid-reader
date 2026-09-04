@@ -1,18 +1,28 @@
 # Resume here — CM4 session, next sitting
 
-**Rewritten 2026-09-04 at the end of the shutdown-safety session.** Everything below is either
-measured on this hardware or read from the tree; where it is inference it says so.
+**Rewritten 2026-09-04 at the end of the shutdown-safety session, and appended to at 17:50 after a
+second session built `intelli-wms-test`.** Everything below is either measured on this hardware or
+read from the tree; where it is inference it says so.
 
 ---
 
 ## The state of the unit right now
 
-**The app is running and healthy.** `intelli-rfid-tunnel` active, PID 8013, listening on 8081,
-started 15:51:56. The jar was deployed at 15:51 from commit `19f3a3d`.
+**The app is running and healthy.** `intelli-rfid-tunnel` active, **PID 1031**, listening on 8081,
+started **17:44:52**. The jar is still the one deployed at 15:51 from commit `19f3a3d` — the restart
+was a reboot, not a redeploy.
 
-**The board was powered off and back on once today, deliberately** — an IN3 shutdown test at 15:23.
-It came back on its own power cycle. See "what this session found" below, because that test is what
-the whole session came out of.
+**The board went down and came back at ~17:44, and nobody asked it to.** That is the *second* power
+event of the day and unlike the 15:23 one it was not a test: it killed the Claude Code session
+mid-work, which is how `intelli-wms-test` came to be sitting on disk uncommitted. The reader
+reopened cleanly on its own (`Reader open: module=MODOULE_NONE fw=20.26.03.30`, inventory started).
+**Cause not established.** The clock disagrees with itself across `who -b` (17:44), `ps` (17:48) and
+the log (17:44:52), which is the no-RTC signature of a cut rather than an ordered shutdown — but
+`journalctl` is volatile here, so the transcript that would settle it is gone. **Item 3 below is
+what makes the next one diagnosable; do it before chasing this one.**
+
+**The earlier power cycle at 15:23 was deliberate** — the IN3 shutdown test. See "what this session
+found" below, because that test is what the whole shutdown-safety session came out of.
 
 **Deployed and live:**
 
@@ -85,9 +95,47 @@ actually telling them. Now parked in code and withdrawn from every document.
 this design lost and never replaced is the 1 Hz liveness heartbeat that let a watchdog stop the line
 after 3 s of silence. Do not spend it on anything smaller without settling that first.
 
+### 4. `intelli-wms-test` — a sixth repo, written 17:33–17:46 and nearly lost
+
+A new laptop app, port 8083: **a WMS reduced to arming Super Fast Mode and showing the carton that
+comes back.** Tags expected, tags found, time taken, then every tag with EPC and TID. 20 files,
+~2100 lines, `mvn package` green with tests, jar built at 17:46 in `target/`.
+
+It is not a duplicate of admin's WMS simulator. Admin asks *does the reader behave*; this asks
+*could a WMS integrator use it*, and answers it by holding **nothing but the INVENTORY key** and the
+five documented endpoints. The full reasoning, and the two rules that stop it flattering the reader
+(found is `matched.count`; the verdict pill is the reader's own `complete`), are in `CLAUDE.md`.
+
+**It is a temporary app** — the customer's own integration replaces it, and it is disabled by
+rotating the `site-wms` key on the reader (operator's decision, 2026-09-04). That is why the live
+INVENTORY key is committed in its `application.yml` in plaintext: the jar is handed over and
+double-clicked with no setup.
+
+**It had no `.git` at all until 17:5x**, and that is the lesson worth keeping. It was written,
+built, and left through a reboot with nothing tracking it — and the root `git status` stayed clean
+the whole time, because the root repo ignores `apps/` by design. Nothing anywhere would have said a
+word. **`git init` belongs to creating an app, not to finishing one**; at close-out, walk `apps/*/`
+by directory and check each one *has* a repo, rather than iterating the repos that exist. Now
+`db8e136` on `origin/main` at `.../v1/repos/intelli-wms-test`.
+
+**Never run against a live reader.** Unit tests only. See next action 0.
+
 ---
 
 ## Next actions, in order
+
+0. 🔴 **Run `intelli-wms-test` against this reader, end to end.** It has never met a real one — every
+   claim in its README is unit-tested inference. The tunnel is up on 8081, the jar is built, and the
+   bench population is 18 tags. What this first run is actually testing is the **callback path**,
+   which is the half no unit test can reach: arm from the page, put a carton through, and see the
+   result *arrive*. If the page sits empty with the reader reporting a perfect carton, the callback
+   URL is the suspect before anything else — check `callbacks.jsonl` on the reader and remember that
+   the spool replays independently of arm state, so a backlog from an earlier address will retry all
+   day and read as the arm path being broken.
+
+   Two known-honest failures to expect rather than debug: `expected-token` blank reports
+   `NOT_CHECKED` (the tunnel sends no token today), and an empty TID column means FastID — which is
+   on, so TIDs should appear.
 
 1. 🔴 **Reconcile `power-off-os` in the site config.** `/etc/intelli/intelli-rfid-tunnel/application.yml`
    line 282 is `power-off-os: true`, and the comment block immediately above it says **"FALSE FOR
@@ -141,12 +189,20 @@ after 3 s of silence. Do not spend it on anything smaller without settling that 
 
 ## Repositories
 
-All five clean and pushed at the end of this session.
+**Six now, not five** — and one of them did not exist as a repo an hour ago. All clean and pushed.
 
 | Repo | Head |
 |---|---|
-| `intelli-rfid-reader` (docs) | `Shutdown: the lamp was one phase early…` + the O7 doc update |
+| `intelli-rfid-reader` (docs) | the O7 update, then this file + the `CLAUDE.md` app-table rewrite |
 | `intelli-rfid-tunnel` | `e71a5f2` Park O7 |
-| `intelli-rfid-core` | `b058f42` unchanged this session |
-| `intelli-rfid-reader-test` | `940c4d8` unchanged this session |
-| `intelli-rfid-admin` | `bdf8ab3` unchanged this session |
+| `intelli-rfid-core` | `b058f42` unchanged |
+| `intelli-rfid-reader-test` | `940c4d8` unchanged |
+| `intelli-rfid-admin` | `bdf8ab3` unchanged |
+| `intelli-wms-test` | `db8e136` **root commit** — new today |
+
+`intelli-rfid-wayside` is a sixth app in the layout table but **is not checked out on this CM4**; do
+not read its absence as a deleted repo.
+
+**Walk `apps/*/` by directory when you do this, not the list above.** The root repo ignores `apps/`,
+so an app with no `.git` is invisible to every status command you would think to run — which is
+exactly how `intelli-wms-test` survived a reboot on luck alone.

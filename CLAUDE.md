@@ -221,25 +221,74 @@ intelli-rfid-reader/            repo: intelli-rfid-reader — DOCS ONLY, ignores
     ├── intelli-rfid-core/          shared library — repo: intelli-rfid-core
     ├── intelli-rfid-reader-test/   bench acceptance — repo: intelli-rfid-reader-test
     ├── intelli-rfid-tunnel/        warehouse portal — repo
-    └── intelli-rfid-wayside/       trackside railway — repo
+    ├── intelli-rfid-admin/         laptop admin interface — repo: intelli-rfid-admin
+    ├── intelli-wms-test/           WMS simulator — repo: intelli-wms-test
+    └── intelli-rfid-wayside/       trackside railway — repo (NOT checked out on this CM4)
 ```
 
 `git init` belongs inside each app directory. **Never create a repo spanning `apps/`** — the root
 repo keeps that rule by ignoring `apps/` outright, so a stray `git add -A` at the root cannot
 swallow an app. Nesting the app repos would need submodules and is not what this project does.
 
+**That same ignore is why a new app can exist for hours with no repository at all and nothing
+complain.** `intelli-wms-test` was written, built and left uncommitted across a board reboot on
+2026-09-04 — the root `git status` stayed clean throughout, because the root repo does not look
+inside `apps/`, and the app itself had no `.git` to report anything. **`git init` is part of
+creating an app, not part of finishing one.** When walking the repos at close-out, walk `apps/*/`
+by directory and check each one *has* a repo, rather than iterating over the repos that exist.
+
 ## The apps
 
-| App | Port | Purpose |
-|---|---|---|
-| `intelli-rfid-reader-test` | 8080 | A new reader arrives: is it good? Reads a few tags, writes a few tags, reports pass/fail |
-| `intelli-rfid-tunnel` | 8081 | Warehouse entry/exit tunnel. A box of ~40 tagged articles passes through; a third-party app asks what was in it. Also commissions warehouse tags |
+Two of them run **on the reader**; two run **on the Windows laptop** and talk to a reader over the
+LAN. The port is the giveaway and the distinction matters, because a laptop app has no reader, no
+vendor jar and no core.
 
-| `intelli-rfid-wayside` | 8082 | Trackside railway reader. A train passes; produce the consist |
+| App | Port | Runs on | Purpose |
+|---|---|---|---|
+| `intelli-rfid-reader-test` | 8080 | reader | A new reader arrives: is it good? Reads a few tags, writes a few tags, reports pass/fail |
+| `intelli-rfid-tunnel` | 8081 | reader | Warehouse entry/exit tunnel. A box of ~40 tagged articles passes through; a third-party app asks what was in it. Also commissions warehouse tags |
+| `intelli-rfid-wayside` | 8082 | reader | Trackside railway reader. A train passes; produce the consist |
+| `intelli-wms-test` | 8083 | laptop | A WMS, reduced to arming Super Fast Mode and showing the carton that comes back |
+| `intelli-rfid-admin` | 8090 | laptop | The whole surface: v1 contract, internal endpoints, commissioning, key issuance, bench harness, call log, contract checker |
 
-`intelli-rfid-core` is the shared library underneath all three.
+`intelli-rfid-core` is the shared library underneath the three reader apps. **The two laptop apps
+deliberately do not depend on it** — shared DTOs would serialise and deserialise with the reader's
+own code, so a wire-format regression would cancel itself out on both sides and be invisible to the
+one test built to catch it. Both parse the reader's JSON field by field on purpose.
 
 **The tunnel app is retail/warehouse. Only the wayside app is rail.** Do not conflate them.
+
+### `intelli-wms-test` and `intelli-rfid-admin` overlap, and the overlap is the point
+
+Admin already contains a WMS simulator, so `intelli-wms-test` looks like a duplicate and is not. The
+two ask different questions:
+
+- **Admin asks *does the reader behave*.** It holds an ADMIN key, times and logs every call including
+  the ones that never connected, and checks each response against `docs/Intelli-RFID-RestAPI.docx`.
+- **`intelli-wms-test` asks *could a WMS integrator use it*.** The only honest way to answer that is
+  to hold **nothing but the INVENTORY key** and the five documented endpoints — so the call log, the
+  contract checker, commissioning and the key tooling are deliberately absent. Adding any of them
+  back would destroy what the app is for.
+
+It is **a temporary app, and the customer's own integration replaces it** (operator, 2026-09-04).
+That is why its `application.yml` carries the live `site-wms` INVENTORY key in plaintext: the jar is
+handed over and double-clicked with no setup, and the app is disabled by rotating that key on the
+reader rather than by revoking anything. Do not "fix" the committed key without checking that
+decision still stands.
+
+Two rules it enforces on screen, both of which exist to stop it flattering the reader:
+
+- **Found is `matched.count`, not the number of rows in the table.** The table lists everything that
+  answered, labelled `matched` / `unexpected` / `undecodable`, because 16 of the 18 bench tags carry
+  no GS1 header and "found 2" over an 18-row table is the correct answer.
+- **The verdict pill is the reader's own `complete`, never re-derived.** The contract says stop
+  reason and count are independent; a page computing *found ≥ expected* itself would quietly
+  disagree with the reader on the one number the customer cares about.
+
+`callback.url` blank means the app offers its own site-local IPv4 and labels it a guess — right on a
+laptop sharing the reader's LAN, wrong behind NAT. **Never `localhost`**: the reader would POST to
+itself, every carton would read perfectly, every result would die in a connection refused inside the
+*reader's* log, and the page would sit empty looking exactly like a reader that had stopped working.
 
 ### Two API surfaces on the tunnel, and only one of them is the contract
 
