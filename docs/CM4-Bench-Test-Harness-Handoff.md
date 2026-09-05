@@ -25,6 +25,12 @@ instructions.** The channel map is migrated, the field package is renamed to
 the width-encoded RESULT are deleted, IN3 is a held button, and the admin tab takes its labels from
 the reader. No profile switch was built and none should be. §8's work list is updated to match.
 
+Changed in 2.3 (2026-09-05): **the site was rewired and every output from O5 down moved** (§3). The
+Exit Conveyor has its own channel, the lamps are O6/O7, and IN4 carries a third W26 — the Discharge
+Sensor. **Any test step in an earlier copy of this document that names a lamp channel names the
+wrong one**, and the step that treated IN4 as a spare to prove continuity on now has a real sensor
+in front of it. J26 is full.
+
 ---
 
 ## 1. What changed this morning, and what it means for this app
@@ -34,8 +40,8 @@ the reader. No profile switch was built and none should be. §8's work list is u
 The tunnel app was built against a PLC interface: it emitted a 3-bit speed word, a width-encoded
 verdict and a heartbeat, and another machine decided what the conveyor did. **There is no longer
 another machine.** The Intelli-RFID Reader drives three EZY-S100 driver cards through the Tunnel
-Manager, reads two SICK W26 sensors, lights two lamps, and owns the conveyor state machine itself.
-`docs/Tunnel-Interconnect.md` is the wiring; `CLAUDE.md` has the names and the J26 remap.
+Manager, reads **three** SICK W26 sensors, lights two lamps, and owns the conveyor state machine
+itself. `docs/Tunnel-Interconnect.md` is the wiring; `CLAUDE.md` has the names and the J26 remap.
 
 **So this is not a bench-harness job with some incidental refactoring. It is: make the tunnel app the
 machine controller, then prove it with six tests that must pass.** The tests are the acceptance
@@ -61,16 +67,17 @@ date, and several of its "findings" were already fixed.** This section replaces 
 was read from `origin/main` in both repos.
 
 **The whole field-IO layer exists.** `com.intelli.rfid.tunnel.field`:
-- **`FieldIo`** interface — `write`, `diagnosticWrite` (the only way to drive a *parked* channel),
-  `read`, `readAll`, `problem`, `isUsable`. Everything above it speaks **field sense**, never GPIO
-  level. That is the inversion boundary this document asked for; it is built.
+- **`FieldIo`** interface — `write`, `diagnosticWrite` (the only way to drive a *parked* channel —
+  **and since 2026-09-05 there are none**, so every `diagnosticWrite` now lands on something with a
+  committed function), `read`, `readAll`, `problem`, `isUsable`. Everything above it speaks **field
+  sense**, never GPIO level. That is the inversion boundary this document asked for; it is built.
 - **`PinctrlFieldIo`** — shells `pinctrl`, one process per call. Chosen over `gpioset` deliberately:
   `pinctrl` writes the pad registers so a level survives process exit, and it does not contend with
   the `gpiomon` holding lines 23/24.
 - **`FieldChannel`** — the channel map, as a **hard-coded enum, explicitly not configurable**.
-- **`VerdictLamps`** (O5 green / O6 red, latched levels), **`ShutdownRequestMonitor`** (IN3, a
-  sampled level) + **`ShutdownSequence`**, **`DiagnosticsIoController`**
-  (`/api/v1/diagnostics/io`, ADMIN scope).
+- **`VerdictLamps`** (**O6 green / O7 red**, latched levels — both moved on 2026-09-05),
+  **`ShutdownRequestMonitor`** (IN3, a sampled level) + **`ShutdownSequence`** + **`ShutdownLamp`**
+  (O7, sharing the red lamp), **`DiagnosticsIoController`** (`/api/v1/diagnostics/io`, ADMIN scope).
 - `tunnel.field.*` config: `enabled`, `command`, `disable-input-pulls`, plus `lamps.*` and
   `shutdown.*` blocks.
 
@@ -106,20 +113,27 @@ map: the earlier plan for `profile: TUNNEL | PLC` was dropped once it was clear 
 exists only in this app, and this app is the Reliance product. A map you can select is a map that
 can come up wrong.
 
+**Updated 2026-09-05 — the site was rewired and this table moved with it.** Anything below O4 is at a
+different channel than it was; the earlier layout is in §3.1a.
+
 | Ch | BCM | Function | Note |
 |---|---|---|---|
-| OUT1 | 26 | `EnC_ExC_RUN` | one channel, two cards in parallel. **Normally asserted** |
+| OUT1 | 26 | `EnC_RUN` | the Entry Conveyor **alone**. **Normally asserted** |
 | OUT2 | 20 | `RZC_RUN_A` | with O3, the speed ladder |
 | OUT3 | 16 | `RZC_RUN_B` | A alone 100 %, A+B 75 %, B alone 50 %, neither stop |
 | OUT4 | 19 | `RZC_REVERSE` | a level, meaningless while the RZC is stopped |
-| OUT5 | 21 | `LAMP_PASS` | green, latched |
-| OUT6 | 12 | `LAMP_FAIL` | red, latched |
-| OUT7 | 13 | **spare** | parked 2026-09-04; the shutdown lamp is O6, blinking / lit / dark |
+| OUT5 | 21 | `ExC_RUN` | the Exit Conveyor. **Was `LAMP_PASS`** |
+| OUT6 | 12 | `LAMP_PASS` | green, latched. **Was `LAMP_FAIL`** |
+| OUT7 | 13 | `LAMP_FAIL` | red, latched — **and the shutdown lamp**, blinking / lit / dark. **Was parked** |
+| IN1 | 23 | `ENTRY_SENSOR` | unchanged |
+| IN2 | 24 | `EXIT_SENSOR` | unchanged |
+| IN3 | 18 | `SHUTDOWN_REQUEST` | unchanged, a sampled level |
+| IN4 | 25 | `EXIT_FULL` | the Discharge Sensor (DsS), a third W26. **Was parked** |
 
 **Three behavioural changes came with it, and none of them would have fallen out of a rename.**
 
 - **Speed is a pair of run lines, not a word.** There is no 3-bit encoder anywhere any more; three
-  speeds on RZC only, and O1 is plain run/stop for EnC and ExC together. Anything that still thinks
+  speeds on RZC only, and O1 and O5 are plain run/stop for EnC and ExC. Anything that still thinks
   in `0..7` is a bug.
 - **The lamps are a 5 s dwell, and the dwell carries no meaning.** `VerdictLamps` lights one, puts
   the other out, and schedules it dark after `lamps.hold-ms` on its own daemon thread — never on the
@@ -130,11 +144,58 @@ can come up wrong.
 - **There is no liveness heartbeat, and that is a real loss.** The 1 Hz toggle was a *hardware*
   liveness signal that survived a hung JVM; nothing replaces it, and the reader's liveness is now
   only visible over HTTP. It is acceptable because the failsafe still holds — outputs reset low, so
-  a dead reader stops the line rather than running it — but it was a decision, not an accident. If
-  it is ever wanted back it needs its own channel and its own thread.
+  a dead reader stops the line rather than running it — but it was a decision, not an accident.
+  🔴 **And as of 2026-09-05 it can no longer be given its own channel.** O7 was the last free
+  output and the earmarked home for it; the red lamp has it now. Bringing the heartbeat back costs
+  a board change or the SAMD21, not a config key.
 
 **Renamed with it:** the package is `com.intelli.rfid.tunnel.field` and the prefix is
 `tunnel.field.*`. See the warning in §1 about a stale `plc:` key in the site config.
+
+### 3.1a The 2026-09-05 rewiring — what moved, why, and what did *not* change
+
+| Ch | Was | Is |
+|---|---|---|
+| OUT1 | `EnC_ExC_RUN`, both belts on one channel | `EnC_RUN` |
+| OUT5 | `LAMP_PASS` | `ExC_RUN` |
+| OUT6 | `LAMP_FAIL` | `LAMP_PASS` |
+| OUT7 | parked spare | `LAMP_FAIL`, and the shutdown lamp |
+| IN4 | parked spare | `EXIT_FULL` ← DsS |
+
+**Why.** There is no end stop on the Exit Conveyor, so a carton reaching the discharge edge with the
+belt running falls off. The ExC had to become stoppable without also stopping the EnC, and the shared
+O1 made that impossible. DsS is a SICK W26 at the far edge of the ExC, landing exactly like EnS and
+ExS: M12 4-pin on `cd-390`, pin 1 `brn` = +24 V control, pin 3 `blu` = control 0 V, pin 4 `blk` =
+switching output to the TM input terminal, pin 2 `wht` = MF, left open and insulated.
+
+**The side effect is the one that matters to Test 5: EnC and ExC need no longer be serialised.** The
+previous carton *can* discharge while the next is being read, so cycle time need not be read *plus*
+discharge — the copper no longer forces it. Read the next paragraph before believing the stopwatch
+will show that yet.
+
+> 🔴 **The subtlety that will otherwise be mis-tested. The software still commands the two belts
+> TOGETHER.** `ConveyorController.setBelts()` writes O1 and O5 identically — one seam, one value —
+> so **observable belt behaviour is exactly what it was before the rewiring**, and every O1
+> expectation in the tests below holds for O5 as well. The copper is split; the commands are not.
+>
+> **Assert both channels anyway.** A test that only reads O1 would pass with O5 stuck, dead, or
+> mis-landed at the TM, and the whole point of the rewiring is that O5 exists.
+>
+> Two decisions are **open** before the seam is actually split, and neither is guessed at here:
+> whether a blocked exit (IN4 asserted) should also hold the RZC and the EnC — back-pressure — and
+> whether the EnC should stay stopped until the IN2 exit edge rather than restarting at read close.
+> **Do not test for behaviour that has not been decided**, and do not read the split copper as split
+> behaviour.
+
+**IN4 is wired and not yet consumed.** Nothing in the tunnel app reads `EXIT_FULL` — it appears on
+`/api/v1/diagnostics/io` and in `IoSnapshot`, and no logic acts on it. That makes its polarity
+un-exercised, which is the worst way for a sense error to wait: prove the level by hand at
+commissioning (occupy the discharge edge, confirm the reader reports IN4 asserted) **before** any
+code depends on it. A wrong sense here does not mis-time a read, it drives a carton off the end.
+
+**J26 is now full.** No spare output, no spare input. That closes off the liveness heartbeat above,
+and it also means the old habit of proving continuity by pulsing a parked channel is gone — every
+loop test now moves a belt, lights a lamp or reads a real sensor.
 
 ### 3.2 ✅ The admin Field I/O tab — DONE in the same change
 
@@ -168,7 +229,9 @@ falls back to first-tag open and reports `degraded`. Add the test endpoint that 
 (§8.2). Two new details from the current tree:
 - **`tunnel.field.disable-input-pulls` defaults to `true`**, which turns the internal pull-downs off on
   IN1–IN4 so the carrier's external 10 k defines the level. **On a bare bench with nothing wired to
-  J26, set it `false` or IN1 floats and manufactures phantom cartons.**
+  J26, set it `false` or IN1 floats and manufactures phantom cartons.** IN4 now carries a real sensor
+  too, so on a bare bench it floats as well — harmless today because nothing reads it (§3.1a), and
+  not harmless the moment something does.
 - `tunnel.v1.gpio.debounce-ms` is 50 and **must not go past ~150**, or it eats the IN3 burst.
 
 ### 3A.3 Session — the config still says 2 🟠 CONFIRMED
@@ -229,8 +292,11 @@ session (S0/S1/S2) · a "reset inventoried flag between runs" checkbox once §3.
 4. **Stop reason** and **duration**, because a run that hit `TIMEOUT` is not the same as one that
    settled even when the count matches.
 
-**O1 is held LOW for the whole static test** — nothing moves. The admin app puts the tunnel in
-`HOLD` before the first run and releases it to `AUTO` after the last. See §7.
+**O1 and O5 are held LOW for the whole static test** — nothing moves. Both, not just O1: the belts
+have separate channels since 2026-09-05 even though `setBelts()` still writes them together, so
+asserting only O1 would miss an O5 stuck high, which on this test would mean the Exit Conveyor
+running under a "nothing moves" heading. The admin app puts the tunnel in `HOLD` before the first run
+and releases it to `AUTO` after the last. See §7.
 
 **At the end of the run set**, render the full analytical report (§10).
 
@@ -252,9 +318,10 @@ in Test 1; Stop renders the report.
 **Dropdowns:** Single Pass / Double Pass · Speed 100 % / 75 % / 50 %.
 
 **Speed maps to the RZC only.** Run A and Run B are a pair: A only = 100 %, A+B = 75 %, B only = 50 %,
-neither = stop. **EnC and ExC have Run A alone and share one channel (O1), so they are run/stop at
-100 % and cannot be slowed.** Consequence for the rig: at 50 % the carton *decelerates* as it
-transfers from EnC to RZC and *accelerates* leaving it. Watch for bunching at the transfer at the
+neither = stop. **EnC and ExC have Run A alone — on O1 and O5 respectively since the rewiring — so
+they are run/stop at 100 % and cannot be slowed.** Separate channels did not buy them a speed ladder;
+only the RZC has a Run B. Consequence for the rig is unchanged: at 50 % the carton *decelerates* as
+it transfers from EnC to RZC and *accelerates* leaving it. Watch for bunching at the transfer at the
 lower speeds — it is a rig problem, not a reader problem, but it will look like a read problem.
 
 **Single pass**: EnS opens the session, the conveyor keeps running, ExS closes it.
@@ -284,12 +351,14 @@ tag whose flag has not yet decayed can go quiet through pass 2 and answer on pas
 reported as a pass-3 find when it was in the field throughout. That would make the mode look better
 than it is, which is the worst direction for this particular error.
 
-**O1 during the read.** Per §7, O1 is high by default and drops when EnS fires, so the dynamic test
-also exercises the conveyor state machine. **In Double Pass it must stay low across all three
-passes** — the first ExS edge is a direction change, not the end of the carton. Assert in the test that O1 returns high on
-**every** outcome including `TIMEOUT`, and that `tunnel.max-duration-ms` releases it if no outcome
+**O1 and O5 during the read.** Per §7, both are high by default and drop when EnS fires, so the
+dynamic test also exercises the conveyor state machine. **In Double Pass they must stay low across
+all three passes** — the first ExS edge is a direction change, not the end of the carton. Assert in
+the test that **both** return high on
+**every** outcome including `TIMEOUT`, and that `tunnel.max-duration-ms` releases them if no outcome
 arrives at all. A carton stopped in the tunnel with the line dead is the failure this test exists to
-catch.
+catch. Read both channels even though `setBelts()` writes them together (§3.1a): they are the same
+value by construction today, and the test's job is to notice the day they are not.
 
 ## 6. Tests 3 to 6 — accepted by the operator, build them all
 
@@ -316,8 +385,16 @@ the other numbers mean anything. Note that a filter left set makes the reader lo
 
 **Reliance will ask how many cartons per hour, and nothing in the two specified tests measures it.**
 With S1 (§3.3) the Gen2 reason for a short gap to fail is gone, so what this sweep now measures is
-the *real* limit: settle time, carton spacing on the belt, and the serialised discharge that comes
-from EnC and ExC sharing O1. That is a better number than the one we were going to get.
+the *real* limit: settle time and carton spacing on the belt. That is a better number than the one we
+were going to get.
+
+**The third term used to be the serialised discharge, and the 2026-09-05 rewiring removed it** — the
+ExC has its own channel, so the previous carton can discharge while the next is read, and cycle time
+is no longer read *plus* discharge. **But do not expect that in this sweep's numbers yet**, because
+`setBelts()` still drives O1 and O5 together (§3.1a): the serialisation is gone from the *copper* and
+still present in the *behaviour*. Measure the sweep as it stands and record it as the pre-split
+baseline — the difference after the belts are commanded apart is the value of the rewiring, and it is
+worth having both numbers.
 
 Run it under S2 as well, once, deliberately — it reproduces the old failure and gives you the
 before/after that justifies staying on S1.
@@ -353,8 +430,12 @@ then recovery with inventory restarted.
 Inject it **mid-carton** and assert five things:
 1. The run is marked **invalid**, not merely short.
 2. `recoveries` and `lastRecoveryAt` on `/api/reader/status` advance, and the reader comes back.
-3. **The carton exits forward** — O4 released, RZC driven until clear, O1 high (§7.1).
-4. **The red lamp lights** and stays on per the clearing rule in §7.1.
+3. **The carton exits forward** — O4 released, RZC driven until clear, **O1 and O5 high** (§7.1).
+4. **The red lamp lights** — **O7 since 2026-09-05, not O6** — and stays on per the clearing rule in
+   §7.1. Assert **O6 dark** in the same check: with the lamps one channel apart from where they were,
+   an inverted or off-by-one landing at the TM shows up as a *green* lamp on a failed carton, which
+   is the most expensive possible way to be wrong and passes any test that only looks at "a lamp is
+   lit".
 5. **A result is still emitted** — `TIMEOUT`, `complete: false` — and the callback is delivered. Assert
    this in the admin app against `CallbackController`: a carton that leaves unread and produces no
    callback is worse than one that fails loudly.
@@ -367,26 +448,35 @@ running. Everything must stop. If anything runs, the TM polarity is inverted and
 to work around. It is in `docs/Tunnel-Interconnect.md` §14 as a commissioning step and it is the
 easiest one to skip.
 
-## 7. O1 is part of the test, not scenery
+## 7. The belt channels are part of the test, not scenery
 
 The conveyor outputs must be driven correctly *by the tests themselves*, not left floating while the
-tests run. Two rules, both from the operator:
+tests run. Two rules, both from the operator. **They now apply to two channels, not one** — O1
+`EnC_RUN` and O5 `ExC_RUN`, written together by `setBelts()` (§3.1a) and therefore expected to hold
+the same value in every row below:
 
-| Test | O1 (`EnC_ExC_RUN`) |
+| Test | O1 (`EnC_RUN`) and O5 (`ExC_RUN`) |
 |---|---|
-| **Static (§4)** | **Held LOW for the whole test.** Nothing moves. The admin app puts the tunnel in a hold state before the first run and releases it after the last. |
+| **Static (§4)** | **Both held LOW for the whole test.** Nothing moves. The admin app puts the tunnel in a hold state before the first run and releases it after the last. |
 | **Dynamic (§5)** | **The state machine.** High between cartons; LOW from the EnS edge; **HIGH again only once the reading for that package is finished** — and in Double Pass that means after the *second* pass completes, not after the first ExS edge. |
 
 The Double Pass case is the one to get right. ExS is not the end of the carton in Double Pass — it is
-the first direction change. O1 must stay low across the reverse pass and the final outward pass, and
-release only when the session actually closes. If O1 goes high at the first ExS edge, EnC starts
-feeding the next carton into a tunnel that is still reversing the current one.
+the first direction change. The belts must stay low across the reverse pass and the final outward
+pass, and release only when the session actually closes. If they go high at the first ExS edge, EnC
+starts feeding the next carton into a tunnel that is still reversing the current one.
+
+**Assert O1 and O5 separately even though they are identical by construction.** They agree because
+one method writes both, not because anything in the field guarantees it; a broken TM channel, a
+mis-landed core or a future split of the seam all show up first as the two disagreeing, and a test
+that reads only O1 is blind to every one of them.
 
 ### 7.1 Fault behaviour — decided 2026-09-02
 
 **On a fault the package exits forward and the red lamp comes on.** Concretely: O4 released
-(forward), RZC driven until the carton is clear, O1 high so ExC can discharge it, **O6 `LAMP_FAIL`
-asserted**. The carton leaves unread rather than being trapped in the tunnel.
+(forward), RZC driven until the carton is clear, **O5 high so ExC can discharge it (and O1 with it,
+see below)**, **O7 `LAMP_FAIL` asserted**. The carton leaves unread rather than being trapped in the
+tunnel. **The red lamp is O7, not O6, since 2026-09-05** — O6 is now green, so a stale channel
+constant here lights *pass* on a faulted carton.
 
 Four things this must get right:
 
@@ -402,12 +492,15 @@ Four things this must get right:
 - **Decide when red clears.** Recommended: the lamp stays on until the reader is healthy *and* the
   next carton completes successfully. Clearing it the instant the supervisor reconnects gives a
   flicker that teaches operators to ignore the lamp.
-- 🔴 **Discharging on a fault also starts EnC, because they share O1.** There is no way to run ExC
-  alone. So the fault discharge feeds the *next* carton into a tunnel whose reader has just failed,
-  and it will pile up behind the first. Either the upstream line has to be stopped by something
-  outside this system, or ExC needs its own channel — which is the third time the shared O1 has cost
-  something, and the second argument for RS-485 (§12 of `Tunnel-Interconnect.md`). **Raise it with
-  the operator; do not quietly build the pile-up.**
+- 🟠 **Discharging on a fault still starts EnC — but the wiring reason is gone and only the software
+  reason is left.** This used to be "they share O1 and there is no way to run ExC alone"; since
+  2026-09-05 the ExC has O5 and running it alone is a one-line change. What still forces the pile-up
+  is that `setBelts()` writes both channels together (§3.1a), so the fault discharge feeds the
+  *next* carton into a tunnel whose reader has just failed. **The fix is now available and has not
+  been made**, and whether it should be made — a blocked or failed exit holding the EnC — is one of
+  the two open decisions in §3.1a. **Test what exists**: on a fault today, expect O1 and O5 both
+  high and expect the next carton to be fed. Record it as the reason to split the seam; do not
+  assert the behaviour nobody has chosen yet.
 
 Two implementation consequences:
 
@@ -451,11 +544,30 @@ start-up.
 abandon; **TRACE gives every sample with its running hold time**, which is the level to use when the
 question is what actually arrived on the pin. `logging.level.com.intelli.rfid.tunnel.field: TRACE`.
 
+**The shutdown lamp is O7 (BCM 13) since 2026-09-05 — it was O6 (BCM 12).** It shares the channel
+with `LAMP_FAIL`, and its three states and their producers are **unchanged** by the move:
+
+| State | Meaning | Driven by |
+|---|---|---|
+| **blinking** | the shutdown sequence is running | the application (`ShutdownLamp`) |
+| **solid lit** | the app is gone, the OS is still coming down | the application, on its way out |
+| **dark** | **the board is down; 24 V may be removed** | `/usr/lib/systemd/system-shutdown/intelli-lamp.shutdown`, and nothing else |
+
+The rule that dark is produced **only** by that script, after `systemd-shutdown` has remounted root
+read-only, is the whole point of it and did not move — only the pin did. The script now does
+`pinctrl set 13 op dl`; **it was `12`**. It must stay **0755**, because systemd-shutdown silently
+skips a file it cannot execute and the symptom is a lamp that never goes dark on a board that is off.
+
 **Test it as part of Test 6.** A 4-second press must do nothing. A 5-second press must run the full
-sequence and light O7. A press during a reader fault must still work. And confirm that shorting the
-input to 24 V at boot does **not** shut the unit down — then releasing it must arm the button rather
-than leave it dead for the life of the process. `ShutdownRequestMonitorTest` pins all of that at the
-unit level (10 tests); the bench run is the wiring proof.
+sequence and light O7 — **check BCM 13, not 12**. A press during a reader fault must still work. And
+confirm that shorting the input to 24 V at boot does **not** shut the unit down — then releasing it
+must arm the button rather than leave it dead for the life of the process. `ShutdownRequestMonitorTest`
+pins all of that at the unit level (10 tests); the bench run is the wiring proof.
+
+**One check the shared channel adds**: watch O7 across a carton *and* a shutdown in the same session.
+The red lamp's 5 s verdict dwell and the shutdown lamp's blink are the same physical lamp now, so a
+verdict landing during a shutdown sequence, or a stale dwell timer outliving it, would show as a lamp
+telling the operator the wrong thing about whether 24 V may be removed.
 
 ## 8. Tunnel-side work
 
@@ -481,11 +593,15 @@ documentation, and it should be behind the `ADMIN` scope in `ScopeRules`.
 - `POST /api/test/gpio/pulse` — `{line: 23|24, holdMs}`. Shells `pinctrl` to produce one real edge of
   the configured polarity. **Test-only, ADMIN scope, and it must refuse when
   `tunnel.v1.gpio.enabled` is false** so it cannot be mistaken for a production trigger.
-- `POST /api/test/conveyor` — `{mode: "AUTO"|"HOLD", ttlMs}`. `HOLD` forces O1 low with the deadline
-  from §7; `AUTO` returns it to the state machine.
+  **Line 25 (IN4, `EXIT_FULL`) is deliberately not in that set**: it is a level, not an edge, and
+  nothing consumes it yet (§3.1a). When the belts are split, what this endpoint needs for IN4 is a
+  *hold*, not a pulse — do not extend the pulse form to it and produce a 200 ms blip nothing can act
+  on.
+- `POST /api/test/conveyor` — `{mode: "AUTO"|"HOLD", ttlMs}`. `HOLD` forces **O1 and O5** low with
+  the deadline from §7; `AUTO` returns them to the state machine.
 - `GET /api/test/io` — the actual state of all 7 outputs and 4 inputs, so the fault test (§6.4) can
-  assert what O1 did. Note this duplicates `/api/v1/diagnostics/io`, which exists and is what the
-  admin Field I/O tab already drives; prefer repointing to that over adding a second shape.
+  assert what the belts did. Note this duplicates `/api/v1/diagnostics/io`, which exists and is what
+  the admin Field I/O tab already drives; prefer repointing to that over adding a second shape.
 - `POST /api/test/select/reset` — issue the Select-to-A on demand, so the gap sweep (§6.3) can be run
   with and without it.
 
@@ -494,8 +610,11 @@ documentation, and it should be behind the `ADMIN` scope in `ScopeRules`.
 **`FieldIo` and `PinctrlFieldIo` already exist and already enforce the inversion boundary.** Do not
 write a second one. What is missing is the layer above:
 
-- A **`ConveyorController`** that owns the O1 state machine (§7) and the fault behaviour (§7.1),
-  writing through `FieldIo`.
+- A **`ConveyorController`** that owns the belt state machine (§7) and the fault behaviour (§7.1),
+  writing through `FieldIo`. It writes O1 and O5 through a single `setBelts()` seam — **keep that
+  seam named and in one place**: it is where the two belts get told apart when the open decisions in
+  §3.1a are made, and a second copy of that write somewhere else is how the split silently becomes
+  a half-split.
 - A **real `CartonRelease`** bean — it is still the logging stub, still wired
   `@ConditionalOnMissingBean` in `V1Configuration`, and still called before the carrier drop and the
   verdict. That ordering is the contract promise that a slow WMS never stalls the conveyor; keep it.
@@ -507,9 +626,10 @@ GPIO and inputs active-LOW, hidden inside the boundary; the seven outputs are al
 reset low and a dead reader stops the line — **never move one onto GPIO 2–8**; the output GPIOs are
 non-contiguous, so there is no masked `GPSET0` write.
 
-One thing to check rather than assume: `PinctrlFieldIo` spawns a process per call. The O1 state
-machine writes on every carton edge, which is fine, but if anything ends up writing per *read* that
-cost will show. Measure it before putting a write anywhere near the dispatch path.
+One thing to check rather than assume: `PinctrlFieldIo` spawns a process per call. The belt state
+machine writes on every carton edge, which is fine, but **the rewiring doubled the number of writes
+per edge** — `setBelts()` is two processes now, not one — and if anything ends up writing per *read*
+that cost will show. Measure it before putting a write anywhere near the dispatch path.
 
 ### 8.4 Config to add
 `tunnel.test.canary-epc` (§6.1), `tunnel.test.hold-ttl-ms`, and make `read-duration-ms` settable
@@ -574,8 +694,10 @@ settle) and per tag (EPC tail, seen n/N, mean RSSI, range, reads per carton, fir
    `application.yml` still has the old `plc:` key, which binds nothing.
 2. **`session: 1`**, the edge polarity, the carton event (§8.1 items 2–4). All small.
 3. **Test 3, the canary tag.** Before a single number is collected.
-4. **`ConveyorController` + real `CartonRelease`** (§8.3), then §7's O1 behaviour. **Verify the
-   failsafe by killing reader power with the belt running before trusting anything else.**
+4. **`ConveyorController` + real `CartonRelease`** (§8.3), then §7's belt behaviour on **both** O1
+   and O5. **Verify the failsafe by killing reader power with the belt running before trusting
+   anything else** — and check the ExC stops too, not just the EnC; it is on a different channel now
+   and a TM channel that fails energised would only show up here.
 5. §8.2 `/api/test/gpio/pulse`, then **Test 1 static**. Under S1 this should now just work; if runs
    2..N come back empty, check the running session first.
 6. **Test 4** empty-field, then **Test 5** gap sweep — walking *down* the ladder and watching
@@ -621,21 +743,24 @@ run proves nothing in either direction and must not be averaged into anything.
 
 | Test | PASS when | FAIL on |
 |---|---|---|
-| **1 Static** | every run has `matchingCount == expectedCount`; canary seen in every run; the v1 callback conforms (`V1Contract` clean) on every run; O1 stayed LOW for the whole test | any run short or over; any contract violation; O1 asserted at any point |
-| **2 Dynamic, single pass** | as Test 1, plus O1 low from the EnS edge and high again on every outcome including `TIMEOUT`; carton duration within the band you record on the first clean run | O1 stuck low after an outcome; a carton stopped in the zone |
-| **2 Dynamic, double pass** | as above; O1 low across **all three** passes; `passBoundaries[]` present and pass 2 + pass 3 yields reported | O1 released at the first ExS edge; missing pass attribution |
+| **1 Static** | every run has `matchingCount == expectedCount`; canary seen in every run; the v1 callback conforms (`V1Contract` clean) on every run; **O1 and O5 both stayed LOW** for the whole test | any run short or over; any contract violation; **either belt channel asserted** at any point |
+| **2 Dynamic, single pass** | as Test 1, plus **O1 and O5** low from the EnS edge and high again on every outcome including `TIMEOUT`; carton duration within the band you record on the first clean run | either belt channel stuck low after an outcome; a carton stopped in the zone; **O1 and O5 disagreeing at any sample** (§7) |
+| **2 Dynamic, double pass** | as above; **O1 and O5** low across **all three** passes; `passBoundaries[]` present and pass 2 + pass 3 yields reported | released at the first ExS edge; missing pass attribution |
 | **3 Canary** | the canary EPC appears in 100 % of runs across every other test | any absence — and that invalidates the run it was absent from, wherever it happened |
 | **4 Empty field** | zero tags, no session opened, no verdict emitted | any tag at all; a phantom carton (check `disable-input-pulls`) |
 | **5 Gap sweep** | a stated minimum gap at which carton 2 still reads complete, with `recoveries` unchanged across the whole sweep | `recoveries` incremented, or `MODULE_NEED_RESTART` in the log — **stop the sweep, that is a hardware result** |
-| **6 Fault injection** | carton exits forward; red lamp lights and holds; a `TIMEOUT` / `complete:false` result **and its callback** are delivered; reader recovers and `recoveries` advances by exactly one | no result emitted; carton trapped; red lamp dark or cleared early |
-| **Shutdown (§7.2)** | a 4 s press does nothing; a 5 s press runs the sequence and lights O7; input shorted at boot does **not** shut down | any unprompted shutdown; O7 lit before the counter is closed |
+| **6 Fault injection** | carton exits forward; **red lamp O7 lights and O6 stays dark**, and it holds; a `TIMEOUT` / `complete:false` result **and its callback** are delivered; reader recovers and `recoveries` advances by exactly one | no result emitted; carton trapped; red lamp dark or cleared early; **green lit on a faulted carton — that is a stale lamp channel, not a verdict bug** |
+| **Shutdown (§7.2)** | a 4 s press does nothing; a 5 s press runs the sequence and **lights O7 (BCM 13)**, blinking then solid; input shorted at boot does **not** shut down; the lamp goes **dark only after the board is down**, from `intelli-lamp.shutdown` | any unprompted shutdown; O7 lit before the counter is closed; **the lamp dark while the OS is still coming down** — that is the one-phase-early failure, back again through a different route |
 
 Two cross-cutting criteria that apply to every test above:
 
-- **Exactly one verdict lamp lit for ~5 s after each carton, then both dark.** "Both lit" is a
-  wiring fault and is flagged as such on the admin Field I/O tab. Look within the dwell — polling
-  `/api/v1/diagnostics/io` a minute later legitimately shows both dark, and that is not a finding.
-  This replaces the old out-of-band width check, which went away with the width encoding.
+- **Exactly one verdict lamp lit for ~5 s after each carton, then both dark.** The pair is **O6
+  green / O7 red** since 2026-09-05 — both moved up one channel, so a harness carrying the old
+  constants reports every verdict inverted-by-one and O5, which is now the Exit Conveyor, as "the
+  green lamp". "Both lit" is a wiring fault and is flagged as such on the admin Field I/O tab. Look
+  within the dwell — polling `/api/v1/diagnostics/io` a minute later legitimately shows both dark,
+  and that is not a finding. This replaces the old out-of-band width check, which went away with the
+  width encoding.
 - **No `degraded` string on `/api/v1/reader/status`** for the duration of a run. A degraded reader can
   still produce plausible numbers, which is exactly why it has to be an explicit check rather than
   something noticed afterwards.
@@ -650,10 +775,20 @@ partial pass — it is a suite that has not run.
    conveyor is safe to switch off when it fires. **Make the O1 drop easy to re-time from config**
    (`tunnel.test.o1-drop-delay-ms`, default 0) so the tuning is a config change, not a rebuild.
 2. ~~What should O1 and O2 do during a reader fault mid-carton?~~ **Closed 2026-09-02: the package
-   exits forward and the red lamp comes on** (§7.1). What is *not* closed is the consequence — the
-   fault discharge also runs EnC, because EnC and ExC share O1, so the next carton is fed into a
-   failed tunnel. **Needs an answer before the dynamic test runs unattended.**
+   exits forward and the red lamp comes on** (§7.1). The consequence — the fault discharge also runs
+   EnC, so the next carton is fed into a failed tunnel — was open because EnC and ExC shared O1.
+   **The rewiring of 2026-09-05 makes it answerable**: ExC has O5 and can run alone. What remains is
+   a decision, not a constraint, and it is one of the two in §3.1a: should a failed or blocked exit
+   hold the EnC? **Still needs an answer before the dynamic test runs unattended** — the pile-up
+   happens today, because `setBelts()` writes both.
 3. **Is the reader permitted to reverse the conveyor at all** on the real rig, mechanically and for
    safety? Double Pass is built on it, and it is now three passes rather than two.
 4. **What carton gap does the customer actually need?** Test 5 measures the achievable one; we should
    know the required one before we start.
+5. **Should the EnC stay stopped until the IN2 exit edge**, rather than restarting when the read
+   closes? The second open decision from the rewiring (§3.1a). It changes what Test 2 should assert
+   about when O1 comes back, so it wants settling before the dynamic acceptance band is recorded.
+6. **What should `EXIT_FULL` (IN4) actually do?** The sensor is wired and nothing reads it. Stopping
+   the ExC at the discharge edge is the reason it exists; whether it should also apply back-pressure
+   up the line is the open half — that is question 2's other face, and the two should be answered
+   together.

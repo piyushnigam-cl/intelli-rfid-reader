@@ -66,6 +66,7 @@ say.
 | **Exit Conveyor** | ExC | EZY-S100 + roller, downstream of the read zone |
 | **Entry Sensor** | EnS | SICK W26 photoelectric at the entry of the read zone |
 | **Exit Sensor** | ExS | SICK W26 photoelectric at the exit of the read zone |
+| **Discharge Sensor** | DsS | SICK W26 at the far edge of the ExC. **There is no end stop there**, so a carton that reaches the edge with the belt running goes on the floor |
 
 "the reader" and "TM" are the user's shorthand and mean exactly those two boxes.
 **The reader never drives a field device directly.** Every output goes through the TM, because a
@@ -79,22 +80,37 @@ closest published equivalent, Itoh Denki CBM-105, draws 7.3 mA). Wiring:
 
 | J26 | Ch | BCM | Reliance tunnel function |
 |---|---|---|---|
-| 1 | OUT1 | 26 | `EnC_ExC_RUN` — Run A of EnC **and** ExC together. **Normally asserted**, see below |
+| 1 | OUT1 | 26 | `EnC_RUN` — Run A of EnC. **Normally asserted**, see below |
 | 2 | OUT2 | 20 | `RZC_RUN_A` |
 | 3 | OUT3 | 16 | `RZC_RUN_B` |
 | 4 | OUT4 | 19 | `RZC_REVERSE` |
-| 5 | OUT5 | 21 | `LAMP_PASS` (green) |
-| 6 | OUT6 | 12 | `LAMP_FAIL` (red) |
-| 7 | OUT7 | 13 | **spare** — parked 2026-09-04, was `SAFE_TO_POWER_OFF`. Earmarked for the liveness heartbeat |
+| 5 | OUT5 | 21 | `ExC_RUN` — Run A of ExC. **Was `LAMP_PASS` until 2026-09-05** |
+| 6 | OUT6 | 12 | `LAMP_PASS` (green). **Was `LAMP_FAIL`** |
+| 7 | OUT7 | 13 | `LAMP_FAIL` (red), and the shutdown lamp. **Was the parked spare** |
 | 8 | — | — | `FIELD_COM` — the single field 0 V for all 11 channels |
 | 9 | IN1 | 23 | `ENTRY_SENSOR` ← EnS |
 | 10 | IN2 | 24 | `EXIT_SENSOR` ← ExS |
 | 11 | IN3 | 18 | `SHUTDOWN_REQUEST` ← panel push button, 5 s press |
-| 12 | IN4 | 25 | spare |
+| 12 | IN4 | 25 | `EXIT_FULL` ← DsS. **Was spare** |
 
 RZC speed is Run A and Run B **as a pair**: A only = 100 %, A+B = 75 %, B only = 50 %, neither =
 stop. EnC and ExC have Run A only, so they are run/stop at 100 % and share one channel — which is
-why O1 drives two card inputs in parallel and the TM has to be sized for it.
+why O1 drove two card inputs in parallel until 2026-09-05.
+
+**Rewired on site 2026-09-05, and J26 is now full.** Every output from O5 down moved so that the
+Exit Conveyor could have a channel of its own. The reason is DsS: there is no end stop on the ExC,
+so the ExC has to be stoppable *without* stopping the EnC, which a shared O1 made impossible. Two
+things follow. The line is **no longer serialised** — the previous carton can discharge while the
+next one is being read, so cycle time stops being read + discharge. And **there is no spare channel
+left**: O7 was the last one, and it was the earmarked home for the 1 Hz liveness heartbeat, which
+now has nowhere to go.
+
+**The software still commands both belts together**, through a single `setBelts()` seam in
+`ConveyorController` that writes O1 and O5 identically — so behaviour is exactly what it was before
+the rewiring and the phase table below still holds. That is a holding position. Two decisions are
+open before the belts are split: whether a blocked exit (IN4 asserted) should also hold the RZC and
+the EnC, i.e. whether back-pressure propagates upstream; and whether the EnC should stay stopped
+until the IN2 exit edge rather than restarting at read close, which is only now possible.
 
 **IN3 shutdown, and the restart that follows it.** A 5 s press starts the shutdown sequence; O7's
 lamp says when the counter is closed and it is safe to remove 24 V. **Restart is a full power cycle
@@ -112,17 +128,19 @@ EnS sees a package (RZC takes over the carton) and goes HIGH again the moment th
 Four things follow, and three of them are not obvious:
 
 - **The backstop is load-bearing.** "Any outcome" must include the ones that are not outcomes: a read
-  that never closes, a reader fault, a supervisor reconnect. If no outcome arrives, O1 stays low and
-  the line is stopped with a box in the tunnel. `tunnel.max-duration-ms` must release O1 too, and the
-  fault path must define O1 explicitly rather than leaving it wherever it was.
+  that never closes, a reader fault, a supervisor reconnect. If no outcome arrives, O1 and O5 stay
+  low and the line is stopped with a box in the tunnel. `tunnel.max-duration-ms` must release them
+  too, and the fault path must define them explicitly rather than leaving them wherever they were.
 - **At boot the line does not run.** Outputs reset low, so EnC and ExC are stopped until the app is up
   and armed. That is the correct failsafe — a dead reader stops the line, it does not run it — but
   someone will power the panel up, see a dead conveyor and think the drive is broken. Say so in the
   operator instruction.
-- **EnC and ExC share one channel, so the line is serialised.** The previous carton cannot discharge
-  while the current one is being read. Cycle time is read + discharge, not max(read, discharge). That
-  is a throughput ceiling bought with the channel budget, and the way out of it is RS-485, which
-  addresses all three cards independently.
+- **EnC and ExC shared one channel until 2026-09-05, which serialised the line.** The previous
+  carton could not discharge while the current one was being read, so cycle time was read +
+  discharge rather than max(read, discharge) — a throughput ceiling bought with the channel budget.
+  **The copper no longer imposes it**, since the ExC has O5 of its own; `setBelts()` still commands
+  the two together, so the ceiling is now a software choice and removing it is free. RS-485 remains
+  the way to address all three cards independently, but this is no longer the argument for it.
 - **Stopping EnC the instant EnS fires drags the carton.** EnS is at the *entry* of the read zone, so
   at that moment the leading edge is on RZC and the trailing edge is still on EnC. Either delay the
   EnC stop by the transfer time, or place EnS far enough downstream that the carton is fully
@@ -540,12 +558,16 @@ guessing at signatures.
   when `connect()`/`disconnect()` says an operator has taken over.
 
   **Fault behaviour on the Reliance tunnel, decided 2026-09-02: the package exits forward and the red
-  lamp comes on.** O4 released, RZC driven until the carton is clear, O1 high to discharge, O6
-  asserted. The carton is reported as `TIMEOUT` / `complete: false` and the callback still goes — a
+  lamp comes on.** O4 released, RZC driven until the carton is clear, O1 and O5 high to discharge,
+  **O7** asserted (the red lamp moved there on 2026-09-05). The carton is reported as `TIMEOUT` /
+  `complete: false` and the callback still goes — a
   carton that leaves unread and produces no result is one the WMS thinks never existed. This applies
   to a *module* fault, where the JVM is alive to act; a dead JVM or lost 24 V drives every output low
-  and the lamp is dark, which is the failsafe and is correct. **Consequence to resolve: discharging
-  also starts EnC, because EnC and ExC share O1, so the next carton is fed into a failed tunnel.**
+  and the lamp is dark, which is the failsafe and is correct. **Consequence, which the rewiring made solvable rather
+  than solved:** discharging still starts the EnC, so the next carton is fed into a failed tunnel.
+  Until 2026-09-05 that was forced — EnC and ExC shared O1 and there was no way to run one without
+  the other. They are separate channels now, so the fault path *can* raise O5 alone. Nothing does it
+  yet, and `ConveyorController.setBelts()` is where it would go.
 
   Verified on hardware 2026-08-29 with a real `IO_RECV_TIMEOUT`: five failed attempts backing off
   5→10→20→40→60 s while the module was unreachable, recovery with inventory restarted the moment it
@@ -880,13 +902,14 @@ channel is a decision this app makes and holds.
   **That is right on the carrier and wrong on a bare bench** — with nothing wired to J26 there is no
   external pull-up to take over and the pins float, which on IN1 manufactures cartons. Hence
   `tunnel.field.disable-input-pulls`.
-- **The verdict is two lamps, one lit for `lamps.hold-ms` (5 s) and then dark.** O5 green, O6 red;
-  the other lamp goes out at once, so exactly one is ever lit and both dark is the resting state.
+- **The verdict is two lamps, one lit for `lamps.hold-ms` (5 s) and then dark.** O6 green, O7 red;
+  **both moved up a channel on 2026-09-05**, when the ExC took O5.
+  The other lamp goes out at once, so exactly one is ever lit and both dark is the resting state.
   A new verdict cancels the previous dwell rather than waiting it out, so back-to-back cartons each
   get their full 5 s. `hold-ms: 0` latches instead, for a line that reads one carton an hour.
 
   **The dwell is not a payload, and that distinction is the whole reason a timer is allowed here.**
-  The predecessor on this same O5 encoded the verdict *in the width* — 100 ms FAIL, 500 ms PASS,
+  The predecessor on the pass lamp encoded the verdict *in the width* — 100 ms FAIL, 500 ms PASS,
   decoded in 60–200 and 400–600 ms bands — which made scheduler latency a correctness problem: a
   500 ms pulse delivered at 380 ms was a silent **fail** on a carton that was fine. Here the
   *channel* carries the meaning and the duration carries none, so a hold that runs long or short is
@@ -986,7 +1009,7 @@ channel is a decision this app makes and holds.
   remaining filesystems, **remounts root read-only and syncs**. `umount.target` covers everything
   except root, and root is the one that matters.
 
-  `intelli-shutdown-lamp.service` was `After=umount.target Before=final.target`, so it drove O6 dark
+  `intelli-shutdown-lamp.service` was `After=umount.target Before=final.target`, so it drove the lamp dark
   in phase one — while `/` was still mounted rw with dirty pages waiting on the final sync. Its own
   comment claimed dark "cannot be reached before the filesystems are quiesced"; it could. An
   operator quick with the panel switch was cutting power during that sync, which is exactly the
@@ -1042,13 +1065,17 @@ channel is a decision this app makes and holds.
   every instant rather than at exit. Step 4 of the shutdown sequence therefore *confirms* — it reads
   the file back independently of the in-memory counter, which is the only check that would catch the
   two having drifted — rather than committing anything.
-- **There is no liveness heartbeat, and that is a real loss to be aware of.** OUT6 used to toggle
+- **There is no liveness heartbeat, there is no longer anywhere to put one, and that is a real loss
+  to be aware of.** OUT6 used to toggle
   at 1 Hz so a watchdog could stop the line after 3 s of silence — a *hardware* liveness signal that
-  survived a hung JVM. OUT6 is the red lamp now and nothing replaces that signal: a wedged
+  survived a hung JVM. OUT6 became the red lamp, O7 was earmarked to take the heartbeat back, and
+  the site rewiring of 2026-09-05 spent O7 on the red lamp instead — so **J26 is full and nothing
+  replaces that signal**: a wedged
   application leaves every output wherever it last set it. What limits the damage is that O1 is
   released by the read budget rather than held by a running loop, so a carton cannot be stranded
-  indefinitely by a stall alone. **If a liveness signal is ever wanted back it needs its own channel
-  and its own thread** — nothing else may ever go on that thread, because a callback retrying
+  indefinitely by a stall alone. **If a liveness signal is ever wanted back it needs a channel this
+  connector does not have** — RS-485 to the drive cards is the way out, and it would free O1–O5 at
+  the same time. It also needs its own thread, and nothing else may ever go on that thread, because a callback retrying
   against a dead WMS would sit in front of the next toggle.
 
 ## Conventions

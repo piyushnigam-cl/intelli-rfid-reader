@@ -6,6 +6,51 @@ read from the tree; where it is inference it says so.
 
 ---
 
+## ⚠ 2026-09-05 — THE FIELD IO WAS REWIRED ON SITE. READ THIS BEFORE ANYTHING BELOW IT.
+
+Bench testing at the site required a change of wiring, and it invalidates several statements further
+down this file. The channel map now is:
+
+| Ch | BCM | Was | Is |
+|---|---|---|---|
+| OUT1 | 26 | `EnC_ExC_RUN` — both belts on one channel | `EnC_RUN` — Entry Conveyor alone |
+| OUT5 | 21 | `LAMP_PASS` green | `ExC_RUN` — Exit Conveyor Run A |
+| OUT6 | 12 | `LAMP_FAIL` red | `LAMP_PASS` green |
+| OUT7 | 13 | parked spare | `LAMP_FAIL` red, **and the shutdown lamp** |
+| IN4 | 25 | parked spare | `EXIT_FULL` ← the Discharge Sensor (DsS) |
+
+OUT2/3/4 and IN1/IN2/IN3 are unchanged.
+
+**Why:** there is no end stop on the Exit Conveyor, so a carton reaching the discharge edge with the
+belt running goes on the floor. DsS has to be able to stop the ExC *without* stopping the EnC, and a
+shared O1 made that impossible.
+
+**What follows.** The line is **no longer serialised** — the previous carton can discharge while the
+next is read. **J26 is full**: O7 was the last free output and the earmarked home for the 1 Hz
+liveness heartbeat, and it is spent. Every claim below that O7 or IN4 is parked, spare or earmarked
+is **superseded**, including §3 and next-action 5.
+
+**The software still commands both belts together** — `ConveyorController.setBelts()` writes O1 and
+O5 identically — so behaviour is unchanged and the rewiring commit is copper only. Two decisions are
+open before they are split, and both need the operator:
+
+1. **Does back-pressure propagate?** If IN4 is asserted, should the RZC and EnC hold too, or only
+   the ExC stop? Depends on how many cartons fit on the ExC, which is not known here.
+2. **Should the EnC stay stopped until the IN2 exit edge**, rather than restarting at read close?
+   It restarts at read close today only because the shared O1 had to raise the ExC at that moment.
+
+**Also still open: the input polarity.** `tunnel.v1.gpio.active-low` is `false` and the two accounts
+of the wiring still disagree (see `application.yml`'s own comment). The deciding measurement is one
+line, and IN4 makes it cheap because nothing holds line 25: `pinctrl get 25` with the DsS beam clear
+and blocked, no need to stop the app.
+
+**Deployed?** The tunnel commits are pushed. Whether `deploy/redeploy.sh` has been run is not
+recorded here — check the running jar. **Until it is, `/usr/lib/systemd/system-shutdown/intelli-lamp.shutdown`
+still writes BCM 12**, which now darkens the *green* lamp at poweroff and leaves the red one lit for
+ever.
+
+---
+
 ## The state of the unit right now
 
 **The app is running and healthy.** `intelli-rfid-tunnel` active, **PID 1031**, listening on 8081,
@@ -31,10 +76,10 @@ found" below, because that test is what the whole shutdown-safety session came o
   `not-found`, which is correct and is what you want to see.
 - Step 5 of the shutdown sequence now runs `/bin/sync`.
 
-**Committed and pushed but NOT deployed:** `e71a5f2`, which parks O7. It changes no runtime
-behaviour on the tunnel path — `FieldChannel.OUT7.function()` becomes null, so `FieldIo.write()`
-refuses it and `/api/v1/diagnostics/io` reports OUT7 with no `function` field. It rides along on the
-next `deploy/redeploy.sh` and needs nothing special.
+**Committed and pushed but NOT deployed:** `e71a5f2`, which parks O7. ~~It rides along on the next
+`deploy/redeploy.sh` and needs nothing special.~~ **SUPERSEDED 2026-09-05** — O7 is the red and
+shutdown lamp now, so that commit's premise is gone. It is history in the branch, not something to
+deploy on its own.
 
 ---
 
@@ -83,17 +128,23 @@ truncate -s 194919 /var/lib/intelli/tunnel/spool/inventory-2026-09-04.jsonl
 It is harmless as it stands — both `JsonlSpool` read paths catch the bad line and skip it at DEBUG —
 which is exactly why it would otherwise sit there forever.
 
-### 3. O7 is parked; the panel drawings said otherwise
+### 3. O7 was parked; the panel drawings said otherwise — SUPERSEDED 2026-09-05
 
 O7 had carried no traffic since the one-lamp decision on 2026-09-04, but still declared
 `SAFE_TO_POWER_OFF`, so `isParked()` was false and `docs/Tunnel-Interconnect.md` v0.5 still told the
 panel builder to fit a lamp beside the shutdown button. Built to that drawing, an operator would
 read a dark `SAFE_TO_POWER_OFF` as "not yet safe" and wait forever, next to the lamp that was
-actually telling them. Now parked in code and withdrawn from every document.
+actually telling them. It was parked in code and withdrawn from every document.
 
-**O7 is earmarked, not merely free.** It is the only spare output on J26, and the one capability
-this design lost and never replaced is the 1 Hz liveness heartbeat that let a watchdog stop the line
-after 3 s of silence. Do not spend it on anything smaller without settling that first.
+**That lasted one day.** The site rewiring of 2026-09-05 made O7 the red lamp and the shutdown lamp,
+so `isParked()` is false again — for a real reason this time — and a lamp *is* fitted there. Nothing
+on J26 is parked any more.
+
+**The heartbeat has lost its home, and this is the cost worth remembering.** O7 was earmarked
+because the one capability this design lost and never replaced is the 1 Hz liveness signal that let
+a watchdog stop the line after 3 s of silence and survived a hung JVM. There is no free output left
+to put it back on. Getting it back now means RS-485 to the drive cards, which would free O1–O5 at
+the same time.
 
 ### 4. `intelli-wms-test` — a sixth repo, written 17:33–17:46 and nearly lost
 
@@ -145,7 +196,10 @@ by directory and check each one *has* a repo, rather than iterating the repos th
    Decide which is meant. **True is a real hazard on a bench unit**: a spurious IN3 hold powers the
    board off and it needs hands at the panel to come back.
 
-2. **Watch O6 through the next IN3 shutdown.** This is the acceptance test for the lamp fix and
+2. **Watch O7 through the next IN3 shutdown** — the RED lamp, BCM 13. It was O6 until the
+   2026-09-05 rewiring, and watching O6 now means watching the green PASS lamp, which does nothing
+   during a shutdown. **This only works once `redeploy.sh` has reinstalled the shutdown hook**, since
+   the installed copy writes BCM 12. This is the acceptance test for the lamp fix and
    nothing else proves it. Expect blinking → solid → **dark**, with a visibly longer gap before
    dark than before — that gap is the root remount-ro and final sync you were previously being
    invited to interrupt. If dark never comes, check the hook is still 0755: `systemd-shutdown`
@@ -161,15 +215,27 @@ by directory and check each one *has* a repo, rather than iterating the repos th
 
 4. **Trim the spool tail** (§2 above), or decide to leave it.
 
-5. **Deploy `e71a5f2`** whenever convenient — `deploy/redeploy.sh`. Nothing depends on it.
+5. **WITHDRAWN.** This said "deploy `e71a5f2`, which parks O7". Deploying that commit *as written*
+   would blank the channel the red and shutdown lamps now live on. It has been superseded by the
+   2026-09-05 rewiring commits, which are what `deploy/redeploy.sh` will pull.
 
 6. **Consider fsync per spool append.** The step-5 sync covers the shutdown path, but a carton
    result is still only durable within ~30 s of an unexpected cut. That is a hot-path change (one
    fsync per carton on eMMC) and a separate decision from anything done this session.
 
-7. **Still open from before, unchanged:** the EnC stop delay versus EnS placement (a carton is
-   dragged if EnC stops the instant EnS fires), and the discharge-starts-EnC consequence of the
-   module-fault path — both in `CLAUDE.md`.
+7. **Still open from before:** the EnC stop delay versus EnS placement (a carton is dragged if EnC
+   stops the instant EnS fires) — unchanged, and still wants the real geometry.
+
+   **The discharge-starts-EnC consequence of the module-fault path is now solvable rather than
+   solved.** It was forced while EnC and ExC shared O1; they are separate channels since 2026-09-05,
+   so the fault path *can* raise O5 alone. Nothing does it yet, and `setBelts()` is where it goes.
+
+8. **New, from the rewiring:** build the IN4 discharge interlock. Nothing acts on IN4 today — the
+   app reads and displays it and that is all — so **a carton run to the end of the ExC will go over
+   the edge.** Needs the two decisions in the banner at the top of this file first. Note the
+   mechanism choice is not free either: `gpiomon` holds a line exclusively, and IN4 needs both edges
+   *and* a level read at arm time, because edges alone cannot tell you a carton was already sitting
+   at the edge when the app started.
 
 ---
 
@@ -193,11 +259,11 @@ by directory and check each one *has* a repo, rather than iterating the repos th
 
 | Repo | Head |
 |---|---|
-| `intelli-rfid-reader` (docs) | the O7 update, then this file + the `CLAUDE.md` app-table rewrite |
-| `intelli-rfid-tunnel` | `e71a5f2` Park O7 |
+| `intelli-rfid-reader` (docs) | 2026-09-05: the rewiring across `CLAUDE.md`, `docs/` and this file |
+| `intelli-rfid-tunnel` | 2026-09-05: `cbe8343` the rewiring, then the O5 diagnostic-write warning |
 | `intelli-rfid-core` | `b058f42` unchanged |
 | `intelli-rfid-reader-test` | `940c4d8` unchanged |
-| `intelli-rfid-admin` | `bdf8ab3` unchanged |
+| `intelli-rfid-admin` | `f843370` lamps moved up a channel, BELTS pill added |
 | `intelli-wms-test` | `db8e136` **root commit** — new today |
 
 `intelli-rfid-wayside` is a sixth app in the layout table but **is not checked out on this CM4**; do

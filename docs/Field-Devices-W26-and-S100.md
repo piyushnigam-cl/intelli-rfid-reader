@@ -7,8 +7,13 @@ What the two vendor documents in `docs/` actually say, and what they change.
 | **Sensor** | `productoverview_W26_g433551_en.pdf` — SICK W26, 10 pages. Cited below as **W p.N** |
 | **Driver card** | `winroller-dc-driver-s100.pdf` — 18 pages, Rev 3.0 (2022-08-09). Cited below as **S p.N** |
 
-Both are the source of record for `EnS`/`ExS` and for the three conveyor cards. Read §3 first if you
-only have a minute — it is the part that changes decisions.
+Both are the source of record for `EnS`/`ExS`/`DsS` and for the three conveyor cards. Read §3 first
+if you only have a minute — it is the part that changes decisions.
+
+> **There are three W26s, not two, since 2026-09-05.** The site rewiring added the **Discharge
+> Sensor (`DsS`)** at the far edge of the Exit Conveyor, on J26 IN4. It is the same part family, the
+> same landing and the same open questions as the other two — everything in §1 applies to all three
+> unless a row says otherwise.
 
 > **Two warnings before any number below is used.**
 >
@@ -25,7 +30,7 @@ only have a minute — it is the part that changes decisions.
 
 ---
 
-## 1. SICK W26 — the Entry and Exit sensors
+## 1. SICK W26 — the Entry, Exit and Discharge sensors
 
 ### 1.1 What the document does not contain
 
@@ -104,6 +109,27 @@ DC-coded, 298 mm`. **M12 4-pin is the standard and every bare-cable variant is 4
 
 The 6-pin and 7-pin variants are the only hint that a second output or a teach input exists; the
 document never confirms either.
+
+**The pinout itself comes from outside this document, and it is settled for all three sensors.**
+The parts landed on site are M12 4-pin on SICK connection diagram **`cd-390`**, which is the ordinary
+3-wire-plus-MF arrangement:
+
+| M12 pin | Wire | Function | Lands on |
+|---|---|---|---|
+| 1 | `brn` | +24 V | the TM's control +24 V |
+| 3 | `blu` | 0 V | the control 0 V group |
+| 4 | `blk` | switching output | the TM input terminal for that channel |
+| 2 | `wht` | MF (multifunction) | **open and insulated** — not used, and not left dangling bare |
+
+`DsS` on IN4 lands **exactly** like `EnS` and `ExS`; there is nothing special about the new one.
+
+**INFERENCE, and worth checking against the per-article data sheet before wiring:** `cd-390` names
+pin 2 `MF`, not a second switching output, so the "pin 4 black *or* pin 2 white, pick whichever makes
+carton-present = 24 V" advice in `Tunnel-Interconnect.md` §10 probably does not apply to these parts —
+if pin 2 is a multifunction line rather than the complementary output, light-versus-dark cannot be
+selected by choosing a wire and stays a purchasing or teach-in decision. That is read off the
+connection-diagram label alone; the overview document (§1.1) has no pin assignment at all and cannot
+settle it. See §3.1.
 
 ### 1.5 Mechanical and environmental (W p.4)
 
@@ -324,10 +350,29 @@ every variant in the table, and it converts a purchasing risk into a commissioni
 commissioning check 5 — "break each beam by hand and confirm the correct reader input asserts" —
 becomes the thing that sets it.
 
+**`DsS` on IN4 raises the stakes, and not symmetrically with the other two.** IN4 is not an edge —
+it is the *level* saying the discharge edge is occupied, and it is the thing that will decide whether
+the Exit Conveyor may run once the two belts are commanded apart. **Today nothing reads it**: it is
+wired, it appears on `/api/v1/diagnostics/io`, and no logic consumes it, because `ConveyorController`
+still writes O1 and O5 together. So its sense is currently un-exercised and will be un-exercised
+until the split lands, which is the worst way for a polarity error to wait.
+
+Get it backwards and the ExC runs exactly when it must not: a carton at the edge reads as clear and
+is driven off the end, which is the failure the sensor was added to prevent. **A wrong sense on
+IN1/IN2 mis-times a read; a wrong sense on IN4 puts a box on the floor.** Per-channel configuration
+must therefore cover IN4 as well, and its commissioning check is a level check, not a beam-break
+one — occupy the discharge edge by hand and confirm the reader reports IN4 asserted **before** any
+code depends on it.
+
 ### 3.2 The TM output stage cannot be sized from this document
 
-`7.3 mA` per input, and therefore **O2/O3/O4 ≥ 50 mA and O1 ≥ 100 mA** (§9), rest entirely on the
-Itoh CBM-105 proxy. Nothing in 18 pages confirms or contradicts it.
+`7.3 mA` per input, and therefore **O1–O5 ≥ 50 mA** (§9), rest entirely on the Itoh CBM-105 proxy.
+Nothing in 18 pages confirms or contradicts it.
+
+**The 2026-09-05 rewiring simplifies the sizing rather than changing it.** O1 used to drive two card
+inputs in parallel and so carried a doubled ≥ 100 mA figure; the ExC now has O5 to itself, so all
+five conveyor channels drive exactly one card input each. The doubled rating on O1 is no longer
+required by the wiring, and there is no reason to relax it — the margin was never the expensive part.
 
 Two ways to close it, and the second is already written down:
 
@@ -378,8 +423,13 @@ speed.
    coasts, which lets it drift. This is a per-card decision with a physical consequence.
 3. **The `ERROR` output (pin 3).** Nothing in the channel map reads it, and it is the only way the
    reader could know a card has faulted rather than merely failing to move a carton. It is
-   PNP/NPN jumper-selectable with no stated drive rating. Worth an input if one can be found — IN4
-   is the only spare channel.
+   PNP/NPN jumper-selectable with no stated drive rating. 🔴 **There is nowhere left to put it.**
+   IN4 was the last spare input and took the Discharge Sensor on 2026-09-05, so J26 is full in both
+   directions. Reading `ERROR` now costs a board change or the RS-485 link — which would give it
+   for free, since the fault bits are already in the Modbus map (§2.7). Note that the rewiring has
+   *rebalanced* the case for 485 rather than strengthened it: it fixed the serialised line and the
+   shared-O1 fault discharge, which were two of the three reasons to want 485, and left this one
+   standing alone with no spare channel behind it.
 
 ---
 
@@ -390,8 +440,8 @@ speed.
 | 1 | Control-input current and threshold at 24 V over temperature | vendor, or commissioning check 7 |
 | 2 | Is the signal terminal galvanically isolated from `DC−`? | vendor |
 | 3 | Is the card actually the "EZY-S100"? | vendor / purchasing |
-| 4 | W26 ordering code, switching mode and output stage | purchasing — then pull the per-article data sheet from `www.sick.com/W26` |
-| 5 | W26 supply/output ratings, response time, M12 pinout | per-article data sheet |
+| 4 | W26 ordering code, switching mode and output stage — for **all three** sensors, `DsS` included | purchasing — then pull the per-article data sheet from `www.sick.com/W26` |
+| 5 | W26 supply/output ratings and response time. **The M12 pinout is closed** — `cd-390`, §1.4 | per-article data sheet |
 | 6 | Card dimensions, mounting, IP rating, operating temperature | vendor (the drawing is a raster with no text) |
 | 7 | Which speed band and gear give the wanted belt speed | site geometry, then CONFIG-1 + SPEED DIP |
 

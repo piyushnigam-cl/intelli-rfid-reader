@@ -78,22 +78,54 @@ cannot drive all seven with one masked `GPSET0`/`GPCLR0` write. Use the table.
 ### 2.1 J26 mapped onto the tunnel functions
 
 Mirrors `FieldChannel`, which is authoritative. Pins and BCM numbers are a property of the board and
-have never moved.
+have never moved — but the **functions on them moved on 2026-09-05**, when the site was rewired.
 
 | J26 pin | Channel | BCM | Function |
 |---|---|---|---|
-| 1 | OUT1 | **26** | `EnC_ExC_RUN` — Run A of the Entry and Exit conveyors together |
+| 1 | OUT1 | **26** | `EnC_RUN` — Run A of the Entry Conveyor alone |
 | 2 | OUT2 | **20** | `RZC_RUN_A` |
 | 3 | OUT3 | **16** | `RZC_RUN_B` |
 | 4 | OUT4 | **19** | `RZC_REVERSE` |
-| 5 | OUT5 | **21** | `LAMP_PASS` (green) |
-| 6 | OUT6 | **12** | `LAMP_FAIL` (red) |
-| 7 | OUT7 | **13** | **spare** (parked 2026-09-04; was `SAFE_TO_POWER_OFF`) |
+| 5 | OUT5 | **21** | `ExC_RUN` — Run A of the Exit Conveyor |
+| 6 | OUT6 | **12** | `LAMP_PASS` (green) |
+| 7 | OUT7 | **13** | `LAMP_FAIL` (red), and the shutdown lamp |
 | 8 | FIELD_COM | — | shared return, all 11 channels |
 | 9 | IN1 | **23** | `ENTRY_SENSOR` ← EnS |
 | 10 | IN2 | **24** | `EXIT_SENSOR` ← ExS |
 | 11 | IN3 | **18** | `SHUTDOWN_REQUEST` ← panel push button, held 5 s |
-| 12 | IN4 | **25** | spare |
+| 12 | IN4 | **25** | `EXIT_FULL` ← DsS, the Discharge Sensor at the far edge of the ExC |
+
+**The rewiring, 2026-09-05.** Every output from O5 down shifted by one and IN4 gained a sensor:
+
+| Ch | Was | Is |
+|---|---|---|
+| OUT1 | `EnC_ExC_RUN`, both belts on one channel | `EnC_RUN` |
+| OUT5 | `LAMP_PASS` | `ExC_RUN` |
+| OUT6 | `LAMP_FAIL` | `LAMP_PASS` |
+| OUT7 | parked spare | `LAMP_FAIL` + shutdown lamp |
+| IN4 | parked spare | `EXIT_FULL` |
+
+**Why**: there is no end stop on the Exit Conveyor, so a carton reaching the discharge edge with the
+belt running goes on the floor. The ExC had to become stoppable **without** also stopping the EnC,
+and a shared O1 made that impossible. DsS on IN4 is what detects the carton at the edge.
+
+Two consequences that outlive the renumbering:
+
+- **The line need no longer be serialised.** The previous carton *can* discharge while the next is
+  being read, so cycle time need not be read **plus** discharge. That was the throughput ceiling the
+  shared channel bought, and the copper no longer imposes it — without needing RS-485. **The
+  software has not yet taken the win**; see the note below.
+- 🔴 **J26 is now FULL — there is no spare channel of either direction.** O7 was the last free
+  output and was the earmarked home for the 1 Hz liveness heartbeat; that channel is spent and
+  **nothing replaces it**. A twelfth function on this connector now costs a board change — or, for
+  anything the drive cards already expose themselves, RS-485.
+
+**Software note, so the drawings and the behaviour are not confused.** `ConveyorController` still
+writes O1 and O5 **identically**, through one `setBelts()` seam — the copper is split, the commands
+are not yet. Observable belt behaviour is therefore unchanged from before the rewiring. What is
+*decided* is the wiring and the seam; what is **open** is (a) whether a blocked exit should also hold
+the RZC and the EnC — back-pressure — and (b) whether the EnC should stay stopped until the IN2 exit
+edge rather than restarting at read close. Do not read the split copper as split behaviour.
 
 ---
 
@@ -175,12 +207,17 @@ Itoh Denki CBM-105, draws 7.3 mA) or a lamp. **The reader therefore never drives
 directly** — all seven go through the TM, which does the field-side conditioning. See
 `Tunnel-Interconnect.md`.
 
-Note what this means for O1 in particular: it drives **two** card inputs in parallel, because EnC
-and ExC share the channel, so the TM has to be sized for the pair.
+Note what this used to mean for O1 in particular: it drove **two** card inputs in parallel, because
+EnC and ExC shared the channel, so the TM had to be sized for the pair. **The 2026-09-05 rewiring
+ends that** — O1 drives the EnC alone and O5 the ExC alone, so O1–O5 are now five channels of one
+card input each and the ≥ 100 mA rating that was specific to O1 is no longer a special case. It is
+still specified that way and there is no reason to relax it.
 
 **The failure mode to watch for at site** is somebody "simplifying" this by wiring a stack-light or
-a relay straight to pins 5/6. It will not work, and it will fail *intermittently and hot* rather
-than cleanly.
+a relay straight to the lamp pins — **which are now 6 and 7, not 5 and 6**. It will not work, and it
+will fail *intermittently and hot* rather than cleanly. Note the trap the renumbering leaves behind:
+pin 5 is now a **conveyor** channel, so the old mistake made against an old drawing does not blow a
+lamp, it energises the Exit Conveyor.
 
 Also noted: **the 11 field lines currently carry no surge protection** (deliberate, parked pending
 placement — `IO-BLOCK-SIZING.md`). A conveyor and its VFD share the field ground and are a good
@@ -218,7 +255,10 @@ Two things to watch rather than fix:
 - **The input source must be a real driver, not another weak solid-state output.** 3.4 mA at 24 V is
   nothing for a sensor output or a dry contact, but if any of the four inputs ends up driven by another
   opto-isolated output with the same 1.9 mA class of limit, the problem reappears on that channel.
-  Worth one question to the integrator about what actually drives pins 9–12.
+  **All four are now known and all four are fine**: pins 9, 10 and 12 are SICK W26 switching outputs
+  (EnS, ExS and, since 2026-09-05, DsS — a real PNP transistor sourcing tens of mA) and pin 11 is the
+  panel push button through the TM. Nothing on this connector is fed by another opto sink. Re-ask the
+  question only if a channel's source ever changes.
 
 Practical consequence for the interposer: **leave the inputs alone.** They do not need boosting, and
 routing them through an added board only puts more contacts in series with the read trigger.
@@ -422,10 +462,16 @@ nothing restarts the CM4 except the SAMD21. Two things to settle:
   power cycle, hold; `EXT|WDT|SYST` = a debug or watchdog reset, leave the CM4 alone). Ungated, every
   firmware upload hard-cuts a running CM4.
 
-There is also a design opportunity here: the 1 Hz liveness heartbeat this project used to emit on
-J26 has a local analogue — the SAMD21 can watch the CM4 independently and recover it without anything
+There is also a design opportunity here, and since 2026-09-05 it is **the only one left**: the 1 Hz
+liveness heartbeat this project used to emit on J26 has a local analogue — the SAMD21 can watch the
+CM4 independently and recover it without anything
 on J26 being
 involved at all. Worth deciding which watchdog owns which failure before both try.
+
+**That is no longer a preference between two options.** The rewiring took O7 for the red lamp, which
+was the last free output and the earmarked home for the heartbeat (§2.1), so **J26 cannot carry a
+liveness signal at all any more.** If a hardware liveness signal is wanted back it has to come from
+the SAMD21 or from a board change; there is nowhere on this connector to put it.
 
 ---
 
@@ -499,7 +545,10 @@ in the production process document or the strap is decorative.
 4. The product's isolation claim is **"basic insulation, 24 V field circuit, 2.5 kV impulse
    withstand"** — *not* 2500 Vrms, which is the opto's component rating, not the system's.
 5. **Commissioning must loop-test all 11 channels.** The series protection resistors can fail *open*
-   with no indication, so an untested channel may be silently dead.
+   with no indication, so an untested channel may be silently dead. **Since 2026-09-05 all eleven
+   carry a live function** — there is no parked channel left to exercise harmlessly, so every loop
+   test now moves a belt, lights a lamp or reads a real sensor. Confirm with site before driving any
+   output, per item 2, and do not treat the old "just pulse the spare" habit as still available.
 
 ---
 
