@@ -30,14 +30,13 @@ next is read. **J26 is full**: O7 was the last free output and the earmarked hom
 liveness heartbeat, and it is spent. Every claim below that O7 or IN4 is parked, spare or earmarked
 is **superseded**, including §3 and next-action 5.
 
-**The software still commands both belts together** — `ConveyorController.setBelts()` writes O1 and
-O5 identically — so behaviour is unchanged and the rewiring commit is copper only. Two decisions are
-open before they are split, and both need the operator:
-
-1. **Does back-pressure propagate?** If IN4 is asserted, should the RZC and EnC hold too, or only
-   the ExC stop? Depends on how many cartons fit on the ExC, which is not known here.
-2. **Should the EnC stay stopped until the IN2 exit edge**, rather than restarting at read close?
-   It restarts at read close today only because the shared O1 had to raise the ExC at that moment.
+**The exit interlock is built (`033351c`), to the operator's policy of 2026-09-05 — one package at
+a time:** IN4 asserting stops the ExC in any phase and disturbs nothing else, a read always runs to
+completion, a read closing against a still-occupied edge stops the whole line with the carton held
+in the read zone, and it all resumes by itself when the edge clears. The result is published either
+way. IN4 is a **sampled level** on its own thread, not a `gpiomon` edge, which is what makes it
+independent of the `active-low` question. **The EnC still restarts at read close** rather than at
+the IN2 edge — operator's call, "fine for now", and now a choice rather than a constraint.
 
 **Also still open: the input polarity.** `tunnel.v1.gpio.active-low` is `false` and the two accounts
 of the wiring still disagree (see `application.yml`'s own comment). The deciding measurement is one
@@ -230,12 +229,15 @@ by directory and check each one *has* a repo, rather than iterating the repos th
    solved.** It was forced while EnC and ExC shared O1; they are separate channels since 2026-09-05,
    so the fault path *can* raise O5 alone. Nothing does it yet, and `setBelts()` is where it goes.
 
-8. **New, from the rewiring:** build the IN4 discharge interlock. Nothing acts on IN4 today — the
-   app reads and displays it and that is all — so **a carton run to the end of the ExC will go over
-   the edge.** Needs the two decisions in the banner at the top of this file first. Note the
-   mechanism choice is not free either: `gpiomon` holds a line exclusively, and IN4 needs both edges
-   *and* a level read at arm time, because edges alone cannot tell you a carton was already sitting
-   at the edge when the app started.
+8. **Done — the IN4 discharge interlock is built** (`033351c`), see the banner. What is *not* done
+   is proving it against the real sensor: `pinctrl get 25` with the beam clear and blocked, then a
+   carton driven to the edge to watch O5 drop. Until that runs, the interlock is correct in tests
+   and unwitnessed on hardware.
+
+9. **Derive `tunnel.field.exit.sample-ms` from the geometry.** It is 250 ms, which at 0.5 m/s is
+   125 mm of travel past the beam before the belt is told to stop. Measure beam-to-edge, divide by
+   the ExC's linear speed, halve it. If the answer is under ~100 ms the sensor is too close to the
+   edge and moving it is the fix.
 
 ---
 

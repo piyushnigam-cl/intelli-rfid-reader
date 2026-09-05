@@ -105,12 +105,41 @@ next one is being read, so cycle time stops being read + discharge. And **there 
 left**: O7 was the last one, and it was the earmarked home for the 1 Hz liveness heartbeat, which
 now has nowhere to go.
 
-**The software still commands both belts together**, through a single `setBelts()` seam in
-`ConveyorController` that writes O1 and O5 identically — so behaviour is exactly what it was before
-the rewiring and the phase table below still holds. That is a holding position. Two decisions are
-open before the belts are split: whether a blocked exit (IN4 asserted) should also hold the RZC and
-the EnC, i.e. whether back-pressure propagates upstream; and whether the EnC should stay stopped
-until the IN2 exit edge rather than restarting at read close, which is only now possible.
+### The exit interlock — one package at a time
+
+**Decided by the operator 2026-09-05, and the two halves are different kinds of thing.**
+
+- **The ExC is a level, not a phase.** O5 is `running && !exitOccupied` at every instant, computed
+  in one place by `ConveyorController.applyExc()`. It stops the moment IN4 asserts, whatever else is
+  happening. That is the whole of the fall-off protection, and it is deliberately outside the carton
+  state machine — **an interlock with modes is an interlock with a mode in which it does not
+  interlock.**
+- **A blocked exit never interrupts a read.** If IN4 asserts mid-carton the read runs to completion.
+  Only when the read *closes* against a still-occupied edge does the whole line stop, holding the
+  carton in the read zone; it resumes on its own the moment the edge clears. No operator action but
+  the lift.
+
+**The result is published either way.** A held discharge delays the carton, never the callback — the
+read has closed and the verdict is known. That is the mirror of `CartonRelease`'s rule that a slow
+WMS must not stall the conveyor, and both directions matter.
+
+**A blocked line waits indefinitely, and that is specified rather than overlooked.** There is no
+timeout, because a timeout could only resolve to discharging into an occupied edge.
+
+**The wait is not `hold()`.** That is the bench hold, which latches and refuses every command until a
+human releases it; this one resolves itself. Routing it through `hold()` would need someone at the
+panel to restart a line that is behaving exactly as designed.
+
+**IN4 is a sampled level on its own thread, not a `gpiomon` edge**, and all three reasons matter:
+occupancy *is* a level; `gpiomon` claims a line exclusively and would break a diagnostic read of
+line 25; and **an edge cannot tell you a carton was already at the edge when the app started** —
+precisely the state that must not be discharged into. `ExitOccupancyMonitor.start()` reads the level
+before it schedules anything. It is therefore also **independent of `tunnel.v1.gpio.active-low`**,
+since `FieldIo.read()` already speaks field sense.
+
+**The EnC still restarts at read close** rather than at the IN2 exit edge (operator, 2026-09-05:
+"fine for now"). With the belts split that is now a choice rather than a constraint, and moving it to
+the exit edge is a one-line change if a carton is ever fed in on top of one still in the zone.
 
 **IN3 shutdown, and the restart that follows it.** A 5 s press starts the shutdown sequence; O7's
 lamp says when the counter is closed and it is safe to remove 24 V. **Restart is a full power cycle
