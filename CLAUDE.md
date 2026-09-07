@@ -9,10 +9,28 @@ hardware behaviour that are not derivable from the code.
 |---|---|
 | RFID module | Silion **SIM7500**, built on an Impinj **E710** Gen2 RF chip |
 | Host | Raspberry Pi **Compute Module 4**, on board the reader — this runs the apps |
-| Architecture | **aarch64** — use `libs/aarch64/libModuleAPIJni.so` |
+| Architecture | **aarch64**. Path moved with the SDK: v260721 has `libs/aarch64/`, **v260827 has `libs/linux/aarch64/`** |
+| Antennas | **The SIM7500 has ONE mono-static port.** The two connectors are fed from it by the board's **PE42442A SP4T**, switched by **GPIO8 (V1) / GPIO9 (V2)** — see below |
 | Serial port | **Confirmed `/dev/ttyAMA0`** on the CM4 bench rig (2026-08-27) **and on the production v2.x carrier** (2026-08-29, with `disable-bt` + `uart3`; UART3 takes `ttyAMA3`). A USB bridge gives `/dev/ttyUSB0` |
 | Region | `RG_IN` is the intent (865–867 MHz Indian band) — **no module we have accepts it as an operating region**, even with the auth region unlocked to `RG_IN` (2026-09-07); run `RG_EU3` + the 3-channel hop table, see below |
 | Module version | Production module reads **`31.00.0E.80`** since the 2026-09-07 auth-region write, **not** the `31.00.00.80` quoted everywhere else. Same silicon; the third octet is the region marker |
+
+**The module cannot see the antenna switch, and that shapes every antenna test you will ever run
+here.** `MODULE_ONE_ANT`, `antportnumbers=1`, and `antenna-count: 1` is the correct config. The two
+fitted ports are selected only by GPIO8/9:
+
+| V2 (GPIO9) | V1 (GPIO8) | Port |
+|---|---|---|
+| 0 | 1 | **RF1 → J20 (ANT1)** |
+| 1 | 0 | **RF2 → J25 (ANT2)** |
+
+Three consequences. **The SDK's antenna argument is not the port** — `ants = {1}` is right for both,
+and changing it selects nothing. **Every `TAGINFO` reports the same antenna id**, so per-antenna
+attribution has to come from our own latched switch state. And **testing "both ports" with one
+antenna tests one port and a bare connector**, which is the mistake that cost 09-07; see the RF
+section below. Nothing in the application drives GPIO8/9 — the systemd unit sets them once at
+`ExecStartPre` and they never move, so there is no multiplexing and the second antenna is dead
+weight until someone writes it.
 
 **On the production v2.x carrier the module is off and held in reset at boot, and neither the app
 nor Linux does anything about it.** `RFID_EN` = GPIO22 (HIGH = on) and `RFID_NRST` = GPIO10
@@ -428,52 +446,87 @@ callback filters and offers; a single dispatcher thread does the fan-out. The qu
 (8192) and drops oldest-first under overload, counting drops — surfaced on `/api/reader/status` and
 `/actuator/health`.
 
-## The RF path is dead on this unit as of 2026-09-07 — READ BEFORE DEBUGGING A READ
+## The RF path was NOT dead — it was one antenna branch, and the unit runs ANT2 now
 
-**The reader stopped hearing tags between Friday 2026-09-04 and the site run of 2026-09-05, and it
-is a hardware fault, not a software one.** Do not go looking for it in the tunnel app. The evidence,
-in the order it was gathered:
+**RESOLVED 2026-09-07. The section this replaces said the module or the board was faulty and that
+only a bench-board swap could narrow it. That was wrong, and the reason it was wrong is worth
+keeping: every "both ports tried" test up to that point was run with ONE antenna.**
 
-| | tags | RSSI |
-|---|---|---|
-| Fri 09-04, spool seq 750–752 | 18 / 18 | −27 to −49 dBm |
-| Sat 09-05 at site, seq 833–837 | 2, 3, 5 | −52 to −58 dBm |
-| Mon 09-07 bench | **0** | nothing above the −72 floor |
+The SIM7500 has **one** mono-static port. The two J26-side antenna connectors are fed from it by the
+board's **PE42442A SP4T**, switched by **GPIO8 (V1) / GPIO9 (V2)** — the module cannot see the switch
+and reports the same antenna id whichever port is live. So flipping `ANT=2` while the only antenna
+stayed screwed to J20 did not test J25; it listened into a bare port. The 09-07 evidence table's
+"both fitted ports tried" line was therefore not evidence of anything.
 
-Friday's best of −27 dBm sits on the recorded −26 dBm bench baseline, so the path was healthy then
-and has lost 25 dB or more since. **Nothing in the Super Fast read path changed across that
-boundary**: the only commits between them are the ten `field/` files of the 09-05 rewiring, core has
-no commit since 09-02, and `/etc/intelli/intelli-rfid-tunnel/application.yml` has not been touched
-since 09-04 15:21. Verified by diff, not by assumption.
+**With an antenna on BOTH ports and the tags unmoved, the two branches are 24 dB apart:**
 
-**Everything software controls has been set and READ BACK on the new SDK with none of our code in
-the path, and the module still hears nothing:**
+| port | distinct EPCs | best RSSI | worst |
+|---|---|---|---|
+| ANT1 / J20 | 3 | **−49 dBm** | −59 |
+| ANT2 / J25 | 8 | **−25 dBm** | −64 |
 
-| checked | result |
-|---|---|
-| SDK + native lib | v260827 jar + its matching aarch64 `.so` — **the new SDK does not fix it** |
-| `InitReader_Notype` | `MT_OK_ERR` |
-| Region | `RG_EU3`, read back |
-| Hop table | 865700 / 866300 / 866900 / 867500 kHz, read back |
-| Power | read 2700 / write 2700, read back |
-| Session | S0 — so no inventoried-flag effect |
-| EN / NRST / antenna select | verified at the pad with `pinctrl get` |
-| Antenna port | **both fitted ports tried** — RF1/J20 *and* RF2/J25 |
-| Identity, firmware, temperature | all healthy, 30 °C |
-| **Tag reads** | **0**, over 15 rounds per port |
+−25 dBm sits on this rig's recorded −26 dBm baseline, so **the module, the PA and the SP4T are all
+healthy** and the loss is inside the J20 branch — its cable, its connector, or that arm of the
+switch. J20 is the port the systemd unit had always selected, which is the whole of the failure:
+the app spent 09-05 to 09-07 listening through the bad branch. Its last run before the change
+managed **506 reads in 20 minutes** where this module does ~60/s when healthy — degraded, not
+silent, which is why it read 2–5 tags at site rather than none.
 
-`/home/intelli-sbc/api/run/ProbeBasic.java` is that test. It reports the module state as found,
-inventories at it, sets region/power/session, reads all three back, and inventories again — so a
-zero result carries the settings that produced it. Run it with `run.sh ProbeBasic`, or
-`ANT=2 run.sh ProbeBasic` for J25.
+**`deploy/intelli-rfid-tunnel.service` now selects ANT2** (`pinctrl set 8 op dl; set 9 op dh`).
+`run.sh` still defaults to `ANT=1`, so **a probe run with no `ANT=` is testing the broken branch on
+purpose.** Put the unit back to ANT1 once J20 is repaired.
 
-**What is NOT yet established: which side of the connector the fault is on.** That needs the
-physical bisect against the office bench dev board — bench antenna onto this reader, and this
-antenna onto the bench board. Both directions, because if they disagree the answer is the connector.
-**No further software test will narrow it**, and two of this board's own instruments actively
-mislead here (see the two bullets below).
+**Still not established, and it needs no software:** whether the 24 dB is in the cable/antenna or in
+the board. Swap the two cables at the board, leave the antennas and tags where they are, and re-run
+both ports. If the weakness follows the cable it is the cable; if it stays on J20 it is the board.
+
+**What this corrects about the two "instruments that lie".** Both notes below stand and neither was
+the problem — the VSWR sweep still rails at 3.0095203 with an antenna fitted and with the port bare,
+and `connectedAntennas` is still just the configured count. But note what they cost: with no working
+antenna instrument on this board, a 24 dB branch loss is invisible to every diagnostic the reader
+has, and the only way to find it was a second antenna.
+
+### Confirmed working end to end, 2026-09-07
+
+Nine Super Fast cartons on ANT2, on the v260827 SDK, on the deployed jar:
+
+| seq | stopReason | tags | matched | lastNewTagMs | RSSI |
+|---|---|---|---|---|---|
+| 855 | SETTLED | 18 | 18 / 18 | 801 | −51…−29 |
+| 856 | SETTLED | 29 | 29 / 38 | 801 | −51…−26 |
+| 858 | SETTLED | 34 | 34 / 38 | 832 | −50…−31 |
+| 859 | SETTLED | **38** | **38 / 38** | 806 | −49…−25 |
+
+`complete: true, trustworthy: true` on 855 and 859. Carton time 2.09–2.98 s. **`lastNewTagMs` lands
+at 801–883 ms against a `settle-ms` of 800** — the watchdog's ~100 ms tick, exactly as measured on
+09-04. This is the first 38-article carton this project has read, and the largest population before
+it was 18.
+
 
 ## Vendor SDK facts
+
+### The unit runs SDK v260827 from 2026-09-07, and three things about the upgrade catch people
+
+- **The drop name is a date, not a version.** `ModuleAPI_J-v260827.jar` self-reports
+  `jarVersion:260730_v3.8.3.4r-soVersion:20260611`. There is no `260827` string inside it, so do not
+  go looking for one to confirm the upgrade — check `com.uhf:module-api-j:2.6.0827` in the fat jar
+  instead. Maven coordinates are `2.6.0827`; **2.6.0721 is still installed in `~/.m2`, so rolling
+  back is one line of `core/pom.xml`.**
+- **The native library moved.** v260721 had `libs/{32,64,aarch64}`; v260827 has
+  `libs/linux/{x86,x64,aarch64}` plus `libs/windows`. A path carried over from the old tree resolves
+  to nothing, and `deploy/install.sh` then falls through to "keep whatever is already installed" —
+  which is the OLD `.so`, silently, against the new jar.
+- **TWO `.so` files were being loaded and it had gone unnoticed for weeks.** `NativeLibraryLoader`
+  loads `rfid.reader.native-lib-path` by absolute path AND the vendor's static initialiser loads
+  from `-Djava.library.path`. The site config pointed the first into the SDK tree and the unit
+  pointed the second at `/opt/intelli/lib`. They were byte-identical, so nothing complained — and
+  they would have become two different *versions* on this upgrade. **Both must resolve to
+  `/opt/intelli/lib`**, which is the one `install.sh` keeps matched to the jar. Corrected in the
+  site config 2026-09-07.
+
+The SDK upgrade changed **no** API signature: core and tunnel compiled unmodified and all tests
+passed. It also **did not fix the deafness** — that was the antenna branch above.
+
 
 - **The VSWR sweep is useless on this carrier: it rails at `3.0095203` with the antenna connected
   AND with the port bare.** That figure is *exactly* a 6.000 dB return loss to float precision
@@ -902,6 +955,50 @@ count at 90 ms and reported `stopReason: COUNT_REACHED` with `matched.count: 0` 
 it had found everything it was looking for and then listing none of it. `V1Service.countsTowardsExpected`
 and `ResultMapper` are now tested against the same population precisely so they cannot drift apart.
 
+**Tunnel v1 — the reader works for whatever EAN it is armed with. The shipped SKU allowlist is
+gone (2026-09-07).** `rfid.gs1.valid-eans` carried three specific SKUs in the *packaged*
+`application.yml`, and `V1Service.validateEan` refuses any EAN outside a non-empty list — so
+`POST /api/v1/mode` answered 400 `invalid_ean` for every other SKU, on every unit built from that
+file, whatever site it went to. It ships `[]` now. An EAN is still validated (13/14 digits, GS1
+mod-10 check digit), just not enumerated.
+
+What is lost is only the typo check: a WMS arming for a SKU nobody stocks now gets a carton whose
+every article lands in `unexpected` with `complete: false`, instead of a 400 at the tunnel. **A site
+that wants an allowlist sets it in its own `/etc/intelli/<app>/application.yml`** — never in the
+packaged file, and `PackagedConfigTest` now fails the build if one reappears there.
+
+**`company-prefix` is a different thing and still restricts.** It gates COMMISSIONING only
+(`CommissioningController.validateEan`), never reading or arming, so a carton of any EAN reads and
+counts correctly regardless of it. Note the two reader apps disagree: the tunnel ships `8909478` and
+**`intelli-rfid-reader-test` still ships `8905527`**, so the bench harness refuses to commission the
+SKU the tunnel writes — a 400 `invalid_ean` that looks like a bad EAN and is a stale config in
+another app.
+
+**Tunnel v1 — once an EAN is armed, only that SKU's tags hold the settle window open, and this is
+two-phase on purpose.** Settle asks "has the population stopped growing", and the population in
+question is the armed SKU's. Before this, a tag that could never count still bought the carton
+another full settle window — a neighbouring carton, the SSCC label, supplier stock — so with
+`exitOnCount: false` (the Super Fast default, where settle is the ONLY thing that ends a read) a
+foreign tag was the one thing a non-matching tag could still decide. `SessionSpec.resetsSettle`
+carries the rule; foreign tags are still recorded, still reported as `unexpected`, and still open a
+session under auto-trigger.
+
+**The phase is load-bearing and the naive version is a trap.** Scoping from the first millisecond
+looks right and is not: `lastNewTagNanos` starts at session open and would never advance, so "the
+population has stopped growing" is vacuously true from t=0 for a population that has not started.
+Two failures follow, and both reach the customer. A carton whose articles are shadowed past the
+window closes `SETTLED` with `matched: 0` while the field is still answering — and on a 40-article
+carton, shadowing is exactly what the settle window exists for. And `ResultMapper.stopReason`
+re-derives SETTLED from `lastNewTagMs`, so a read that never heard the SKU at all reports **SETTLED
+instead of TIMEOUT** — the one word the contract uses to tell a WMS its count is a lower bound.
+**So until the first article of the armed SKU answers, any new EPC still holds the window open.** A
+carton holding none of the armed SKU therefore behaves exactly as it always did: it settles on its
+own traffic and publishes promptly rather than stalling the line to the ceiling.
+
+**Consequence for tuning:** `durationMs − lastNewTagMs == the last tag's sighting`, which is how
+`settle-ms` was derived from the spool on 09-04, now holds only for the requested SKU's tags. Do the
+`firstSeen` diff over matched tags, not the whole tag list.
+
 **Tunnel v1 — an undecodable tag never counts.** However many there are. On the bench population 16
 of 18 tags carry no GS1 header at all, so a count that included them would close a carton on tags
 that are not articles of the requested SKU and report a short carton as complete.
@@ -1317,6 +1414,12 @@ wrong because journald keeps working. Check `ls -l /opt/intelli/logs/` after a d
 
 ## Gotchas
 
+- **`systemctl stop` leaves the unit in `failed` state, and it is cosmetic.** The JVM exits 143 on
+  SIGTERM and the unit declares no `SuccessExitStatus=143`, so a perfectly clean stop reports
+  `failed` and `systemctl is-active` says `failed` rather than `inactive`. `Restart=on-failure` does
+  not fire on a deliberate stop, so nothing misbehaves — but do not read `failed` after a stop as
+  evidence of a crash. The same SIGTERM produces `gpiomon exited with 143; the sensors are not being
+  watched` in the log at every shutdown, which is shutdown noise and not a sensor fault.
 - **A probe needs the module powered, and stopping the app is what switches it off.** See the
   Hardware section: `ExecStopPost` drops `RFID_EN`, and nothing but the systemd unit ever raises
   the four bring-up pins. Raise them yourself (`pinctrl set 8 op dh; pinctrl set 9 op dl;

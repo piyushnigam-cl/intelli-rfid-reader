@@ -1,115 +1,90 @@
 # Resume here — CM4 session, next sitting
 
-**Rewritten 2026-09-04 at the end of the shutdown-safety session, appended to at 17:50 after a
-second session built `intelli-wms-test`, and headed on 2026-09-07 with the RF fault — which
-supersedes every "next action" below it until the reader hears a tag again.** Everything below is
-either measured on this hardware or read from the tree; where it is inference it says so.
+**Rewritten 2026-09-07 at the end of the session that FIXED the deafness, upgraded the SDK and made
+the armed EAN authoritative. It supersedes the 09-07 "the reader is deaf, it is hardware" head that
+stood here earlier the same day — that diagnosis was wrong and the section below says why.**
 
 ---
 
-## 🔴 2026-09-07 — THE READER IS DEAF. IT IS HARDWARE. START HERE.
+## ✅ 2026-09-07 — THE READER READS AGAIN. It was one antenna branch, not the module.
 
-**The unit hears no tags at all, on either antenna port, with every RF parameter verified by
-read-back on a brand-new vendor SDK. Do not debug this in the tunnel app.** It failed at the
-Reliance site on 09-05 and was brought back to the office rig, where it is still deaf.
+**38 of 38 articles, SETTLED, `complete: true`, RSSI −25 dBm.** The unit is deployed, running and
+healthy. Nothing here is blocked.
 
-### What was left running
+### What was actually wrong
 
-- **The tunnel service is STOPPED** (`sudo systemctl stop intelli-rfid-tunnel`). Port 8081 is not
-  listening, so the admin app cannot reach this reader until it is started.
-- **The module is powered and out of reset**, antenna select on **ANT1 / J20**, region left on
-  `RG_EU3` at 27 dBm, session S0 — that is `ProbeBasic`'s exit state, not the app's.
-- A reboot was planned immediately after this was written. **A reboot returns the pins to inputs
-  with the SoC pull-down, i.e. the module OFF**, and reverts the region to `RG_NA`. Both
-  `run.sh` and the systemd unit handle it; nothing else does.
-- Nothing is uncommitted. `/home/intelli-sbc/api/` is NOT in any repository.
+The SIM7500 has **one** antenna port; the board's PE42442A SP4T splits it to J20/J25 under
+**GPIO8/9**, and the module cannot see the switch. **Every earlier "both ports tried" test was run
+with a single antenna**, so flipping `ANT=2` listened into a bare connector and proved nothing.
 
-### First action next session — repeat the measurement, then bisect
+With an antenna on both ports and the tags unmoved: **J20 best −49 dBm over 3 EPCs, J25 best
+−25 dBm over 8.** −25 is this rig's baseline, so the module, PA and switch are fine and the ~24 dB
+loss is inside the J20 branch. J20 is the port the systemd unit had always selected.
 
-```bash
-sudo systemctl stop intelli-rfid-tunnel && sleep 3 && pgrep -x java   # must print nothing
-/home/intelli-sbc/api/run/run.sh ProbeBasic                            # ANT=2 for J25
-```
+### State the unit was left in
 
-Expect, if nothing has changed: `InitReader OK`, region/power/hop-table/session all reading back
-correct, and **0 tag reads**. If it now reads, the fault is intermittent and the reboot or the
-reseating moved it — capture the RSSI and compare against Friday's −27 to −49 dBm before touching
-anything else.
+- **Service running**, PID under systemd, jar and `.so` both v260827, site config patched.
+- **Antenna select is ANT2 / J25** — set by `ExecStartPre` in `deploy/intelli-rfid-tunnel.service`.
+  `run.sh` still defaults to `ANT=1`, so **a bare `run.sh ProbeBasic` tests the BROKEN branch.**
+- Region `RG_EU3`, 27 dBm, session S1, `settle-ms` 800, FastID on, `valid-eans` empty.
+- Everything committed and pushed in all four repos that changed.
 
-**Then the physical bisect, which is the only thing left and needs no software:**
+### Next actions, in order
 
-1. **Bench dev board's antenna + cable onto this reader.** Reads → the antenna or cable is dead.
-   Still silent → the reader board or the SIM7500 is dead.
-2. **This antenna + cable onto the bench dev board.** The reciprocal. If 1 and 2 disagree, it is
-   the connector.
+1. **Bisect the J20 branch — physical, no software.** Swap the two cables at the board, leave the
+   antennas and tags where they are, re-run both ports:
+   ```bash
+   sudo systemctl stop intelli-rfid-tunnel && sleep 3 && pgrep -x java   # must print nothing
+   ANT=1 /home/intelli-sbc/api/run/run.sh ProbeBasic
+   ANT=2 /home/intelli-sbc/api/run/run.sh ProbeBasic
+   ```
+   Weakness follows the cable → replace the cable. Weakness stays on J20 → it is the board's J20
+   connector or that arm of the SP4T. **Then put the unit back to ANT1** (`pinctrl set 8 op dh`,
+   `9 op dl` in the unit file) so the documented default is the live one again.
+2. **Re-derive `settle-ms` from the new 38-article cartons.** 800 was derived on 09-04 from an
+   18-tag unshadowed population. Sort each result's matched-tag `firstSeen`, diff consecutive,
+   take the worst across many cartons, double it. **Do it over the matched tags only** — foreign
+   tags no longer hold the window open, so including them measures a window the reader does not use.
+3. **Antenna multiplexing is still unwritten.** Nothing drives GPIO8/9 at runtime, so the second
+   antenna is dead weight. `docs/Hardware-IntelliRFIDv2.md` §7.3 has the design question: measure
+   stop-inventory → toggle → restart, then pick a dwell from that number. Start/stop is 0–3 ms and
+   20–60 ms measured, and bare start/stop is NOT rate-limited, so this is cheaper than §7.3 assumes.
+4. **`intelli-rfid-reader-test` still ships `company-prefix: 8905527`** while the tunnel ships
+   `8909478`, so the bench harness refuses to commission the SKU the tunnel writes. One-line fix,
+   not done because nothing this session needed it.
+5. **Optional: `SuccessExitStatus=143` in the unit file.** A clean `systemctl stop` currently leaves
+   the service reporting `failed`. Cosmetic, but it misleads.
 
-### Also done 2026-09-07 — the authentication region was unlocked to RG_IN, and it was not enough
+### What shipped this session
 
-Silion supplied the procedure with the new SDK. It works, it persists, and it does **not** give us
-`RG_IN` as an operating region.
+- **SDK v260827** in core and tunnel (`com.uhf:module-api-j:2.6.0827`). No API signature changed;
+  2.6.0721 is still in `~/.m2` so rollback is one pom line. It did **not** fix the deafness.
+- **The site config was loading TWO `.so` files** — `native-lib-path` into the old SDK tree plus
+  `-Djava.library.path=/opt/intelli/lib`. Byte-identical until now, two different versions after the
+  upgrade. Both now point at `/opt/intelli/lib`.
+- **The shipped SKU allowlist is gone.** `rfid.gs1.valid-eans: []`, so the reader arms for whatever
+  EAN the WMS sends. `PackagedConfigTest` fails the build if a customer's SKUs reappear there.
+- **Settle is scoped to the armed SKU, in two phases.** Foreign tags no longer extend a carton —
+  but only once an article of the SKU has actually been heard, because scoping from t=0 closes
+  shadowed cartons early and makes `stopReason` report SETTLED where it should report TIMEOUT.
+- 251 tunnel tests, 61 core tests, all passing.
 
-- Auth region read `RG_PRC` before, reads **`RG_IN`** after, surviving a re-power.
-- **Hardware version permanently changed `31.00.00.80` → `31.00.0E.80`.** Third octet is the region
-  marker. Every doc quoting `31.00.00.80` for this module is stale; it is not different silicon.
-- `ParamSet(MTR_PARAM_FREQUENCY_REGION, RG_IN)` **still** `MT_CMD_FAILED_ERR`, accepted set still
-  `RG_NA` / `RG_EU3` / `RG_PRC` / `RG_OPEN`. Tested twice, including as the first operation after a
-  fresh module boot.
+### The measurement, so it is not re-derived
 
-**PENDING, and it is next-action 0b after the ProbeBasic re-run:** re-test `RG_IN` after a full
-24 V removal rather than an `RFID_EN` toggle.
+Nine Super Fast cartons on the deployed jar, ANT2, v260827:
 
-```bash
-/home/intelli-sbc/api/run/run.sh ProbeAuthRead                       # expect auth region RG_IN
-cd /home/intelli-sbc/api/run && java -Dregion=RG_IN \
-  -Djava.library.path=/home/intelli-sbc/api/libs/linux/aarch64 \
-  -cp /home/intelli-sbc/api/libs/ModuleAPI_J-v260827.jar:. ProbeSetRegion
-```
+| seq | stopReason | tags | matched | lastNewTagMs | RSSI |
+|---|---|---|---|---|---|
+| 855 | SETTLED | 18 | 18 / 18 | 801 | −51…−29 |
+| 856 | SETTLED | 29 | 29 / 38 | 801 | −51…−26 |
+| 858 | SETTLED | 34 | 34 / 38 | 832 | −50…−31 |
+| 859 | SETTLED | **38** | **38 / 38** | 806 | −49…−25 |
 
-If it is still refused, **the question for Silion is specific**: auth region reads `RG_IN`, hw
-confirms `31.00.0E.80`, and `ParamSet` on the operating region still fails on sw `20.26.03.30` —
-does the operating whitelist need new module firmware too?
-
-To reverse the unlock: `ProbeAuthWrite` with `-Dtarget=RG_PRC`. The module was left on operating
-region `RG_EU3`, deliberately — a power cycle reverts it to `RG_NA`, which is 902–928 MHz and
-illegal to key up on in India.
-
-### The evidence, so it is not re-derived
-
-| | tags | RSSI |
-|---|---|---|
-| Fri 09-04, spool seq 750–752 | 18 / 18 | −27 to −49 dBm |
-| Sat 09-05 at site, seq 833–837 | 2, 3, 5 | −52 to −58 dBm |
-| Mon 09-07 bench, all tests | **0** | nothing |
-
-Friday's −27 dBm sits on the recorded −26 dBm baseline, so the path was healthy then. **No code in
-the read path changed across that boundary** — the only commits between are the ten `field/` files
-of the 09-05 rewiring, core has nothing since 09-02, and the site `application.yml` is untouched
-since 09-04 15:21. Checked by diff.
-
-### Ruled out, with the measurement that ruled it out
-
-| Suspected | Ruled out by |
-|---|---|
-| The 09-05 GTIN / `valid-eans` change | `tagCount: 0` and `totalReads: 0` — nothing answered at all; and the spool still shows the old `30361F8CDC100F…` SGTINs, so the tags were never re-commissioned |
-| Any code change in Super Fast mode | diff `e71a5f2..HEAD` is ten `field/` files and nothing else |
-| Site config drift | `/etc/intelli/…/application.yml` mtime 09-04 15:21, before Friday's good reads |
-| Old SDK / old native lib | fresh v260827 jar + its `.so`: identical result |
-| Wrong region after power cycle | found on `RG_NA`, set to `RG_EU3`, **read back**, still 0 |
-| Low power | read/write 2700 **read back**, limits 500–3000 |
-| Gen2 session silencing | forced S0, still 0 |
-| Wrong antenna port | **both** RF1/J20 and RF2/J25 tried |
-| Module enable / reset / select pins | `pinctrl get` verified at the pad on every run |
-| The v260827 "hardware-version-80 region" fix | our module is hw `31.00.00.80`, so it looked promising — the new SDK changes nothing |
-
-### Two instruments on this board that LIE, and both wasted time
-
-- **`/api/diagnostics/antennas` (VSWR) rails at `3.0095203`** — exactly 6.000 dB return loss — with
-  the antenna connected *and* with the port bare. It cannot detect a missing antenna here. The
-  1.119 baseline everyone quotes is the **bench dev board**; this carrier has never had one taken.
-- **`ReaderInfo.connectedAntennas` is the configured port list, not a detection.** Javadoc now
-  corrected in core.
+Carton time 2.09–2.98 s. `lastNewTagMs` 801–883 against `settle-ms` 800 — the watchdog's ~100 ms
+tick, matching 09-04. First 38-article carton this project has read; the previous largest was 18.
 
 ---
+
 
 ## ⚠ 2026-09-05 — THE FIELD IO WAS REWIRED ON SITE. READ THIS BEFORE ANYTHING BELOW IT.
 
