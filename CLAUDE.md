@@ -22,6 +22,24 @@ first, then EN, then NRST: `pinctrl set 8 op dh; pinctrl set 9 op dl; pinctrl se
 pinctrl set 10 op dh`. The bench dev board needs none of this, so it is a production-only failure
 mode. See `CM4-PRODUCTION-BRINGUP.md` step 7.
 
+**`systemctl stop intelli-rfid-tunnel` POWERS THE MODULE OFF, and this will cost you an evening.**
+The unit's `ExecStopPost=+/usr/bin/pinctrl set 22 op dl` drops `RFID_EN` deliberately — "a stopped
+service is a quiet radio" — while `ExecStartPre` is what raises 8/9/22/10 in the first place.
+**Nothing else on this board raises them.** So the standard advice below, *stop the app to probe the
+pins*, leaves you probing a module that is switched off, and `InitReader_Notype` answers
+`MT_UNKNOWN_READER_TYPE` — which reads as a baud or SDK-version fault and is neither. Measured
+2026-09-07. Any probe run against a stopped service must raise the four pins itself;
+`/home/intelli-sbc/api/run/run.sh` does. NRST is deliberately *not* dropped on stop, so only EN
+comes back low.
+
+**Region does NOT survive a power cycle — the module reverts to `RG_NA`.** Measured 2026-09-07:
+after EN was dropped and raised, the module came up on `RG_NA` with the full 50-channel
+902–928 MHz hop table at 30 dBm, having been on `RG_EU3` before. The app hides this because
+`applyConfig()` sets the region on every connect, so it has never been visible in normal operation.
+**Consequence for probes: a probe that does not set the region explicitly is testing 902–928 MHz**,
+which is the wrong band for our tags and reads as total deafness. `ProbeBasic` sets and reads back
+region, power and session for exactly this reason; the vendor's `test_inventory10` does not.
+
 The apps run **on the reader itself**, not on a PC talking to a remote reader.
 
 ### Thermal — the first real measurement, and what it does and does not settle
@@ -409,7 +427,90 @@ callback filters and offers; a single dispatcher thread does the fan-out. The qu
 (8192) and drops oldest-first under overload, counting drops — surfaced on `/api/reader/status` and
 `/actuator/health`.
 
+## The RF path is dead on this unit as of 2026-09-07 — READ BEFORE DEBUGGING A READ
+
+**The reader stopped hearing tags between Friday 2026-09-04 and the site run of 2026-09-05, and it
+is a hardware fault, not a software one.** Do not go looking for it in the tunnel app. The evidence,
+in the order it was gathered:
+
+| | tags | RSSI |
+|---|---|---|
+| Fri 09-04, spool seq 750–752 | 18 / 18 | −27 to −49 dBm |
+| Sat 09-05 at site, seq 833–837 | 2, 3, 5 | −52 to −58 dBm |
+| Mon 09-07 bench | **0** | nothing above the −72 floor |
+
+Friday's best of −27 dBm sits on the recorded −26 dBm bench baseline, so the path was healthy then
+and has lost 25 dB or more since. **Nothing in the Super Fast read path changed across that
+boundary**: the only commits between them are the ten `field/` files of the 09-05 rewiring, core has
+no commit since 09-02, and `/etc/intelli/intelli-rfid-tunnel/application.yml` has not been touched
+since 09-04 15:21. Verified by diff, not by assumption.
+
+**Everything software controls has been set and READ BACK on the new SDK with none of our code in
+the path, and the module still hears nothing:**
+
+| checked | result |
+|---|---|
+| SDK + native lib | v260827 jar + its matching aarch64 `.so` — **the new SDK does not fix it** |
+| `InitReader_Notype` | `MT_OK_ERR` |
+| Region | `RG_EU3`, read back |
+| Hop table | 865700 / 866300 / 866900 / 867500 kHz, read back |
+| Power | read 2700 / write 2700, read back |
+| Session | S0 — so no inventoried-flag effect |
+| EN / NRST / antenna select | verified at the pad with `pinctrl get` |
+| Antenna port | **both fitted ports tried** — RF1/J20 *and* RF2/J25 |
+| Identity, firmware, temperature | all healthy, 30 °C |
+| **Tag reads** | **0**, over 15 rounds per port |
+
+`/home/intelli-sbc/api/run/ProbeBasic.java` is that test. It reports the module state as found,
+inventories at it, sets region/power/session, reads all three back, and inventories again — so a
+zero result carries the settings that produced it. Run it with `run.sh ProbeBasic`, or
+`ANT=2 run.sh ProbeBasic` for J25.
+
+**What is NOT yet established: which side of the connector the fault is on.** That needs the
+physical bisect against the office bench dev board — bench antenna onto this reader, and this
+antenna onto the bench board. Both directions, because if they disagree the answer is the connector.
+**No further software test will narrow it**, and two of this board's own instruments actively
+mislead here (see the two bullets below).
+
 ## Vendor SDK facts
+
+- **The VSWR sweep is useless on this carrier: it rails at `3.0095203` with the antenna connected
+  AND with the port bare.** That figure is *exactly* a 6.000 dB return loss to float precision
+  (`VSWR = (1+10^-0.3)/(1-10^-0.3)`), four channels identical to seven significant figures — a rail,
+  not a measurement. Measured both ways 2026-09-07. **`/api/diagnostics/antennas` therefore cannot
+  detect a disconnected antenna on this board and must never be used as an antenna check here**,
+  though its javadoc reasonably calls it "the first thing to check on a coverage complaint".
+  Two further traps: `vswrLimit` defaults to exactly `3.0f`, so the rail always reports
+  `healthy: false` by 0.0095 and tells you nothing about severity; and **the 1.119 baseline quoted
+  in `CM4-BENCH-HANDOFF.md` and `HANDOFF-CM4-TO-LAPTOP.md` is the BENCH DEV BOARD**, not this
+  production carrier, whose `CM4-PRODUCTION-BRINGUP.md` line still reads `VSWR <..>`. Comparing this
+  board against 1.119 is comparing two different units. If a real VSWR figure is ever needed here it
+  has to come from an external analyser.
+- **`ReaderInfo.connectedAntennas` is NOT a detection — it is a copy of `activeAntennas`**, i.e. the
+  configured `antenna-count`. Its javadoc said "antenna ports the module detected as physically
+  connected", which is false and cost time on 2026-09-07; the javadoc is now corrected. The module's
+  real answer is the start-up WARN `Module reported no connected antennas (MT_OK_ERR); falling back
+  to all N ports`, which this module emits **on every connect even when healthy** — it appeared 29
+  times on 09-04 while reading 18 of 18 tags. So neither the field nor the warning tells you whether
+  an antenna is attached.
+
+### The vendor's own demo sources — four traps, all met on 2026-09-07
+
+`API-java-v260827/demos/doc_demos/*.java` are single-file, have `main()`, and are the fastest way to
+test a module without any of our code. They are also written for the vendor's **networked** reader
+at `192.168.1.160`. Copies patched for `/dev/ttyAMA0` live in `/home/intelli-sbc/api/run/`.
+
+- **`antportnum` defaults to 16 and this module is `MODULE_ONE_ANT`.** `InitReader_Notype` then
+  returns `MT_INVALID_PARA`. The argument is total ports on the module, not connected antennas — it
+  is 1 here. `test_inventory10` already passes 1; `test_readerinfo` does not.
+- **Every demo prints `init the reader successfully` even after printing the error**, because there
+  is no `return` between the two. Trust the `init the reader err :` line and nothing else.
+- **The network demos NPE on a serial module.** `test_readerinfo` asks for MAC and IP, gets
+  `MT_CMD_FAILED_ERR` / `MT_OP_NOT_SUPPORTED`, then does `new String(rip.ip)` on the null.
+- **`test_paramgetandset` and `test_defaultparmgetandset` both set the region to `RG_PRC`**, and the
+  second writes it as a **saved-in-module default** that survives a power cycle. Do not run either
+  on a unit you care about.
+
 
 Confirmed from `API-linux-java-v260721/docs_en/doc_API_J_html/` — grep those files rather than
 guessing at signatures.
@@ -508,6 +609,16 @@ guessing at signatures.
   succeeds but does **not** satisfy it, so `new Reader()` still throws `UnsatisfiedLinkError` — 
   surfacing as an HTTP 500, not a 409. **Every launch command and systemd unit must pass
   `-Djava.library.path=/opt/intelli/lib`.** Verified on the CM4 2026-08-27.
+- **`RG_IN` is refused on the v260827 SDK too — re-scanned 2026-09-07, and this closes the
+  question.** The new jar's changelog names a fix for "modifying the certified region of
+  hardware-version-80 modules" and ours is hw `31.00.00.80`, so it was worth testing; it changes
+  nothing. The accepted set is byte-for-byte what v260721 gave on 2026-08-29 — `RG_NA` (1),
+  `RG_EU3` (8), `RG_PRC` (6), `RG_OPEN` (255) — with all 27 other `Region_Conf` values, `RG_IN` (4)
+  included, returning `MT_CMD_FAILED_ERR`. Firmware still `20.26.03.30`. **It is a firmware SKU
+  limit, so no SDK update can lift it**; only new module firmware could. `ProbeRegion` in
+  `intelli-rfid-reader-test/tools/bench-probe` is the scan — do not re-run it on the next SDK drop
+  without first asking whether that drop carries firmware. The `RG_EU3` + 3-channel hop table
+  workaround was re-verified in the same run: `865700 866300 866900` set and read back.
 - **Region is a firmware SKU limit, the two modules differ, and neither accepts `RG_IN`.** The
   production SIM7500 on the v2.x carrier accepts **`RG_NA` (1), `RG_EU3` (8), `RG_PRC` (6) and
   `RG_OPEN` (255)** and refuses everything else with `MT_CMD_FAILED_ERR` — and it **ships set to
@@ -1176,6 +1287,12 @@ wrong because journald keeps working. Check `ls -l /opt/intelli/logs/` after a d
 
 ## Gotchas
 
+- **A probe needs the module powered, and stopping the app is what switches it off.** See the
+  Hardware section: `ExecStopPost` drops `RFID_EN`, and nothing but the systemd unit ever raises
+  the four bring-up pins. Raise them yourself (`pinctrl set 8 op dh; pinctrl set 9 op dl;
+  pinctrl set 22 op dh; pinctrl set 10 op dh`) or use `/home/intelli-sbc/api/run/run.sh`, which
+  does it, refuses to start if a JVM still holds `/dev/ttyAMA0`, and takes `ANT=2` for J25.
+  Then set the region explicitly — a power cycle reverts the module to `RG_NA`.
 - **Ask the operator to start and stop the apps.** Claude Code on the CM4 cannot reliably manage a
   long-running process: a backgrounded JVM gets killed at tool-call boundaries, and
   `pkill -f '<app-name>'` matches Claude's own wrapper shell and kills that instead (exit 144). Use
