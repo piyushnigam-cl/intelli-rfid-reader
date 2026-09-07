@@ -11,7 +11,8 @@ hardware behaviour that are not derivable from the code.
 | Host | Raspberry Pi **Compute Module 4**, on board the reader — this runs the apps |
 | Architecture | **aarch64** — use `libs/aarch64/libModuleAPIJni.so` |
 | Serial port | **Confirmed `/dev/ttyAMA0`** on the CM4 bench rig (2026-08-27) **and on the production v2.x carrier** (2026-08-29, with `disable-bt` + `uart3`; UART3 takes `ttyAMA3`). A USB bridge gives `/dev/ttyUSB0` |
-| Region | `RG_IN` is the intent (865–867 MHz Indian band) — **no module we have accepts it**; run `RG_EU3`, see below |
+| Region | `RG_IN` is the intent (865–867 MHz Indian band) — **no module we have accepts it as an operating region**, even with the auth region unlocked to `RG_IN` (2026-09-07); run `RG_EU3` + the 3-channel hop table, see below |
+| Module version | Production module reads **`31.00.0E.80`** since the 2026-09-07 auth-region write, **not** the `31.00.00.80` quoted everywhere else. Same silicon; the third octet is the region marker |
 
 **On the production v2.x carrier the module is off and held in reset at boot, and neither the app
 nor Linux does anything about it.** `RFID_EN` = GPIO22 (HIGH = on) and `RFID_NRST` = GPIO10
@@ -609,16 +610,45 @@ guessing at signatures.
   succeeds but does **not** satisfy it, so `new Reader()` still throws `UnsatisfiedLinkError` — 
   surfacing as an HTTP 500, not a 409. **Every launch command and systemd unit must pass
   `-Djava.library.path=/opt/intelli/lib`.** Verified on the CM4 2026-08-27.
-- **`RG_IN` is refused on the v260827 SDK too — re-scanned 2026-09-07, and this closes the
-  question.** The new jar's changelog names a fix for "modifying the certified region of
-  hardware-version-80 modules" and ours is hw `31.00.00.80`, so it was worth testing; it changes
-  nothing. The accepted set is byte-for-byte what v260721 gave on 2026-08-29 — `RG_NA` (1),
-  `RG_EU3` (8), `RG_PRC` (6), `RG_OPEN` (255) — with all 27 other `Region_Conf` values, `RG_IN` (4)
-  included, returning `MT_CMD_FAILED_ERR`. Firmware still `20.26.03.30`. **It is a firmware SKU
-  limit, so no SDK update can lift it**; only new module firmware could. `ProbeRegion` in
-  `intelli-rfid-reader-test/tools/bench-probe` is the scan — do not re-run it on the next SDK drop
-  without first asking whether that drop carries firmware. The `RG_EU3` + 3-channel hop table
-  workaround was re-verified in the same run: `865700 866300 866900` set and read back.
+- **THE AUTHENTICATION REGION IS WRITABLE, AND IT IS NOT THE SAME THING AS THE OPERATING-REGION
+  WHITELIST. This module's auth region is now `RG_IN` and `RG_IN` is still refused.** Done on the
+  production module 2026-09-07 with Silion's own procedure, on the v260827 jar:
+
+  ```java
+  SpecObject sval = rdr.new SpecObject(Region_Conf.RG_IN);
+  rdr.SpecParamsForReader(0, true, sval);          // isset TRUE = write; type 0 = auth region
+  CustomParam_ST cp = rdr.new CustomParam_ST();     // then EITHER method 1:
+  cp.ParamName = "Reader/Savestandby"; cp.ParamVal = new byte[]{1};
+  rdr.ParamSet(Mtr_Param.MTR_PARAM_CUSTOM, cp);
+  rdr.CloseReader();                                // one call, enters boot
+                                                    // OR method 2: re-power the module
+  ```
+
+  `SpecParamsForReader(0, false, sv)` **reads** it — do that first, it is the only way to know what
+  to restore. This module read `RG_PRC` before the write, which is why its accepted set looks like
+  a China SKU. `ProbeAuthRead` / `ProbeAuthWrite` in `intelli-rfid-reader-test/tools/bench-probe`
+  are the two, and `ProbeAuthWrite` takes `-Dtarget=RG_PRC` to put it back.
+
+  **What it changed:** auth region `RG_PRC` → `RG_IN`, persisting across a re-power, and the
+  **hardware version string permanently changed `31.00.00.80` → `31.00.0E.80`** — the third octet
+  is the region marker and is how you tell from the outside. **Every document quoting
+  `31.00.00.80` for the production module is now stale**, and anyone diffing this module's version
+  against the bench module's will see two different strings on identical hardware.
+
+  **What it did NOT change:** `ParamSet(MTR_PARAM_FREQUENCY_REGION, RG_IN)` still returns
+  `MT_CMD_FAILED_ERR`, and the accepted set is exactly as before — `RG_NA` (1), `RG_EU3` (8),
+  `RG_PRC` (6), `RG_OPEN` (255), everything else refused. Tested twice: once in the full scan, and
+  once as the very first operation after a fresh module boot, in case the scan's eight preceding
+  region writes mattered. They did not. **So on sw `20.26.03.30` the two are independent, and the
+  next question for Silion is whether the operating whitelist also needs new module firmware.**
+  PENDING: a re-test after a full 24 V removal rather than an `RFID_EN` cycle — the module clearly
+  re-read NVM on the EN cycle (the version changed), but a cold start is a stronger reset.
+
+  **This corrects a claim made earlier the same evening** that `RG_IN` was a firmware SKU limit no
+  SDK could lift and that the scan should not be re-run on a new SDK drop. There *is* an unlock, it
+  is in both jars, and a scan that only exercises `ParamSet` cannot see it. The `RG_EU3` +
+  3-channel hop table workaround remains what this project runs: `865700 866300 866900`, set after
+  the region and read back, re-verified in the same session.
 - **Region is a firmware SKU limit, the two modules differ, and neither accepts `RG_IN`.** The
   production SIM7500 on the v2.x carrier accepts **`RG_NA` (1), `RG_EU3` (8), `RG_PRC` (6) and
   `RG_OPEN` (255)** and refuses everything else with `MT_CMD_FAILED_ERR` — and it **ships set to

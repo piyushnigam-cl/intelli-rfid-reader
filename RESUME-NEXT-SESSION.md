@@ -43,6 +43,36 @@ anything else.
 2. **This antenna + cable onto the bench dev board.** The reciprocal. If 1 and 2 disagree, it is
    the connector.
 
+### Also done 2026-09-07 — the authentication region was unlocked to RG_IN, and it was not enough
+
+Silion supplied the procedure with the new SDK. It works, it persists, and it does **not** give us
+`RG_IN` as an operating region.
+
+- Auth region read `RG_PRC` before, reads **`RG_IN`** after, surviving a re-power.
+- **Hardware version permanently changed `31.00.00.80` → `31.00.0E.80`.** Third octet is the region
+  marker. Every doc quoting `31.00.00.80` for this module is stale; it is not different silicon.
+- `ParamSet(MTR_PARAM_FREQUENCY_REGION, RG_IN)` **still** `MT_CMD_FAILED_ERR`, accepted set still
+  `RG_NA` / `RG_EU3` / `RG_PRC` / `RG_OPEN`. Tested twice, including as the first operation after a
+  fresh module boot.
+
+**PENDING, and it is next-action 0b after the ProbeBasic re-run:** re-test `RG_IN` after a full
+24 V removal rather than an `RFID_EN` toggle.
+
+```bash
+/home/intelli-sbc/api/run/run.sh ProbeAuthRead                       # expect auth region RG_IN
+cd /home/intelli-sbc/api/run && java -Dregion=RG_IN \
+  -Djava.library.path=/home/intelli-sbc/api/libs/linux/aarch64 \
+  -cp /home/intelli-sbc/api/libs/ModuleAPI_J-v260827.jar:. ProbeSetRegion
+```
+
+If it is still refused, **the question for Silion is specific**: auth region reads `RG_IN`, hw
+confirms `31.00.0E.80`, and `ParamSet` on the operating region still fails on sw `20.26.03.30` —
+does the operating whitelist need new module firmware too?
+
+To reverse the unlock: `ProbeAuthWrite` with `-Dtarget=RG_PRC`. The module was left on operating
+region `RG_EU3`, deliberately — a power cycle reverts it to `RG_NA`, which is 902–928 MHz and
+illegal to key up on in India.
+
 ### The evidence, so it is not re-derived
 
 | | tags | RSSI |
