@@ -1082,6 +1082,53 @@ values, diff consecutive ones, take the worst across many cartons, double it. Th
 is 18 unshadowed tags, so a real 40-article carton will have longer gaps and this number must be
 re-derived there — **too low reads a carton short and reports it complete, with no other symptom.**
 
+> **But that derivation is CIRCULAR if you run it on cartons read at the window you are testing,
+> and the 09-04 number above was derived exactly that way.** A gap longer than `settle-ms` cannot
+> appear in the data: the window closes the carton, and the tags that had not yet answered are
+> simply absent from the result. So the measured worst gap is **censored at the window** — the
+> analysis can only ever report that the current setting is comfortable, whatever it is set to.
+> The symptom it is blind to is the one that matters, because a carton cut short reports `SETTLED`
+> and `complete: true` when the count happens to be met and logs nothing either way.
+>
+> **Only cartons read at a window WIDER than the candidate are evidence for that candidate.**
+> Re-derived 2026-09-08 over the whole spool, 416 `SETTLED` cartons, worst `firstSeen` gap per
+> carton:
+>
+> | day | window | n | median gap | p90 | worst | cartons > 800 ms |
+> |---|---|---|---|---|---|---|
+> | 08-29 | 1500 | 224 | 251 | 664 | **1445** | 13 |
+> | 08-31 | 1500 | 85 | 234 | 716 | **1503** | 5 |
+> | 09-01 | 1500 | 3 | 404 | 514 | 514 | 0 |
+> | 09-02 | 1500 | 8 | 372 | 567 | 567 | 0 |
+> | 09-03 | 1500 | 25 | 238 | 350 | 406 | 0 |
+> | 09-04 | 1500 | 3 | 286 | 287 | 287 | 0 |
+> | 09-04 | 800 | 61 | 236 | 348 | 573 | 0 |
+> | 09-07 | 800 | 7 | 240 | 623 | 623 | 0 |
+>
+> **The uncensored evidence for 800 is the 39 cartons of 09-01…09-04 that ran at 1500**: a gap up
+> to 1500 ms was free to appear there and the worst was **567 ms**. That is what justifies 800, and
+> it is a 1.4× margin on the worst case rather than the 2× the paragraph above claims.
+>
+> **The 08-29/08-31 rows are not noise and they are not RF.** 18 of those 309 cartons had gaps
+> between 800 and 1503 ms — including full 18-tag cartons — and their RSSI (median −44, worst −50)
+> is no worse than 09-07's (median −43, worst −51), so the bad J20 branch does not explain them
+> either. Gap does not correlate with per-tag read count. What changed at 09-01 was configuration,
+> and `session: 2` is the prime suspect: an S2 tag still holding its inventoried flag from the
+> previous carton answers late, which lands in the data as exactly this — a long delay before a
+> tag's *first* sighting. **Anything that silences a tag temporarily shows up as gap, not as loss**,
+> and a settle window is the thing that has to absorb it.
+>
+> **Bigger populations showed SHORTER gaps, not longer** (30+ tags: median 200 ms, worst 274 ms
+> over the 09-07 cartons), which is the opposite of what the paragraph above predicts — more
+> articles means more arrivals to fill the window. It is only 2 cartons and it does not settle
+> anything, but do not assume a 40-article carton needs a wider window than an 18-article one.
+>
+> **So the open question is not answered and cannot be answered from the existing spool.** All
+> seven 38-article cartons were read at 800. To learn whether a big shadowed population produces
+> gaps in the 800–1500 band, **set `settle-ms: 1500`, run a batch of full 38-article cartons, and
+> read the gap distribution off those** — then bring the window back down to twice the worst. Any
+> other order measures the window rather than the carton.
+
 **Detection on the bench population is total, and the RSSI filter is discarding nothing.** Same
 measurement: **72 of 72 tag detections**, every carton `SETTLED` with 9 of 9. RSSI **−41.6 to
 −50.9 dBm**, each tag varying only ~1 dB run to run — so every tag sits **20 dB or more above the

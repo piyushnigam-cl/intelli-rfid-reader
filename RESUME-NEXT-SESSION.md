@@ -41,19 +41,34 @@ loss is inside the J20 branch. J20 is the port the systemd unit had always selec
    Weakness follows the cable → replace the cable. Weakness stays on J20 → it is the board's J20
    connector or that arm of the SP4T. **Then put the unit back to ANT1** (`pinctrl set 8 op dh`,
    `9 op dl` in the unit file) so the documented default is the live one again.
-2. **Re-derive `settle-ms` from the new 38-article cartons.** 800 was derived on 09-04 from an
-   18-tag unshadowed population. Sort each result's matched-tag `firstSeen`, diff consecutive,
-   take the worst across many cartons, double it. **Do it over the matched tags only** — foreign
-   tags no longer hold the window open, so including them measures a window the reader does not use.
+2. **Re-derive `settle-ms` — but OPEN THE WINDOW FIRST. Done as far as the existing spool allows
+   (2026-09-08); the answer is that the spool cannot answer it.** The "sort `firstSeen`, diff, take
+   the worst, double it" recipe is **circular when run on cartons read at the window being tested**:
+   a gap longer than `settle-ms` cannot appear, because the window closed the carton and the late
+   tags are simply missing from the result. All seven 38-article cartons were read at 800, so they
+   can only ever confirm 800.
+
+   What the whole spool does say (416 SETTLED cartons, full table in `CLAUDE.md`): the honest
+   evidence for 800 is the **39 cartons of 09-01…09-04 that ran at a 1500 ms window**, where a
+   longer gap was free to appear and the worst was **567 ms** — a 1.4× margin, not the 2× claimed.
+   The 08-29/08-31 cartons show 18 gaps between 800 and 1503 ms, and **RSSI does not explain them**
+   (median −44 vs 09-07's −43), so that is a configuration difference — `session: 2` is the prime
+   suspect — not the bad antenna branch. Encouragingly, the 29–38 tag cartons had the *shortest*
+   gaps of all (median 200 ms).
+
+   **To actually close it:** set `settle-ms: 1500`, run a batch of full 38-article cartons, read the
+   gap distribution off *those*, then bring the window back to twice the worst. Do it over the
+   matched tags only — foreign tags no longer hold the window open.
 3. **Antenna multiplexing is still unwritten.** Nothing drives GPIO8/9 at runtime, so the second
    antenna is dead weight. `docs/Hardware-IntelliRFIDv2.md` §7.3 has the design question: measure
    stop-inventory → toggle → restart, then pick a dwell from that number. Start/stop is 0–3 ms and
    20–60 ms measured, and bare start/stop is NOT rate-limited, so this is cheaper than §7.3 assumes.
-4. **`intelli-rfid-reader-test` still ships `company-prefix: 8905527`** while the tunnel ships
-   `8909478`, so the bench harness refuses to commission the SKU the tunnel writes. One-line fix,
-   not done because nothing this session needed it.
-5. **Optional: `SuccessExitStatus=143` in the unit file.** A clean `systemctl stop` currently leaves
-   the service reporting `failed`. Cosmetic, but it misleads.
+4. ~~`intelli-rfid-reader-test` ships `company-prefix: 8905527`~~ **DONE 2026-09-08** — it ships
+   `8909478` now, matching the tunnel, so the bench harness will commission the SKU the tunnel
+   writes. Tests pass.
+5. ~~`SuccessExitStatus=143` in the unit file~~ **DONE 2026-09-08** — a clean `systemctl stop` will
+   report `inactive` rather than `failed`. **Takes effect on the next `redeploy.sh`**, which is what
+   reinstalls the unit file and reloads systemd.
 
 ### What shipped this session
 
