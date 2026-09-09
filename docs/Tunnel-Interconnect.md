@@ -287,6 +287,51 @@ it, or go to §12.
 
 EnC and ExC have Run A only, so each is run/stop at 100 %.
 
+### 7.3 The RZC runs continuously in Super Fast Mode — O2 is held HIGH (2026-09-09)
+
+**Operator decision, 2026-09-09. The Reading Zone Conveyor joins O1 and O5 as a belt that simply
+turns while the tunnel is armed**, instead of starting on the EnS entry edge and stopping on the IN2
+exit edge. `tunnel.field.conveyor.rzc-always-run: true` carries it, and it is what the packaged
+config and this unit's site config both ship.
+
+**The gear moved 50 % → 100 % with it, and that is not a separate decision — it is the same one.**
+The EZY-S100 ladder is not monotonic: Run B alone is 50 %, Run A alone is 100 %, both together is
+75 %. So "the RZC is running" and "O2 is high" are different machines, and at the old 50 % the belt
+would have turned with **O3** high and O2 dark. Run A alone is the only gear that leaves O2 high on
+its own — the same channel sense as O1 and O5.
+
+| Phase | O1 (EnC) | O5 (ExC) | O2 (Run A) | O3 (Run B) | O4 |
+|---|---|---|---|---|---|
+| Armed, no carton | HIGH | HIGH | **HIGH** | low | low |
+| EnS fires, carton in the read zone | LOW | HIGH | **HIGH** — unchanged | low | low |
+| Read finished, discharging | HIGH | HIGH | **HIGH** | low | low |
+| Carton clear (IN2) | HIGH | HIGH | **HIGH** — the edge stops nothing now | low | low |
+| **IN4 asserted**, any phase | — | **LOW** | — | — | — |
+| **Read closed against an occupied edge** | **LOW** | **LOW** | **LOW** | low | low |
+| Disarmed, shutdown, boot, no 24 V | LOW | LOW | LOW | low | low |
+
+What it buys, and it is more than tidiness:
+
+- **The transfer straddle stops being a timing problem.** The RZC is already pulling before EnS
+  fires, so there is no spin-up to order against the EnC stop. The last bullet of §7.2 — *stopping
+  EnC the instant EnS fires drags the carton* — is now only about the EnC, and `enc-stop-delay-ms`
+  is the whole of it.
+- **A missed IN2 edge can no longer strand a box in the read zone**, because there is no per-carton
+  roller stop left to miss. `discharge-max-ms` still runs, but it only warns.
+
+What it costs, and what it does **not** change:
+
+- The roller turns for the whole shift — wear, and noise an operator hears — and a carton can no
+  longer be held still in the read field, so if a population ever needs more dwell the lever is the
+  gear, not a pause.
+- **The exit interlock still wins.** A read that closes against an occupied IN4 stops O1, O2 and O5
+  and holds the carton in the read zone; it resumes on its own when the package is lifted. Pushing
+  a box onto an occupied Exit Conveyor is the one way this change could have been actively
+  dangerous, and `ConveyorControllerTest` pins it.
+- **Every stop still stops.** Disarm, a module fault and the bench hold all leave the roller
+  stopped. Always-run is a resting state, never an override — and it is still not a protective
+  stop, which remains the safety relay's job (§3 of `Machine-Controller-Option.md`).
+
 ## 8. TM inputs
 
 | TM in | Terminal | Source | Wiring |

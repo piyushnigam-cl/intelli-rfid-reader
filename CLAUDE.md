@@ -185,6 +185,35 @@ system wakes it, so there is no remote recovery and a press means an engineer at
 SAMD21 could physically do it (it holds `CM4_EN` off its own 24 V) but **nothing implements that and
 this system does not use it** — do not write code that assumes otherwise.
 
+### The RZC runs continuously in Super Fast Mode — O2 is held HIGH
+
+**Operator decision, 2026-09-09.** `tunnel.field.conveyor.rzc-always-run: true`: the Reading Zone
+Conveyor joins the EnC and the ExC as a belt that simply turns while the tunnel is armed, instead of
+starting on the EnS entry edge and stopping on the IN2 exit edge. Shipped in the packaged
+`application.yml` and in this unit's site config; the `FieldProperties` default stays `false`.
+
+**The gear moved 50 % → 100 % with it and that is the same decision, not a second one.** The
+EZY-S100 ladder is not monotonic — Run B alone is 50 %, Run A alone is 100 %, both is 75 % — so "the
+RZC is running" and "O2 is high" are different machines: at 50 % the belt turns with **O3** high and
+O2 dark. Run A alone is the only gear that leaves O2 high by itself, matching O1 and O5.
+`PackagedConfigTest` pins both values, because either one alone gives the wrong machine.
+
+Two things it buys, and two it does not touch:
+
+- **The transfer straddle stops being a timing problem** — the RZC is already pulling before EnS
+  fires, which is stronger than ordering a spin-up against the EnC stop. And **a missed IN2 edge can
+  no longer strand a box**, since there is no per-carton roller stop to miss; `discharge-max-ms` now
+  only warns.
+- **The exit interlock still wins**, and it is the reason this is not dangerous: a read that closes
+  against an occupied IN4 stops O1, O2 and O5 and holds the carton in the read zone, resuming by
+  itself when the package is lifted. **Every stop still stops** — disarm, module fault, bench hold.
+  Always-run is a resting state, never an override.
+- **The cost is real**: the roller runs all shift, and a carton can no longer be held still in the
+  read field, so more dwell now means a slower gear rather than a pause. At 100 % a carton crosses
+  the zone in half the time it did at 50 %, and reads per tag was already thin at 2–3 — **if a real
+  carton starts reporting short, step down to 75 % (both bits high, so O2 stays high) before
+  touching `settle-ms`.**
+
 ### O1 is a state machine, not a level
 
 **O1 is HIGH by default — EnC and ExC run whenever a carton is not being read.** It drops LOW when
@@ -210,7 +239,9 @@ Four things follow, and three of them are not obvious:
 - **Stopping EnC the instant EnS fires drags the carton.** EnS is at the *entry* of the read zone, so
   at that moment the leading edge is on RZC and the trailing edge is still on EnC. Either delay the
   EnC stop by the transfer time, or place EnS far enough downstream that the carton is fully
-  transferred when it fires. **Unresolved — decide from the real geometry.**
+  transferred when it fires. **Unresolved — decide from the real geometry.** Since 2026-09-09 this
+  is only about the EnC: with `rzc-always-run` the RZC is already moving when EnS fires, so there is
+  no spin-up to order against the stop.
 
 **We supply the cards' control power**, which is the `+` / `-` pair on the left of the vendor's
 "PNP IO Control Wiring Principle" drawing: its switches `S1`/`S2`/`S3` are the TM's outputs and its
