@@ -1,8 +1,74 @@
 # Resume here — CM4 session, next sitting
 
-**Rewritten 2026-09-07 at the end of the session that FIXED the deafness, upgraded the SDK and made
-the armed EAN authoritative. It supersedes the 09-07 "the reader is deaf, it is hardware" head that
-stood here earlier the same day — that diagnosis was wrong and the section below says why.**
+**Sections are newest first. The 2026-09-09 one is a PAUSE, not a close: two operator steps are
+outstanding and the RZC change is committed but not deployed. Below it, the 2026-09-07 rewrite —
+the session that FIXED the deafness, upgraded the SDK and made the armed EAN authoritative — which
+itself supersedes the "the reader is deaf, it is hardware" head that stood here earlier that day.**
+
+---
+
+## ⏸ 2026-09-09 — TWO OPERATOR STEPS ARE OUTSTANDING. The RZC change is committed, not live.
+
+**Session paused mid-task ("will continue in a bit"), not closed.** Everything is committed and
+pushed in both repos that changed (`63246a2` docs, `bd6b724` tunnel). **Nothing is deployed.**
+
+### What is waiting on the operator, in order
+
+1. **Apply the site config.** The patched copy is at
+   `/tmp/claude-1000/-home-intelli-sbc-rfid-intelli-rfid-reader/89dc9c6d-c9a7-46eb-90f9-25342df62b2f/scratchpad/application.yml.new`
+   — **and that path is session-scoped, so if the scratchpad is gone, regenerate it** by applying
+   the same two edits to `/etc/intelli/intelli-rfid-tunnel/application.yml`:
+   `read-speed-percent: 50` → `100`, and add `rzc-always-run: true` under it.
+   ```bash
+   sudo cp /etc/intelli/intelli-rfid-tunnel/application.yml{,.bak-2026-09-09} &&    sudo cp <scratchpad>/application.yml.new /etc/intelli/intelli-rfid-tunnel/application.yml &&    sudo chown root:intelli-sbc /etc/intelli/intelli-rfid-tunnel/application.yml &&    sudo chmod 640 /etc/intelli/intelli-rfid-tunnel/application.yml
+   ```
+   **This step is not optional and it is the one that will be forgotten.** The site file pinned
+   `read-speed-percent: 50`, and it overrides the packaged jar — so deploying without it leaves the
+   belt running on **O3** with O2 dark, which is the opposite of what was asked for.
+2. **`cd ~/rfid/intelli-rfid-reader/apps/intelli-rfid-tunnel && deploy/redeploy.sh`**
+
+### What changed
+
+**Operator decision, 2026-09-09: in Super Fast Mode the Reading Zone Conveyor runs continuously and
+O2 is held high.** `tunnel.field.conveyor.rzc-always-run: true` — the RZC joins the EnC and the ExC
+as a belt that simply turns while the tunnel is armed, instead of starting on the EnS entry edge and
+stopping on the IN2 exit edge.
+
+**The gear moved 50 % → 100 % with it, and it is the same decision, not a second one.** The
+EZY-S100 ladder is not monotonic — Run B alone is 50 %, Run A alone is 100 %, both is 75 % — so
+"the RZC is running" and "O2 is high" are different machines. Run A alone is the only gear that
+leaves O2 high on its own, matching O1 and O5. `PackagedConfigTest` pins both values, because
+either one alone gives the wrong machine.
+
+- The `FieldProperties` default stays `false`: a belt turning under an empty, unattended tunnel is
+  the more surprising state for a unit that has not been told otherwise. The packaged
+  `application.yml` is what turns it on.
+- **The exit interlock still wins** — a read closing against an occupied IN4 stops O1, O2 and O5 and
+  holds the carton in the read zone, resuming by itself when the package is lifted. `allStop` and
+  the bench hold are untouched. Always-run is a resting state, never an override, and there is a
+  test for exactly the "pushes a box onto an occupied ExC" case.
+- **`discharge-max-ms` now only warns** instead of stopping the roller: nothing can be stranded, but
+  a missing IN2 edge is still a broken sensor and still says so.
+- The arm log line was printing `RZC stopped` under always-run. Fixed — it was a lie in the one line
+  an engineer reads to check the machine came up as configured.
+- 260 tunnel tests pass. **Nothing here has been run against a moving belt.**
+
+### What to watch on the first cartons
+
+| | O1 | O2 | O3 | O5 |
+|---|---|---|---|---|
+| arm | HIGH | **HIGH** | low | HIGH |
+| EnS fires | LOW | **HIGH** | low | HIGH |
+| read closes | HIGH | **HIGH** | low | HIGH |
+| IN2 fires | HIGH | **HIGH** | low | HIGH |
+| read closes on occupied IN4 | LOW | **LOW** | low | LOW |
+| disarm | LOW | LOW | low | LOW |
+
+**At 100 % a carton crosses the read zone in half the dwell it had at 50 %, and reads per tag was
+already thin at 2–3 per carton.** If a real carton starts reporting short, step
+`read-speed-percent` down to **75** — both bits high, so O2 stays high — **before** touching
+`settle-ms`. This is now the first thing to check ahead of next action 2 below, because it changes
+the very gap distribution that action is trying to measure.
 
 ---
 
