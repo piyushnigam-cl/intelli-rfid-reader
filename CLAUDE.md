@@ -1132,6 +1132,47 @@ discarded, and only an IN1 edge opens a window. `maxDurationMs` stays as the bac
 sensors the mode falls back to opening on the first tag and closing on settle, which is not
 equivalent and is reported as `degraded` in `/api/v1/reader/status`.
 
+**That "once per carton" rule was only half implemented, and the WMS saw the other half. MEASURED
+2026-09-09 on the production unit: 129 `SETTLED` results against 114 `PACKAGE_EXITED` in one
+afternoon — very nearly one spurious carton for every real one, each box reported twice with two
+different counts.** The mechanism is in the log in full:
+
+```
+20:53:21.119  IN1  -> session A opens
+20:53:22.647  IN1  (ignored: a read is running)
+20:53:23.827  IN1  (ignored: a read is running)
+20:53:24.179  settle closes A          -> callback 1: SETTLED, 39 of 40
+20:53:25.149  IN1  -> session B opens          <-- same box, still in the zone
+20:53:27.130  IN2  closes B            -> callback 2: PACKAGE_EXITED, 37 of 40
+```
+
+**Settle closes a read while the carton is still physically in the zone and still crossing the
+entry beam.** The stale IN2 edge was consumed; the stale IN1 edge opened a whole new carton. The
+guard was one-sided, and the second result is always the worse one — it is the tail of the same
+box, so it reports a *lower* count than the result the WMS already had.
+
+**Debounce cannot close this and raising it makes things worse.** The extra entry edges are
+**1.2–1.5 s apart** — real beam events, not contact bounce — and the second session opened **4.0 s**
+after the first. A debounce wide enough to swallow that would swallow the next genuine carton.
+
+**Fixed 2026-09-09 by `tunnel.v1.gpio.reopen-block-ms` (default 10000): a carton whose read has
+closed holds the entry trigger shut until IN2 says it has left.** A carton closed *by* the exit edge
+has already gone and blocks nothing. The timeout is a wedge-guard only — a dead exit sensor lifts
+the block on its own with a WARN, because **a tunnel that stops taking cartons is a stopped line and
+that is worse than one that occasionally publishes a box twice**. `0` restores the old behaviour.
+`CartonPublishedOnceTest` pins all of it.
+
+**This only became visible on 2026-09-09 because that is the day IN2 started firing at all** —
+before it, the spool holds essentially no `PACKAGE_EXITED` (36 SETTLED and zero on 09-08). The
+duplicate sessions may well have been opening for longer and closing as a second `SETTLED`.
+
+**Still open, and it is a field question rather than a software one: why does the entry sensor emit
+five rising edges for one carton?** The guard above makes the duplicates harmless but does not
+explain them. The spacing is suspiciously regular across cartons, and the reverse nudge — 1 pulse
+at 2000 ms for 1000 ms, live on this unit — can drag a box back across EnS and forward again, which
+would manufacture a genuine extra edge. Check the EnS alignment and re-run with `reverse: 0` before
+concluding it is the sensor.
+
 **Corrected 2026-08-31.** It replaces an earlier rule in which the exit sensor owned the end
 outright, the count and settle were both merely observed, and a count that was never met beat
 everything.
