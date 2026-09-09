@@ -214,6 +214,49 @@ Two things it buys, and two it does not touch:
   carton starts reporting short, step down to 75 % (both bits high, so O2 stays high) before
   touching `settle-ms`.**
 
+### The reverse nudge — O4 pulsed mid-carton, and what a millisecond is worth here
+
+**Added 2026-09-09, off by default.** `tunnel.field.conveyor.reverse` (0, 1 or 2),
+`reverse-after-ms` and `reverse-for-ms` pulse **O4** during a carton's read, to jog the box a few
+millimetres backwards so its articles shift and a shadowed tag gets a second chance. It starts on
+the **IN1 read-open edge** — `ConveyorController.cartonEntered()`, which is where the carton
+actually begins — and `reverse-after-ms[i]` is the gap **before** pulse *i*, measured from the
+trigger for the first and **from the end of the previous pulse** for the rest.
+
+**It is not `reverse(RzcSpeed)`, and the difference is the whole design.** That stops the roller,
+waits `direction-change-dwell-ms` (250), then flips O4. A nudge cannot: the dwell alone is fifty
+times the pulse. So the nudge writes O4 **with the Run bits still high** — a direct reversal of a
+loaded drum motor, which is the one unmeasured motion this application commands. That is why it
+ships off and why `PackagedConfigTest` pins it off.
+
+**MEASURED 2026-09-09 on this CM4: every edge lands ~4 ms late and every pulse comes out ~4 ms
+wider than requested.** The real controller driven with `reverse: 2`, `[100, 101]` and `[3, 5]`,
+four cartons, warm JVM:
+
+| asked | delivered |
+|---|---|
+| rise at 100 ms | **108 ms** |
+| high for 3 ms | **7–8 ms** |
+| rise 101 ms after the fall | **+105 ms** |
+| high for 5 ms | **9–9.5 ms** |
+
+Repeatable to about 1 ms carton to carton. **A cold JVM costs the first pulse another ~25 ms**, on
+the first carton after a restart and no others. The cause is `pinctrl`: every level change is a
+fork, measured at **4.2 ms**, and the pin stays high across the fork that lowers it. **So nothing
+here can ask for less than ~7 ms** — a `reverse-for-ms` of 1 and of 3 are the same pulse. The
+controller logs the *achieved* width of every pulse at DEBUG; tune against that and never against
+the configured number.
+
+What the error costs is **how far the carton actually moves**, not correctness — nothing decodes
+this width, unlike the verdict pulse this project deleted. It is the reason the nudge is a few
+millimetres longer than the arithmetic says.
+
+**The sequence is cancelled and O4 driven low by anything that ends the carton** — the read
+closing, the IN2 edge, disarm, fault, bench hold — because it is folded into `cancelTimers()`.
+**Cancelling needs a generation token and not just `ScheduledFuture.cancel()`**: the pulses chain,
+so a falling edge already running when the cancel arrives has nothing left to cancel and would
+schedule the next rise regardless — a carton discharging with O4 going high behind it.
+
 ### O1 is a state machine, not a level
 
 **O1 is HIGH by default — EnC and ExC run whenever a carton is not being read.** It drops LOW when
