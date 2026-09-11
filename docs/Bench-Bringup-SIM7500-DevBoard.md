@@ -21,7 +21,7 @@ bottom, not from observation.
 | Supervisor | SAMD21 | none |
 
 Two consequences worth naming now: `antenna-count` must be **1**, and the module's own
-2 GPI / 2 GPO — which are unreachable from the PLC on v2.1 — **are reachable here**, so
+2 GPI / 2 GPO — which are unreachable from J26 on v2.1 — **are reachable here**, so
 `BackReadOption.IsGPITrigger` can finally be tested for real.
 
 ---

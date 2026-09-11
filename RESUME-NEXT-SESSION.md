@@ -1,656 +1,437 @@
 # Resume here — CM4 session, next sitting
 
-Written at the end of 2026-08-28, **updated 2026-08-31**. Everything below is measured on hardware
-unless it says otherwise.
-
-**Read `HANDOFF-LAPTOP-TO-CM4-TUNNEL-05.md` first — it is the current work list.** The PLC interface
-is closed and sent to the vendor, who is writing ladder against it now; it changes Super Fast Mode's
-close condition and adds three pieces of firmware plus one endpoint. The ordered plan is in §−1
-"Next, in order". `HANDOFF-CM4-TO-LAPTOP-TUNNEL-03.md` remains the full build report for the
-`/api/v1` layer and answers the laptop's five audit questions. This file is the short version plus
-what to do next.
-
-**Appended 2026-09-01 — a short session, no hardware run.** It answered one question (yes, the IN3
-shutdown is implemented and wired: `ShutdownRequestMonitor` + `ShutdownSequence`, item 5, `9f2492f`)
-and fixed two things that came out of checking:
-
-- **`ShutdownRequestMonitor.onEdge` now traces every edge** with its running tally and its offset
-  into the window. It had to be added because *no level logged an individual pulse* — the two debug
-  lines report only the outcome of a burst, so a five-pulse pattern that failed to fire gave you no
-  way to see how many edges arrived. **Set `logging.level.com.intelli.rfid.tunnel.plc: TRACE`
-  before bench test 5**; the reasoning is now in `CLAUDE.md`. Compiles, 14/14 shutdown tests pass.
-- **Two stale documentation lines corrected**, both found by checking the live unit rather than the
-  file: `CLAUDE.md` said this unit's site config has `gpio.enabled: false` (it is now `true`,
-  watching 23/24/18, which is exactly when the libgpiod-v2 format-specifier trap would bite), and
-  the bring-up table above said step 10 systemd was not started (the service is enabled and active).
-
-**Then the deploy story was fixed, because the trace log could not be seen without it.** The
-service was still launching out of `target/` — `7f9d75c` changed the repo and nobody ran
-`install.sh`, so `/opt/intelli` held an empty `lib/`. Three changes, all pushed, **none of them
-deployed yet**:
-
-- **`loggers` exposed on actuator** (`cb5b312`), behind the ADMIN key, so a level changes on a
-  running unit without a restart — a restart re-inits the module and loses the burst you were
-  trying to watch.
-- **`install.sh` is now a complete deploy** — jar, aarch64 `.so`, unit file, `daemon-reload`. The
-  unit file committed in `deploy/` was replaced: the old one **would not have started on this
-  board** (`User=intelli`, no such user; `ReadWritePaths=/var/log/intelli`, no such directory; and
-  no `ExecStartPre` pinctrl block at all, so the module would have come up held in reset). The one
-  there now is what has actually been running since 2026-08-31 with the paths moved to `/opt`.
-- **File logging to `/opt/intelli/logs/`** (`b0fb65d`), alongside journald, rolling 20 MB × 14.
-  Piyush's call on the location. The directory must be owned by `intelli-sbc` or logback falls back
-  to journald silently — `install.sh` handles it, but check after the first deploy.
-
-**The agreed division of labour from here: Claude edits and commits, Piyush deploys.** The block is
-in `CLAUDE.md` under "Deploying to this unit".
-
-**First deploy is still pending** — the running jar is from 2026-08-31 20:57 and has none of this in
-it. Until it happens, TRACE on IN3 cannot be seen and `/actuator/loggers` returns 404.
-
-### THE UNIT IS SHUT DOWN RIGHT NOW — start here
-
-**At 19:41:35 a single edge on IN3 ran the controlled shutdown.** The service is still `active`, but
-the reader is stopped and `CLOSED`, the carrier is down, OUT6 heartbeat is driven low, and
-`/actuator/health` reads `OUT_OF_SERVICE`. Nothing is wrong with the module. **`systemctl restart
-intelli-rfid-tunnel` brings it back** — or just run `deploy/redeploy.sh`, which is wanted anyway.
-
-**It happened twice today, 13:48:50 and 19:41:35, with nothing driving GPIO18 either time.** The
-site config runs `tunnel.plc.shutdown.pulses: 1` for bench work, so *any* single edge is a shutdown
-request, and GPIO18 sits at `ip pn | hi` — internal pull deliberately off, so an unwired input has
-very little noise margin. Both sequences ran correctly in ~130 ms, which is the good news: the
-firmware works. **The lesson is that `pulses: 1` is not safe to leave running**, and it is the
-measured argument for the committed five-pulse burst. Either put it back to 5 or expect this again.
-
-From the outside this looks exactly like a dead reader, so: **check the log for
-`SHUTDOWN REQUESTED` before diagnosing a reader that stopped for no reason.**
-
-Also seen on both shutdowns and worth a small fix: **step 3 throws on an idle reader.** Step 1
-leaves the session CLOSED, so "finish any in-flight tag write" fails with `Reader is not connected`
-even with no write outstanding. It is logged at ERROR and stepped over, so it is harmless — but it
-means every clean shutdown carries an ERROR line, which is how a real one gets ignored.
-
-### The callback spool, and what was cleared
-
-**Disarm was never broken.** Two callbacks were being retried once a minute against
-`192.168.0.126`, a WMS address that had gone away: a spooled entry carries the URL captured when it
-was spooled, and the replay timer runs independently of arm state. Both are correct and both look
-like a bug.
-
-Fixed by an age cap with a dead-letter file (`38a1327`, `cdebbf0`): past
-`tunnel.v1.callback.max-age-ms` — **30 minutes**, Piyush's call after 7 days was judged useless — an
-entry is appended to `callbacks-dead.jsonl` and dropped. Abandoned, not discarded, because the
-contract promises the WMS that results are spooled and replayed. Non-zero depth shows on
-`/actuator/health` as `abandonedCallbacks`, deliberately **not** on `/api/v1/reader/status`, which
-cannot gain a field without the document changing.
-
-**The two stuck entries (seq 707, 708) were moved to the dead-letter file and the spool truncated**,
-verified clear across a replay cycle. Both were complete 9-of-9 `SETTLED` reads and remain in the
-inventory history.
-
-### Deploying, from here on
-
-`deploy/redeploy.sh` — stop, confirm no JVM survives, pull, build, install, start. `--core` to
-rebuild the shared library, `--no-pull` to deploy what is checked out. **Run it as `intelli-sbc`,
-never under sudo**; it refuses, because Maven as root leaves `target/` root-owned. It stops if a JVM
-outlives the shutdown rather than killing it, since a survivor holds `/dev/ttyAMA0` and the restart
-then fails to open the module — which reads as a hardware fault.
-
-**Deployed right now is `cfd194b`** (jar 19:19). The dead-letter code, the 30-minute cap and
-`redeploy.sh` itself are committed and pushed but **not deployed**.
-
-Confirmed working on the deployed build: `/actuator/loggers` answers behind the ADMIN key, and
-`/opt/intelli/logs/intelli-rfid-tunnel.log` is being written.
-
-**Still true and still the thing to do next: bench tests 1–15, and the edge polarity is still
-undecided.** Nothing in this session touched either. Note before test 5 that the live site config
-runs `shutdown.pulses: 1`, so on this unit *any single IN3 edge is a shutdown request* — the
-committed interface is 5 and the packaged default and the Java default (`PlcProperties:166`) both
-already say 5, so removing line 122 of the site config is all it takes to restore it.
+**Sections are newest first. The 2026-09-09 one is a PAUSE, not a close: two operator steps are
+outstanding and the RZC change is committed but not deployed. Below it, the 2026-09-07 rewrite —
+the session that FIXED the deafness, upgraded the SDK and made the armed EAN authoritative — which
+itself supersedes the "the reader is deaf, it is hardware" head that stood here earlier that day.**
 
 ---
 
-## −1. If you are on the production CM4, start here — bring-up COMPLETE (2026-08-29)
+## ⏸ 2026-09-09 — TWO OPERATOR STEPS ARE OUTSTANDING. The RZC change is committed, not live.
 
-The v2.x unit is through `CM4-PRODUCTION-BRINGUP.md` **completely, step 10 included**. The
-tunnel runs on this board as an enabled systemd service and serves v1 reads against the real
-module.
+**Session paused mid-task ("will continue in a bit"), not closed.** Everything is committed and
+pushed in both repos that changed (`63246a2` docs, `bd6b724` tunnel). **Nothing is deployed.**
 
-| Step | State |
-|---|---|
-| 0 SDK, 1 packages, 4 native lib, 5 clones, 6 build | **done** |
-| 2 UART | **done, verified** — reader is `/dev/ttyAMA0`, `uart3` took `ttyAMA3` |
-| 3 directories, 6 site config | **done** — `/etc/intelli/intelli-rfid-tunnel/application.yml` installed `root:intelli-sbc 640`, three API keys issued |
-| 7 GPIO enable | **done by hand** — and it needs a third pin, see below |
-| 8 probe | **done: 18 of 18 tags, five sweeps, 27 dBm, `RG_EU3`, Java 21** |
-| 9 run by hand | **done: two v1 reads, 18 distinct EPCs through the full contract path** |
-| 10 systemd | **done** — `intelli-rfid-tunnel.service` is `enabled` and `active`, up since 2026-08-31 21:25 IST, running from `/opt` (`7f9d75c`). Observed 2026-09-01; the row above had gone stale. Bring-up is complete. |
+### What is waiting on the operator, in order
 
-### Step 9, what it actually returned
+1. **Apply the site config.** The patched copy is at
+   `/tmp/claude-1000/-home-intelli-sbc-rfid-intelli-rfid-reader/89dc9c6d-c9a7-46eb-90f9-25342df62b2f/scratchpad/application.yml.new`
+   — **and that path is session-scoped, so if the scratchpad is gone, regenerate it** by applying
+   the same two edits to `/etc/intelli/intelli-rfid-tunnel/application.yml`:
+   `read-speed-percent: 50` → `100`, and add `rzc-always-run: true` under it.
+   ```bash
+   sudo cp /etc/intelli/intelli-rfid-tunnel/application.yml{,.bak-2026-09-09} &&    sudo cp <scratchpad>/application.yml.new /etc/intelli/intelli-rfid-tunnel/application.yml &&    sudo chown root:intelli-sbc /etc/intelli/intelli-rfid-tunnel/application.yml &&    sudo chmod 640 /etc/intelli/intelli-rfid-tunnel/application.yml
+   ```
+   **This step is not optional and it is the one that will be forgotten.** The site file pinned
+   `read-speed-percent: 50`, and it overrides the packaged jar — so deploying without it leaves the
+   belt running on **O3** with O2 dark, which is the opposite of what was asked for.
+2. **`cd ~/rfid/intelli-rfid-reader/apps/intelli-rfid-tunnel && deploy/redeploy.sh`**
 
-`matched: 0` / `unexpected: 2` / `undecodable: 16` on a 3 s timed read for
-`ean 8905527164445` — the whole 18-tag bench population, and `matched` is 0 only because no tag
-here carries that SKU. `sequence` advanced 1 → 2, `spoolDepth` 0, module 34 °C. First read stopped
-`TIMEOUT`, second `SETTLED`.
+### What changed
 
-- **The site config runs `session: 0`, marked bring-up only.** Packaged `session: 2` plus a
-  continuously-on carrier (the sensors are disabled) makes this tag stock answer once and go silent
-  for >15 s. Revert to 2 when the sensors are live.
-- **`/api/v1/reader/status` needs the INVENTORY scope**, not ADMIN. The operator key gets
-  `403 insufficient_scope` there — scope rules working, not a misconfiguration.
-- **`degraded` is absent and should be**: it only speaks for a broken spool or a reader *armed*
-  for Super Fast Mode. The runbook used to claim otherwise and is corrected.
-- **Open item 5 reproduced on production hardware:** the tags' own EAN `8905190881260` is rendered
-  in read results next to `gtin14: 98905190881260`, but rejected as a *request* parameter with
-  `400 invalid_ean` (mod-10). It is a GTIN-14 variable-measure item, so its 13-digit form is not a
-  valid EAN-13. The read path and the request path disagree about what an `ean` is.
+**Operator decision, 2026-09-09: in Super Fast Mode the Reading Zone Conveyor runs continuously and
+O2 is held high.** `tunnel.field.conveyor.rzc-always-run: true` — the RZC joins the EnC and the ExC
+as a belt that simply turns while the tunnel is armed, instead of starting on the EnS entry edge and
+stopping on the IN2 exit edge.
 
-### What the probes settled
+**The gear moved 50 % → 100 % with it, and it is the same decision, not a second one.** The
+EZY-S100 ladder is not monotonic — Run B alone is 50 %, Run A alone is 100 %, both is 75 % — so
+"the RZC is running" and "O2 is high" are different machines. Run A alone is the only gear that
+leaves O2 high on its own, matching O1 and O5. `PackagedConfigTest` pins both values, because
+either one alone gives the wrong machine.
 
-- **`/dev/ttyAMA0` is the reader**, on this board as on the bench. Nothing needs renaming.
-- **The vendor JNI is clean at call time on Java 21.** Both halves of that risk are now closed.
-- **`RG_IN` is refused here too.** This module accepts `RG_NA`, `RG_EU3`, `RG_PRC`, `RG_OPEN` — a
-  wider SKU than the bench's, same firmware — and **arrives set to `RG_NA`**, which must not be
-  keyed up in India. Run `RG_EU3`.
-- **The hop table is writable, and that is the India answer.** `RG_EU3` hops
-  865.7/866.3/866.9/**867.5**; the last is outside 865–867. Writing `{865700, 866300, 866900}`
-  under `RG_EU3` sticks. **Setting the region rewrites the table**, so order matters, and
-  `ReaderSession.applyConfig()` does not do it yet.
-- Module: hw `31.00.00.80`, sw `20.26.03.30`, `MODULE_ONE_ANT`, `antportnumbers = 1` — the module
-  itself confirms `antenna-count: 1`. Power reads 5–30 dBm; **the 27 dBm ceiling is the carrier's
-  and the module does not enforce it.** 29 °C idle, 32 °C after five sweeps.
+- The `FieldProperties` default stays `false`: a belt turning under an empty, unattended tunnel is
+  the more surprising state for a unit that has not been told otherwise. The packaged
+  `application.yml` is what turns it on.
+- **The exit interlock still wins** — a read closing against an occupied IN4 stops O1, O2 and O5 and
+  holds the carton in the read zone, resuming by itself when the package is lifted. `allStop` and
+  the bench hold are untouched. Always-run is a resting state, never an override, and there is a
+  test for exactly the "pushes a box onto an occupied ExC" case.
+- **`discharge-max-ms` now only warns** instead of stopping the roller: nothing can be stranded, but
+  a missing IN2 edge is still a broken sensor and still says so.
+- The arm log line was printing `RZC stopped` under always-run. Fixed — it was a lie in the one line
+  an engineer reads to check the machine came up as configured.
+- 260 tunnel tests pass. **Nothing here has been run against a moving belt.**
 
-### The thing that will cost you an hour if you forget it
+### What to watch on the first cartons
 
-**`RFID_NRST` (GPIO10) has to be driven HIGH, not just `RFID_EN` (GPIO22).** Both boot as inputs
-with the BCM2711 pull-down, so the module comes up powered *and held in reset*. Measured: with
-GPIO10 released, `InitReader_Notype` returns **`MT_UNKNOWN_READER_TYPE`** — which looks like a baud
-or SDK problem and is not. The full sequence, in order:
+| | O1 | O2 | O3 | O5 |
+|---|---|---|---|---|
+| arm | HIGH | **HIGH** | low | HIGH |
+| EnS fires | LOW | **HIGH** | low | HIGH |
+| read closes | HIGH | **HIGH** | low | HIGH |
+| IN2 fires | HIGH | **HIGH** | low | HIGH |
+| read closes on occupied IN4 | LOW | **LOW** | low | LOW |
+| disarm | LOW | LOW | low | LOW |
 
-```bash
-pinctrl set 8 op dh && pinctrl set 9 op dl   # ANT1 first - never key up into an open port
-pinctrl set 22 op dh                          # RFID_EN
-pinctrl set 10 op dh                          # RFID_NRST out of reset
-```
-
-These do not survive a reboot and nothing in the app does them. Step 10's `ExecStartPre` must.
-
-### Commissioning was rewritten this afternoon — read this before writing tags
-
-`POST /api/v1/tags/write` with `count > 1` now **targets each tag by its factory TID** through a
-Select filter, rather than writing whichever tag answers. The old path wrote the wrong tags and
-misreported which: a count=18 batch reported 2 written and 16 failed when five of the "failures"
-were on tags. Both halves of write-then-verify are now pinned to one tag, with a TID read-back
-proving the filter applied, and the whole batch runs inside **one** `whilePaused` instead of three
-inventory restarts per tag.
-
-Proven on hardware 2026-08-29 with 11 tags in the field: **8 written, 3 refused, and 8 of 8 verified
-on the right tag afterwards** — every failure naming its own TID and leaving that tag untouched.
-
-Two things go with it:
-
-- **`write-power-dbm10` must be 2700, not 2000** — and it is, in the site config since
-  2026-08-29. At 20 dBm every targeted write returns `MT_CMD_NO_TAG_ERR` on tags being read
-  perfectly at that moment. Unfiltered writes hid it, because they land on the strongest tag.
-  Do not lower it back towards the packaged default.
-- **The core change is uncommitted and has no test.** `CommissioningController`,
-  `CommissionRequest.targetTids`, `CommissionResponse.Failed.tid`. It was proven at the module, not
-  in CI, and the TID path deserves a test before it is trusted anywhere but this bench.
-
-Serials 1–18, 45, 46, 99, 101–103 and 301–311 are consumed on the bench stock; start above 312.
-`bench-tag-register.jsonl` is stale — it still lists every tag as `to-write`.
-
-### Where the unit was left, end of 2026-08-29
-
-- **Bring-up is COMPLETE.** `intelli-rfid-tunnel.service` is installed, enabled and active, running
-  the config-driven launch with no overrides. The unit raises all four GPIO pins itself in
-  `ExecStartPre`, so a reboot now comes up reading without a person. Source of truth for the file:
-  `~/intelli-rfid-tunnel.service`, and runbook step 10 matches it.
-- **`systemctl {start,stop,restart} intelli-rfid-tunnel`** — and stop it before running any probe:
-  one process owns `/dev/ttyAMA0`.
-- **All 18 bench tags are commissioned** to GTIN-14 `08905527164445`, serials 1–17 plus 312, and
-  `bench-tag-register.jsonl` is reconciled. **All four control tags were written over**, so this
-  bench can no longer exercise `undecodable` or `unexpected` — restore them from `originalEpc`
-  before running contract tests here. See `tools/bench-tag-register.md`.
-- **Nothing is committed.** Docs at the workspace root, `bench-tag-register.{jsonl,md}` and the
-  commissioning change in core are all uncommitted, and nothing has been pushed.
-
-### Where this was left, end of 2026-08-31 (evening)
-
-**All six build items of the PLC work are done** (§A below). 141 tests pass, up from 74 this
-morning. The unit is running Super Fast Mode against real sensors and reading cleanly.
-
-**Measured tonight, 8 consecutive cartons — the reader is performing well.** 72 of 72 tag
-detections, every carton `SETTLED` with 9 of 9, durations 2560–2866 ms, RSSI −41.6 to −50.9 dBm with
-~1 dB per-tag stability. The finding that matters: **all 9 tags are found by 1016–1306 ms and the
-rest of every carton is the settle window**, so `settle-ms` is the only lever on carton time. Full
-write-up with charts: **https://claude.ai/code/artifact/e7cdc9d4-8651-44ba-a5ed-b10a30408d83**
-
-**Configuration this unit now runs** (site config `/etc/intelli/intelli-rfid-tunnel/`):
-`session: 1` (S1, chosen after S2 proved unusable — see below), `rssi-threshold-dbm: -72`,
-27 dBm, `RG_EU3`, GPIO enabled watching lines 23/24/18, `shutdown.pulses` set low for bench testing.
-
-**S2 is unusable on this tag stock and it takes the write path down with it.** With a
-continuously-on carrier the population answered once and went silent for **twelve minutes** — not
-the ">15 s" previously on record, which was measured across carrier-*off* gaps. While silent, every
-TID-targeted commissioning write failed with `MT_CMD_NO_TAG_ERR` at 2700, the power the docs
-prescribe. **That is a second cause for that error code and it is now in CLAUDE.md**: before
-suspecting power, check the reader is hearing tags at all.
-
-**The service now installs to `/opt/intelli`** and no longer launches from the Maven build tree.
-It had to: a `mvn clean` in `apps/intelli-rfid-tunnel` deletes the jar from under the running
-service, which fails silently until the next restart and then crash-loops. That happened twice.
-Deploy loop is now `mvn -o package` → `sudo deploy/install.sh` → `sudo systemctl restart`.
-**Confirm the unit file was actually swapped** — as of the last check `ExecStart` still pointed at
-`target/`, so the operator commands may not have been run.
-
-**Open, small, and worth doing early next session:**
-
-1. **`discoverTids()` has no freshness bound.** It reads a ring buffer with no age limit, so when
-   reads stop it confidently names tags last seen an hour ago and commissioning writes at ghosts.
-   This turned one clear failure into four misleading ones tonight. Add a `discovery-max-age` and
-   refuse with the age of the newest sighting.
-2. **`suppressedReads` merges the RSSI reject and the dedup reject** into one counter, so the RSSI
-   threshold is untunable — you cannot see what it is doing. Split it.
-3. **Edge polarity is still unresolved** — a field-asserted input is GPIO *low*, but the monitor
-   watches rising edges, so a 2 s `ZONE_ARRIVE` pulse opens the read on its trailing edge. Left
-   deliberately; Piyush is getting the optical sensor's details before choosing between wiring it to
-   match, `gpiomon --active-low`, or watching falling edges.
-4. **S1 is unverified against this stock.** Watch for a tag re-answering mid-carton and inflating a
-   count, or a carton that will not settle.
-5. **Module temperature was never read** under sustained load. It is now on `/api/reader/status`
-   as `temperatureC`. Bring-up recorded 29 °C idle and 32–34 °C after short bursts; nothing has
-   been measured after an hour of carrier.
+**At 100 % a carton crosses the read zone in half the dwell it had at 50 %, and reads per tag was
+already thin at 2–3 per carton.** If a real carton starts reporting short, step
+`read-speed-percent` down to **75** — both bits high, so O2 stays high — **before** touching
+`settle-ms`. This is now the first thing to check ahead of next action 2 below, because it changes
+the very gap distribution that action is trying to measure.
 
 ---
 
-### Next, in order — re-planned 2026-08-31 after the laptop's handoff-05
+## ✅ 2026-09-07 — THE READER READS AGAIN. It was one antenna branch, not the module.
 
-**The PLC work below is now the largest item in the project and it has an external deadline: the
-vendor is writing ladder against the sent document right now.** It outranks the loose ends in B.
+**38 of 38 articles, SETTLED, `complete: true`, RSSI −25 dBm.** The unit is deployed, running and
+healthy. Nothing here is blocked.
 
-#### A. The PLC interface — `HANDOFF-LAPTOP-TO-CM4-TUNNEL-05.md`
+### What was actually wrong
 
-The interface is **closed**. `docs/Intelli-RFID-Reader-DVP12SA211R-PLC-Integration.docx` went to the
-PLC vendor on 2026-08-30 and none of its numbers will move. **Where the code and that document
-disagree, the code is wrong.** Do not round any timing to a nicer figure.
+The SIM7500 has **one** antenna port; the board's PE42442A SP4T splits it to J20/J25 under
+**GPIO8/9**, and the module cannot see the switch. **Every earlier "both ports tried" test was run
+with a single antenna**, so flipping `ANT=2` listened into a bare connector and proved nothing.
 
-> **Progress, 2026-08-31 — items 1–6 are ALL done. Section A's build work is complete.**
-> 136 tests pass, up from 74. What is left in A is item 8, the bench tests, which need the app
-> running against real pins.
->
-> | # | Item | State |
-> |---|---|---|
-> | 1 | Close condition: settle or the exit edge, not the count | **done** `b0acefd` |
-> | 2 | `exitOnCount` as an API-settable flag | **done** `b0acefd` |
-> | 3 | `RESULT` on OUT5, width-encoded | **done** `d113515` |
-> | 4 | `HEARTBEAT` on OUT6 | **done** `87516ab` |
-> | 5 | `SHUTDOWN_REQUEST` on IN3 + the shutdown sequence | **done** `9f2492f` |
-> | 6 | `/api/v1/diagnostics/io` | **done** `7c6024c` + core `d93bdc0` |
-> | 7 | The "do not" list | partly enforced: `FieldIo.write()` refuses parked channels |
-> | 8 | Bench tests 1–15 | **next** — needs the app running against real pins |
->
-> **`com.intelli.rfid.tunnel.plc` now exists and items 5 and 6 both sit on it**: `FieldChannel` is
-> the authoritative channel map, `FieldIo` owns the field-sense inversion, `PinctrlFieldIo` drives
-> the pins, and `HeartbeatDriver` / `ResultSignal` are the two consumers so far.
->
-> **Measured on this board while building it** — all of it now in `CLAUDE.md`: field outputs boot
-> `ip pd | lo` (the failsafe holding SPEED at 000), field inputs boot `ip pd | hi` with the internal
-> pull-down still opposing the carrier's external pull-up, `pinctrl get` has two output shapes, and
-> OUT5 pulses landed at **PASS 496–504 ms / FAIL 98–100 ms** over 20 cartons with none outside the
-> decode band. That last number was taken on a near-idle machine and **bench test 6 still wants 100
-> cartons under read load** before it is trusted.
->
-> ### The carrier is now triggered, and the restart-rate risk is measured and cleared
->
-> **Carrier-off-between-cartons was documented as the design and was not implemented.** The carrier
-> ran from boot and nothing in the carton path stopped it; IN1 only opened a *logical* session over
-> a running tag stream. Observed on this board: `session: 2` plus a continuous carrier read 15 tags
-> once and heard **nothing for three minutes** — S2 holds the inventoried flag for as long as the
-> tag stays powered, so a second carton would read empty *permanently*, not for the ">15 s" on
-> record (that figure was measured across carrier-*off* gaps). Fixed in `b5cefd6`:
-> `tunnel.v1.triggered-carrier`, on by default, active only when the sensors are watching.
->
-> **The risk that could have killed it is measured and gone.** One stop/start per carton looked
-> unsafe against CLAUDE.md's "four restarts in thirty seconds gives `MODULE_NEED_RESTART`".
-> Measured 2026-08-31 with `ProbeRestartRate`: **30 restarts in 30 s, all clean, ~50 tags every
-> cycle**, `StartReading` 0–3 ms, `StopReading` 20–60 ms. The old rule does not apply to bare
-> start/stop — both recorded failures changed a *parameter* alongside each restart, and that is the
-> remaining unisolated suspect.
->
-> ### The edge polarity is wrong and is NOT yet fixed — decide this before bench testing
->
-> **Field-asserted on an input is GPIO LOW** (24 V on the pin lights the opto and pulls it down),
-> but `GpioEdgeMonitor` watches **GPIO rising** edges on all three lines. Confirmed empirically on
-> this board 2026-08-31 by driving line 18: a field-assert produced **0** events, the de-assert
-> produced **1**.
->
-> So against the interface as documented — the PLC asserting a 2 s `ZONE_ARRIVE` pulse — the read
-> window opens on the **trailing** edge, two seconds after the carton arrived. Same for
-> `ZONE_EXIT`. **IN3 is unaffected in substance**: five asserted pulses still give five trailing
-> edges, so the burst count and window still work, shifted by 200 ms.
->
-> **Left unchanged deliberately, on Piyush's instruction** — the optical sensor may be configured to
-> match instead, and a push button gives a rising edge on *release*, which is fine for manual
-> testing. Three ways out, and the choice is not made:
->
-> 1. **Wire/configure the sensor** so the channel is de-asserted at the moment of interest. Check it
->    against the `.docx`, which specifies `ZONE_ARRIVE` as a 2 s *pulse* — inverting at the panel
->    means the vendor's ladder and the wiring must agree on which state is idle.
-> 2. **`gpiomon -l / --active-low`** — present on both v1 and v2. Flips edge sense so "rising" means
->    *the channel became active*, matching what `FieldIo` already does for levels and the handoff's
->    own wording ("a rising edge on IN1", where IN1 is the channel, not the pin). One flag.
-> 3. Watch falling edges explicitly.
->
-> **Whichever is chosen, note the inconsistency it leaves today:** `/api/v1/diagnostics/io` reports
-> **field sense** (an asserted IN1 shows `HIGH`) while the edge monitor triggers on **raw GPIO**, so
-> on a real PLC the screen shows IN1 asserted at a moment the trigger has not fired. Those two
-> should end up agreeing.
->
-> **A latent bug found and fixed while doing item 5, worth the laptop knowing.**
-> `GpioEdgeMonitor` built **libgpiod v1** arguments and this CM4 has **v2.2.1**, which renamed all
-> three: `--rising-edge` → `--edges=rising`, the chip → `-c`, `%s.%n` → `%S`. **v2 prints an unknown
-> format specifier literally**, so every edge would have arrived as the text `18 %s.%n`, failed to
-> parse, and left the monitor reporting itself broken while `gpiomon` worked perfectly. It had not
-> bitten only because this unit's site config has `gpio.enabled: false` — it would have failed the
-> instant the sensors were switched on and looked exactly like bad wiring. Now auto-detected from
-> `gpiomon --version`, overridable by `tunnel.v1.gpio.libgpiod-major`, both syntaxes pinned by tests.
-> **The bench rig is v1.6.3 and stays a valid comparison point; this is another axis on which the
-> two machines differ.**
->
-> **Also: the internal-pull trick for faking an edge does not work on this carrier.** The external
-> 10 kΩ pull-up dominates the internal pull, so an input reads high in both states. Drive the pin
-> instead — `pinctrl set 18 op dl` then `op dh` — verified 2026-08-31, and put it back to `ip pd`.
->
-> **One decision made rather than asked, and the laptop should hear it:** removing the
-> `matched >= expected` short-circuit from `ResultMapper` also changed **Managed Reading**. A
-> `timed: true` read that ran its full window with its count met used to report `COUNT_REACHED` and
-> now reports `SETTLED` or `TIMEOUT` on the evidence. Handoff-05 §3.3 is scoped to Super Fast Mode
-> and did not call this path out; one rule over one field was chosen deliberately, because two rules
-> over one field is how `V1Service` and `ResultMapper` drifted apart before. **`countReachedAt` is
-> the name chosen for §6.3's new field**, which the laptop asked to be told.
+With an antenna on both ports and the tags unmoved: **J20 best −49 dBm over 3 EPCs, J25 best
+−25 dBm over 8.** −25 is this rig's baseline, so the module, PA and switch are fine and the ~24 dB
+loss is inside the J20 branch. J20 is the port the systemd unit had always selected.
 
-1. ~~**Super Fast Mode's close condition changes**~~ **— DONE** (handoff §3.3). Count-met no longer ends a carton —
-   it is recorded with a timestamp. **Settle or the IN2 edge closes, whichever comes first**; the
-   read budget stays as the `TIMEOUT` backstop. In code this is `V1Service.superFastSpec()`:
-   `exitOnSettle` becomes unconditionally **true**, `exitOnCount` defaults **false**.
-   - `stopReason` and `complete` become **fully independent**. A carton that settles short is
-     `SETTLED` + `complete: false`; one that met its count then left is `PACKAGE_EXITED` +
-     `complete: true`. Neither softens the other.
-   - **`ResultMapper`'s stop-reason precedence must be re-derived** — the old ordering let
-     count-not-met beat everything, and that is wrong twice over now.
-   - Publish **once per carton**: the IN2 edge following a settle-closed carton is consumed and
-     discarded. Only an IN1 edge opens a window.
-   - Fix the now-wrong javadoc on `ArmRequest.expectedCount` and `SessionSpec.exitOnSettle` **in the
-     same commit** — that javadoc is the only place this policy is written down in code.
-2. ~~**`exitOnCount` stays a real API-settable flag**~~ **— DONE** (§3.3.1) — optional on the arming call,
-   defaulting to false, absent must never read as true, same name on the wire as in the code, and
-   reported by `GET /api/v1/mode`. It is an arming-time decision, not per-carton.
-3. ~~**`RESULT` on OUT5 (BCM 21) — new firmware**~~ **— DONE** (§2.2). One width-encoded pulse per carton:
-   **100 ms = FAIL, 500 ms = PASS**. Exactly one, never a retry. Emit **asynchronously** so a 500 ms
-   hold cannot block the next carton, and **log the achieved width** so drift shows up here rather
-   than as a customer complaint. There is no "no verdict" — reaching the end undecided emits FAIL.
-   The real deadline is the next carton's ZONE_ARRIVE, not the PLC's 60 s window.
-4. ~~**`HEARTBEAT` on OUT6 (BCM 12) — new firmware**~~ **— DONE** (§2.3). 1 Hz, 500 ms high / 500 ms low, **on its
-   own thread with nothing else on it**. The PLC faults the line if it sees no transition for 3 s,
-   so it must survive a read, a callback retry storm and a spool replay. It means only "the
-   application is running" — deliberately not "the module is up".
-5. ~~**`SHUTDOWN_REQUEST` on IN3 (BCM 18) — new firmware**~~ **— DONE.** Pulse count is
-   configurable: `--tunnel.plc.shutdown.pulses=1` for a push-button bench test. Original spec: (§4). Five 200 ms pulses inside 5 s;
-   four or six is not a request and is discarded silently. `GpioEdgeMonitor` needs a **third line**
-   plus a burst recogniser — and note that adding line 18 changes the `gpiomon` command line and its
-   parse. Keep "missing hardware is degradation, not failure": a bench with no PLC must still start.
-   - **The shutdown ordering is the whole point.** Heartbeat keeps toggling through steps 1–5 and
-     goes low **only after the serial counter is committed and fsynced**. Dropping it at step 1
-     tells the PLC "safe to cut power" while we are still writing — building the exact corruption
-     the sequence exists to prevent. Whole sequence must fit in 60 s.
-   - **IN3 is no longer `READER_ENABLE`.** Any code holding the reader up or down on an IN3 *level*
-     must go.
-6. ~~**`GET`/`POST /api/v1/diagnostics/io`**~~ **— DONE.** Original spec: (§5a) — ADMIN scope, explicit `ScopeRules` entry rather
-   than relying on default-deny. The admin UI's PLC I/O tab is already built against it and shows
-   404 until this lands.
-   - **`level` is the FIELD sense, not the GPIO level.** Inputs are inverted at the GPIO, so do the
-     inversion inside the reader. Get this wrong and the screen, the vendor's drawing and the
-     multimeter all disagree — and the person with the multimeter is right. This is the single most
-     likely thing to get wrong here, and it looks like working software until someone is on a ladder.
-   - `POST` returns **`409 reader_armed`** while Super Fast is armed; `GET` is never refused.
-     Read every channel back after applying and return the read-back, never what was asked for.
-7. **Do not**: drive OUT7 (BCM 13) or read IN4 (BCM 25) — both parked; use the SIM7500's own GPI for
-   the trigger; treat IN3 as a level; emit more than one RESULT pulse.
-8. **← NEXT. Bench tests 1–15 in handoff §7.** Test 6 is the one not to skip: a 380 ms pulse where 500 ms
-   was meant fails as a **silent wrong answer** at the customer, while everything else fails loudly.
-   Edges can still be produced by flipping the pins' internal pulls, as before.
+### State the unit was left in
 
-> **Already correct — do not "fix" these** (handoff §0.1): the J26 field-input trigger path, the
-> `stdbuf` wrapper in the gpio config, and the `degraded` fallback and its reporting.
+- **Service running**, PID under systemd, jar and `.so` both v260827, site config patched.
+- **Antenna select is ANT2 / J25** — set by `ExecStartPre` in `deploy/intelli-rfid-tunnel.service`.
+  `run.sh` still defaults to `ANT=1`, so **a bare `run.sh ProbeBasic` tests the BROKEN branch.**
+- Region `RG_EU3`, 27 dBm, session S1, `settle-ms` 800, FastID on, `valid-eans` empty.
+- Everything committed and pushed in all four repos that changed.
 
-#### B. The board's own loose ends
+### Next actions, in order
 
-9. **Test the TID commissioning path.** Proven at the module 2026-08-29, still has no unit test.
-10. **Reboot once and confirm the service comes up reading** — the pins, the UART and the systemd
-    unit have never been exercised together from cold.
-11. **`RG_IN`: the updated vendor Java API doc set was expected today, 2026-08-31.** Everything runs
-    on `RG_EU3` by decision until it lands. When it does, the first question is whether it carries
-    new module firmware or an unlock procedure — **a doc change alone cannot alter what the module
-    accepts.**
-12. **The hop-table narrowing in `applyConfig()`** (open item C in the runbook). Until it lands this
-    board hops 867.5 MHz, outside the Indian allocation, and its channel plan is whatever the last
-    probe left. Region must be written **before** the table, because setting the region rewrites it.
-13. **Re-probe `bench-tag-register.jsonl`.** All 18 tags were written on the 29th, so its `role`
-    values record what was planned on the 28th rather than the state of the rig. The TID keying
-    survives, which is why it was keyed that way. Any test assuming "2 of 18 valid GS1" needs its
-    assumption re-checked against what is actually on the tags.
+1. **Bisect the J20 branch — physical, no software.** Swap the two cables at the board, leave the
+   antennas and tags where they are, re-run both ports:
+   ```bash
+   sudo systemctl stop intelli-rfid-tunnel && sleep 3 && pgrep -x java   # must print nothing
+   ANT=1 /home/intelli-sbc/api/run/run.sh ProbeBasic
+   ANT=2 /home/intelli-sbc/api/run/run.sh ProbeBasic
+   ```
+   Weakness follows the cable → replace the cable. Weakness stays on J20 → it is the board's J20
+   connector or that arm of the SP4T. **Then put the unit back to ANT1** (`pinctrl set 8 op dh`,
+   `9 op dl` in the unit file) so the documented default is the live one again.
+2. **Re-derive `settle-ms` — but OPEN THE WINDOW FIRST. Done as far as the existing spool allows
+   (2026-09-08); the answer is that the spool cannot answer it.** The "sort `firstSeen`, diff, take
+   the worst, double it" recipe is **circular when run on cartons read at the window being tested**:
+   a gap longer than `settle-ms` cannot appear, because the window closed the carton and the late
+   tags are simply missing from the result. All seven 38-article cartons were read at 800, so they
+   can only ever confirm 800.
 
-### One contradiction in the new documents — resolve before building to it
+   What the whole spool does say (416 SETTLED cartons, full table in `CLAUDE.md`): the honest
+   evidence for 800 is the **39 cartons of 09-01…09-04 that ran at a 1500 ms window**, where a
+   longer gap was free to appear and the worst was **567 ms** — a 1.4× margin, not the 2× claimed.
+   The 08-29/08-31 cartons show 18 gaps between 800 and 1503 ms, and **RSSI does not explain them**
+   (median −44 vs 09-07's −43), so that is a configuration difference — `session: 2` is the prime
+   suspect — not the bad antenna branch. Encouragingly, the 29–38 tag cartons had the *shortest*
+   gaps of all (median 200 ms).
 
-`PLC-INTEGRATION-DVP12SA2.md` §4 carries the **superseded** channel map and calls itself
-authoritative (§4.3: *"§4 above is now the authoritative copy"*). Verified against the `.docx`
-itself on 2026-08-31 — the `.docx` and handoff-05 agree, and the `.md` does not:
+   **To actually close it:** set `settle-ms: 1500`, run a batch of full 38-article cartons, read the
+   gap distribution off *those*, then bring the window back to twice the worst. Do it over the
+   matched tags only — foreign tags no longer hold the window open.
+3. **Antenna multiplexing is still unwritten.** Nothing drives GPIO8/9 at runtime, so the second
+   antenna is dead weight. `docs/Hardware-IntelliRFIDv2.md` §7.3 has the design question: measure
+   stop-inventory → toggle → restart, then pick a dwell from that number. Start/stop is 0–3 ms and
+   20–60 ms measured, and bare start/stop is NOT rate-limited, so this is cheaper than §7.3 assumes.
+4. ~~`intelli-rfid-reader-test` ships `company-prefix: 8905527`~~ **DONE 2026-09-08** — it ships
+   `8909478` now, matching the tunnel, so the bench harness will commission the SKU the tunnel
+   writes. Tests pass.
+5. ~~`SuccessExitStatus=143` in the unit file~~ **DONE 2026-09-08** — a clean `systemctl stop` will
+   report `inactive` rather than `failed`. **Takes effect on the next `redeploy.sh`**, which is what
+   reinstalls the unit file and reloads systemd.
 
-| | `PLC-INTEGRATION-DVP12SA2.md` §4 | **The `.docx` + handoff-05 (authoritative)** |
+### What shipped this session
+
+- **SDK v260827** in core and tunnel (`com.uhf:module-api-j:2.6.0827`). No API signature changed;
+  2.6.0721 is still in `~/.m2` so rollback is one pom line. It did **not** fix the deafness.
+- **The site config was loading TWO `.so` files** — `native-lib-path` into the old SDK tree plus
+  `-Djava.library.path=/opt/intelli/lib`. Byte-identical until now, two different versions after the
+  upgrade. Both now point at `/opt/intelli/lib`.
+- **The shipped SKU allowlist is gone.** `rfid.gs1.valid-eans: []`, so the reader arms for whatever
+  EAN the WMS sends. `PackagedConfigTest` fails the build if a customer's SKUs reappear there.
+- **Settle is scoped to the armed SKU, in two phases.** Foreign tags no longer extend a carton —
+  but only once an article of the SKU has actually been heard, because scoping from t=0 closes
+  shadowed cartons early and makes `stopReason` report SETTLED where it should report TIMEOUT.
+- 251 tunnel tests, 61 core tests, all passing.
+
+### The measurement, so it is not re-derived
+
+Nine Super Fast cartons on the deployed jar, ANT2, v260827:
+
+| seq | stopReason | tags | matched | lastNewTagMs | RSSI |
+|---|---|---|---|---|---|
+| 855 | SETTLED | 18 | 18 / 18 | 801 | −51…−29 |
+| 856 | SETTLED | 29 | 29 / 38 | 801 | −51…−26 |
+| 858 | SETTLED | 34 | 34 / 38 | 832 | −50…−31 |
+| 859 | SETTLED | **38** | **38 / 38** | 806 | −49…−25 |
+
+Carton time 2.09–2.98 s. `lastNewTagMs` 801–883 against `settle-ms` 800 — the watchdog's ~100 ms
+tick, matching 09-04. First 38-article carton this project has read; the previous largest was 18.
+
+---
+
+
+## ⚠ 2026-09-05 — THE FIELD IO WAS REWIRED ON SITE. READ THIS BEFORE ANYTHING BELOW IT.
+
+Bench testing at the site required a change of wiring, and it invalidates several statements further
+down this file. The channel map now is:
+
+| Ch | BCM | Was | Is |
+|---|---|---|---|
+| OUT1 | 26 | `EnC_ExC_RUN` — both belts on one channel | `EnC_RUN` — Entry Conveyor alone |
+| OUT5 | 21 | `LAMP_PASS` green | `ExC_RUN` — Exit Conveyor Run A |
+| OUT6 | 12 | `LAMP_FAIL` red | `LAMP_PASS` green |
+| OUT7 | 13 | parked spare | `LAMP_FAIL` red, **and the shutdown lamp** |
+| IN4 | 25 | parked spare | `EXIT_FULL` ← the Discharge Sensor (DsS) |
+
+OUT2/3/4 and IN1/IN2/IN3 are unchanged.
+
+**Why:** there is no end stop on the Exit Conveyor, so a carton reaching the discharge edge with the
+belt running goes on the floor. DsS has to be able to stop the ExC *without* stopping the EnC, and a
+shared O1 made that impossible.
+
+**What follows.** The line is **no longer serialised** — the previous carton can discharge while the
+next is read. **J26 is full**: O7 was the last free output and the earmarked home for the 1 Hz
+liveness heartbeat, and it is spent. Every claim below that O7 or IN4 is parked, spare or earmarked
+is **superseded**, including §3 and next-action 5.
+
+**The exit interlock is built (`033351c`), to the operator's policy of 2026-09-05 — one package at
+a time:** IN4 asserting stops the ExC in any phase and disturbs nothing else, a read always runs to
+completion, a read closing against a still-occupied edge stops the whole line with the carton held
+in the read zone, and it all resumes by itself when the edge clears. The result is published either
+way. IN4 is a **sampled level** on its own thread, not a `gpiomon` edge, which is what makes it
+independent of the `active-low` question. **The EnC still restarts at read close** rather than at
+the IN2 edge — operator's call, "fine for now", and now a choice rather than a constraint.
+
+**Also still open: the input polarity.** `tunnel.v1.gpio.active-low` is `false` and the two accounts
+of the wiring still disagree (see `application.yml`'s own comment). The deciding measurement is one
+line, and IN4 makes it cheap because nothing holds line 25: `pinctrl get 25` with the DsS beam clear
+and blocked, no need to stop the app.
+
+**Deployed?** The tunnel commits are pushed. Whether `deploy/redeploy.sh` has been run is not
+recorded here — check the running jar. **Until it is, `/usr/lib/systemd/system-shutdown/intelli-lamp.shutdown`
+still writes BCM 12**, which now darkens the *green* lamp at poweroff and leaves the red one lit for
+ever.
+
+---
+
+## The state of the unit right now
+
+**The app is running and healthy.** `intelli-rfid-tunnel` active, **PID 1031**, listening on 8081,
+started **17:44:52**. The jar is still the one deployed at 15:51 from commit `19f3a3d` — the restart
+was a reboot, not a redeploy.
+
+**The board went down and came back at ~17:44, and nobody asked it to.** That is the *second* power
+event of the day and unlike the 15:23 one it was not a test: it killed the Claude Code session
+mid-work, which is how `intelli-wms-test` came to be sitting on disk uncommitted. The reader
+reopened cleanly on its own (`Reader open: module=MODOULE_NONE fw=20.26.03.30`, inventory started).
+**Cause not established.** The clock disagrees with itself across `who -b` (17:44), `ps` (17:48) and
+the log (17:44:52), which is the no-RTC signature of a cut rather than an ordered shutdown — but
+`journalctl` is volatile here, so the transcript that would settle it is gone. **Item 3 below is
+what makes the next one diagnosable; do it before chasing this one.**
+
+**The earlier power cycle at 15:23 was deliberate** — the IN3 shutdown test. See "what this session
+found" below, because that test is what the whole shutdown-safety session came out of.
+
+**Deployed and live:**
+
+- The late shutdown-lamp hook at `/usr/lib/systemd/system-shutdown/intelli-lamp.shutdown` (0755,
+  installed 15:51). `intelli-shutdown-lamp.service` is gone — `systemctl is-enabled` says
+  `not-found`, which is correct and is what you want to see.
+- Step 5 of the shutdown sequence now runs `/bin/sync`.
+
+**Committed and pushed but NOT deployed:** `e71a5f2`, which parks O7. ~~It rides along on the next
+`deploy/redeploy.sh` and needs nothing special.~~ **SUPERSEDED 2026-09-05** — O7 is the red and
+shutdown lamp now, so that commit's premise is gone. It is history in the branch, not something to
+deploy on its own.
+
+---
+
+## What this session found, in the order it mattered
+
+### 1. The IN3 shutdown is a proper OS shutdown. The lamp was the problem.
+
+The question that started it was whether the IN3 poweroff is "like a power cycle". **It is not** —
+it runs `sudo systemctl poweroff`, identical to `sudo poweroff`, and the app's own five steps take
+120 ms with the full OS phase after them. What makes it *feel* instant is the comparison: bare
+`sudo shutdown` is `shutdown -h +1` and waits a whole minute.
+
+**But `intelli-shutdown-lamp.service` was putting O6 dark one phase too early.** It was ordered
+`After=umount.target Before=final.target`, which is systemd's *first* phase; the root filesystem is
+remounted read-only and synced in the *second*, inside `systemd-shutdown`, after `final.target`. So
+the lamp said "24 V may be removed" while `/` was still mounted rw with dirty pages. Fixed by moving
+it to `/usr/lib/systemd/system-shutdown/`, which `systemd-shutdown` runs after that remount. Full
+reasoning is in `CLAUDE.md` and in the script's own header.
+
+**Step 5 also never synced.** It was called "leave storage safe to interrupt" but only awaited
+`CallbackSender.awaitQuiet()`, which is network quiescence. `JsonlSpool.append` has no fsync and
+`dirty_expire_centisecs` is 3000, so up to 30 s of carton results could be in page cache. Now
+syncs, injected as a `Runnable` so the tests pin the ordering.
+
+### 2. There was a hard power cut at ~15:17 today, before the IN3 test
+
+Not caused by the shutdown — established by the spool: the JVM that booted afterwards logged
+`resuming from sequence 802`, so record 802 and the NUL bytes after it were already on disk before
+that boot. Two files carry NUL holes from it:
+
+| File | Damage | Done? |
 |---|---|---|
-| OUT5 | `RESULT_OK` | **`RESULT`**, width-encoded |
-| OUT6 | `RESULT_FAIL` | **`HEARTBEAT`** |
-| OUT7 | `SPARE_OUT` | **parked** |
-| IN3 | `SPARE_IN` | **`SHUTDOWN_REQUEST`** |
-| IN4 | `SPARE_IN` | **parked** |
+| `/opt/intelli/logs/intelli-rfid-tunnel.log` | 3377 NUL bytes mid-file | left alone, it is a log |
+| `/var/lib/intelli/tunnel/spool/inventory-2026-09-04.jsonl` | 1689 NUL bytes at the tail | 🔴 **not trimmed** |
 
-Handoff-05's "Changed?" column is written as a diff *against* that §4 map, so it is the intended
-baseline — but nothing in the file says so. **Take channel functions from the `.docx`, never from
-§4**, and ask the laptop to add a supersession header. Its §8 open item *"locate
-`PLC-Digital-IO-Interface.md`, not present on this machine"* can also be closed: it is here at
-`docs/PLC-Digital-IO-Interface.md`, and handoff-05 §0 already rules it superseded on channel
-assignment and semantics, still sound for electrical reasoning.
+Everything else is clean: 1293 files scanned, `git fsck` clean on all five repos, jar intact, no
+ext4 errors, no I/O errors, root mounted with no journal replay.
 
-**Committed and pushed 2026-08-31** across all four repos — root docs, the TID commissioning change
-in core, the Java 21 poms, `bench-probe/run.sh` and the tag register. Nothing is outstanding.
-
----
-
-## 0. What changed on 2026-08-29 — and the thing that changed the priorities
-
-**The project moved to production hardware.** Piyush is standing up the real unit: a **CM4 on our
-own IntelliRFID v2.x carrier**, with the SIM7500 soldered on (U20), instead of the vendor dev board.
-This bench — a Pi 4B plus the "Develop Component A" board — is now the *second* machine, not the
-only one.
-
-**`CM4-PRODUCTION-BRINGUP.md` is the runbook for that unit**, and it is the first thing to read if
-you are on the new CM4. Fresh flash → packages → UART → SDK → the four clones → build → site config
-→ systemd, each step with a verification line. Steps 1–6 are what is installed and working here;
-steps 7 and 8 have now been run on the v2.x board (§−1), and **steps 3, 9 and 10 are still read off
-`docs/Hardware-IntelliRFIDv2.md` rather than measured**.
-
-Its action box is the part that matters: **five things about that carrier the code does not handle**,
-each enough on its own to make a correctly installed unit read nothing — `RFID_EN` on GPIO22 leaves
-the module **off at boot**; the SIM7500 is **mono-static**, so `antenna-count` is 1 and both antennas
-sit behind an SP4T on GPIO8/9 that nothing drives; **GPIO23/24 are active-LOW field inputs** while
-`GpioEdgeMonitor` is hardcoded to rising edges; the power ceiling is **27 dBm**, not 30; and the
-antenna port must be selected **before** the reader is enabled. To that five, add a sixth found on
-the board itself: **`RFID_NRST` on GPIO10 boots low and holds the module in reset** (§−1). Region
-`RG_IN` is answered — refused on this module too; run `RG_EU3` with a narrowed hop table.
-
-**Open item 6 is done: a faulted reader now reconnects on its own** (see §4.6). Verified on hardware
-against a real `IO_RECV_TIMEOUT`.
-
-Everything below this line was written about **this bench**. Where it says "the CM4" it means the
-Pi 4B, and a claim about wiring or pinout does not carry over to the carrier — see
-`docs/Hardware-IntelliRFIDv2.md`, which is authoritative for that board.
-
----
-
-## 1. Where the work is now
-
-**The customer contract is implemented and running.** `/api/v1` — all five endpoints, the result
-object, the three-bucket classification, `COUNT_REACHED`, the durable sequence, the callback sender
-with retry/spool/replay, the mode state machine, scope enforcement with security **on**. Driven
-end to end against the real module: Super Fast armed and reported thirty cartons autonomously, both
-Managed Reading forms work, every documented error slug and status code checked.
-
-The priority change in `HANDOFF-LAPTOP-TO-CM4-TUNNEL-04.md` is done. The audit was folded into the
-build, as instructed.
-
-### The two things a next session should pick up first — on this bench
-
-(If you are on the **production CM4**, your list is `CM4-PRODUCTION-BRINGUP.md` instead.)
-
-**1. Run the laptop's REST client against this reader.** That is the acceptance evidence nobody has
-yet — it shares no code with the reader and checks every response against the `.docx`. Port 8081,
-`callbackUrl` must be the laptop's LAN address. The one case I could not test is a **slow** WMS: a
-5 s delay against the 2 s deadline is what proves the carton release really does not wait on the
-callback.
-
-**2. Commission the bench tags — this needs a person.** Gen2 cannot address "the next unwritten
-tag", so someone has to present tags **one at a time**. All 18 tags were written on 2026-08-29. The
-register — `apps/intelli-rfid-tunnel/tools/bench-tag-register.jsonl`, keyed on TID, 18 tags, all
-Impinj — is therefore stale in its EPC column and needs re-probing; the TID keying survives, which
-is why it was keyed that way. Read `bench-tag-register.md` beside it.
-
----
-
-## 2. Running it
+**To trim the spool tail** (safe with the app running — it only appends):
 
 ```bash
-cd apps/intelli-rfid-tunnel
-mvn -o package
-java -Djava.library.path=/opt/intelli/lib \
-     -jar target/intelli-rfid-tunnel-1.0.0-SNAPSHOT.jar \
-     --spring.config.additional-location=file:/etc/intelli/intelli-rfid-tunnel/
+cp /var/lib/intelli/tunnel/spool/inventory-2026-09-04.jsonl{,.bak}
+truncate -s 194919 /var/lib/intelli/tunnel/spool/inventory-2026-09-04.jsonl
 ```
 
-`/etc/intelli/intelli-rfid-tunnel/application.yml` holds the bench overrides and the two API keys. It is **not**
-in git and it is not in the jar, which is the point: rotating a key is a config change and a
-restart.
+It is harmless as it stands — both `JsonlSpool` read paths catch the bad line and skip it at DEBUG —
+which is exactly why it would otherwise sit there forever.
 
-- **`-Djava.library.path=/opt/intelli/lib` on every java command.** Still mandatory.
-- **Security is on and the app refuses to start with no keys.** The bench keys are in that file
-  (SHA-256 only). They are disposable and must be revoked before this unit goes near a customer.
-- **The bench runs `session: 0`, set in that file.** With the packaged `session: 2` and a continuous
-  carrier, a static bench population answers once and then goes silent — the first v1 read I ran
-  returned zero tags and looked exactly like a broken layer. This does **not** settle the S2
-  question; see §4.
-- `--tunnel.auto-trigger=true` if you want the old bench behaviour on `/api/inventory/**`. It is off
-  by default now, because arming Super Fast sets the trigger itself with the armed SKU and count.
+### 3. O7 was parked; the panel drawings said otherwise — SUPERSEDED 2026-09-05
 
-One-shot probes still work the same way and are still the right tool for anything hardware-shaped:
+O7 had carried no traffic since the one-lamp decision on 2026-09-04, but still declared
+`SAFE_TO_POWER_OFF`, so `isParked()` was false and `docs/Tunnel-Interconnect.md` v0.5 still told the
+panel builder to fit a lamp beside the shutdown button. Built to that drawing, an operator would
+read a dark `SAFE_TO_POWER_OFF` as "not yet safe" and wait forever, next to the lamp that was
+actually telling them. It was parked in code and withdrawn from every document.
 
-```bash
-cd apps/intelli-rfid-reader-test/tools/bench-probe
-./run.sh ProbeVerify    /dev/ttyAMA0 3000 2 0 -250 107   # does the module keep what you set?
-./run.sh ProbeFastId    /dev/ttyAMA0 3000 4000           # FastID: mechanism and cost
-./run.sh ProbeRegister  /dev/ttyAMA0 3000 5000 out.jsonl # population register + FastID identity check
-./run.sh ProbeSettle    /dev/ttyAMA0 3000 2 4 1500 20000 50 0
-```
+**That lasted one day.** The site rewiring of 2026-09-05 made O7 the red lamp and the shutdown lamp,
+so `isParked()` is false again — for a real reason this time — and a lamp *is* fitted there. Nothing
+on J26 is parked any more.
 
-**Stop the app before running a probe** — one process owns `/dev/ttyAMA0`.
+**The heartbeat has lost its home, and this is the cost worth remembering.** O7 was earmarked
+because the one capability this design lost and never replaced is the 1 Hz liveness signal that let
+a watchdog stop the line after 3 s of silence and survived a hung JVM. There is no free output left
+to put it back on. Getting it back now means RS-485 to the drive cards, which would free O1–O5 at
+the same time.
 
----
+### 4. `intelli-wms-test` — a sixth repo, written 17:33–17:46 and nearly lost
 
-## 3. What changed under the hood, in one paragraph each
+A new laptop app, port 8083: **a WMS reduced to arming Super Fast Mode and showing the carton that
+comes back.** Tags expected, tags found, time taken, then every tag with EPC and TID. 20 files,
+~2100 lines, `mvn package` green with tests, jar built at 17:46 in `target/`.
 
-**The verified setter.** `applyConfig()` now sets *and reads back* rf-mode, session, target, Q,
-region and power, and throws naming what was written and what came back. The general rule is in
-`CLAUDE.md`: **a return code from this SDK is a lower bound on success, not a confirmation.** Do not
-extend this to the per-read path.
+It is not a duplicate of admin's WMS simulator. Admin asks *does the reader behave*; this asks
+*could a WMS integrator use it*, and answers it by holding **nothing but the INVENTORY key** and the
+five documented endpoints. The full reasoning, and the two rules that stop it flattering the reader
+(found is `matched.count`; the verdict pill is the reader's own `complete`), are in `CLAUDE.md`.
 
-**The dead read modes fail loudly.** `EX_FAST` and `IMPINJ_FAST` throw at `startReading` with a
-message naming the firmware cause. No `GENERAL_FAST` value was added. `NORMAL` is the packaged
-default.
+**It is a temporary app** — the customer's own integration replaces it, and it is disabled by
+rotating the `site-wms` key on the reader (operator's decision, 2026-09-04). That is why the live
+INVENTORY key is committed in its `application.yml` in plaintext: the jar is handed over and
+double-clicked with no setup.
 
-**FastID is on, at connect.** The TID arrives appended to `EpcId` with the PC word grown to match —
-*not* in `EmbededData`. Verified: 18 of 18 EPCs identical with it off and on. It costs ~25% of raw
-read rate. **Do not toggle it per request**: four inventory restarts in thirty seconds made the
-module raise `MODULE_NEED_RESTART` and stop reading.
+**It had no `.git` at all until 17:5x**, and that is the lesson worth keeping. It was written,
+built, and left through a reboot with nothing tracking it — and the root `git status` stayed clean
+the whole time, because the root repo ignores `apps/` by design. Nothing anywhere would have said a
+word. **`git init` belongs to creating an app, not to finishing one**; at close-out, walk `apps/*/`
+by directory and check each one *has* a repo, rather than iterating the repos that exist. Now
+`db8e136` on `origin/main` at `.../v1/repos/intelli-wms-test`.
 
-**`tid: true` is now a rendering flag**, not a radio one.
-
----
-
-## 3a. Super Fast is sensor-driven
-
-GPIO23 rising opens the read, GPIO24 rising ends it, and the count and settle are recorded rather
-than acted on. Stop reason: count not met is `PACKAGE_EXITED`; count met and settled is `SETTLED`;
-count met and still yielding is `COUNT_REACHED`. `endedAt` is the moment the count was met — not
-when the carton left — and `settledAt` is new. All three tested on hardware.
-
-**No sensors are wired.** The edges were produced by flipping the pins' internal pulls, which is a
-real edge as far as the kernel is concerned:
-
-```bash
-pinctrl set 23 ip pu && sleep 4 && pinctrl set 23 ip pd    # carton enters, dwells
-pinctrl set 24 ip pu && sleep 1 && pinctrl set 24 ip pd    # carton leaves
-```
-
-`gpiomon` holds the lines exclusively, so a probe on those pins while the app is running gets
-`Device or resource busy` — that is the app working, not a fault.
-
-**`stdbuf -oL` in front of `gpiomon` is load-bearing.** Without it every edge is detected and then
-sits in a 4 KB stdio buffer, and the tunnel silently never triggers. See CLAUDE.md.
-
-## 4. Open, in rough priority order
-
-1. **Run the laptop's REST client** (§1) — the missing acceptance evidence.
-2. **Commission the tags** (§1) — needs a person, and an answer on write-14-or-16.
-3. **The document needs `PACKAGE_EXITED`, `settledAt` and the new `endedAt` semantics** —
-   §7a of the handoff lists them. The laptop is updating the `.docx`.
-4. **The four invented error slugs** — `invalid_mode`, `timed_required`, `expected_count_required`,
-   `invalid_direction`. The `.docx` has no slug for a malformed body. They are the only slugs a
-   caller can see that the customer has not been told about.
-5. **`ean` cannot always be an EAN-13.** The bench SKU is GTIN-14 `98905190881260` — indicator 9, a
-   variable-measure item. Confirmed in the read path now, not just the write path.
-6. ~~**A faulted reader does not reconnect.**~~ **Done 2026-08-29.** `ReaderService` now runs an
-   `rfid-supervise` thread that closes, reopens and restarts inventory after a fault, with a backoff
-   that only resets once the reader has stayed up for a minute. Verified on hardware against a real
-   `IO_RECV_TIMEOUT` (de-mux RXD0 with `pinctrl set 15 ip pd` to reproduce): five failed attempts
-   backing off 5→10→20→40→60 s, recovery as soon as the module was reachable, second fault recovered
-   in 5.5 s. `recoveries`/`lastRecoveryAt` on `/api/reader/status` and `/actuator/health`.
-   See `CLAUDE.md` for the two non-obvious parts (why the backoff does not reset on reconnect, and
-   why recovery is a latch rather than a state observation).
-7. **The lock path has never touched a tag.** Implemented in full — write → verify → password →
-   lock → confirm, `BANK1_LOCK` never `BANK1_PERM_LOCK`. Run it on a sacrificial tag before it goes
-   near stock.
-8. **S2 persistence** — still parked, still unresolved, and now also the reason the bench cannot run
-   the packaged config. Bracket at 20/30/45/60/120 s with `ProbeSettle`; also worth testing S1 and a
-   Select forcing inventoried → A. *Ask before starting: about 30 minutes.*
-9. Everything else in `HANDOFF-LAPTOP-TO-CM4-TUNNEL-04.md` §3 — Select action control, `TAG_FILTER`
-   on-air vs post-filter, mixed-silicon FastID (needs a sourced NXP tag; there is no non-Impinj tag
-   on this bench any more), TagFocus, the discovery curve.
+**Never run against a live reader.** Unit tests only. See next action 0.
 
 ---
 
-## 5. Things that will waste your time if you forget them
+## Next actions, in order
 
-- **`-Djava.library.path=/opt/intelli/lib` on every java command.**
-- **One process owns the serial port.** Stop the app before a probe, and vice versa.
-- **`--rfid.reader.region=RG_EU3`** — in the bench config file now. The module refuses `RG_IN`.
-- **Ask the operator to start and stop long-running apps** if backgrounded JVMs are being killed at
-  tool-call boundaries. In this session the harness's background tasks survived across turns and
-  `TaskStop` shut them down cleanly, which made driving the live API practical for the first time.
-- **Do not test S2 with the carrier left on.** It looks exactly like a dead reader. Twice now.
-- **`/api/inventory/**` is not the contract.** It is the diagnostic surface. Do not reshape it to
-  match v1 and do not put it in customer documentation.
-- **The internal `CloseReason` has four values; the contract's `stopReason` has three.** Map at the
-  boundary. Do not rename the internal enum.
+0. 🔴 **Run `intelli-wms-test` against this reader, end to end.** It has never met a real one — every
+   claim in its README is unit-tested inference. The tunnel is up on 8081, the jar is built, and the
+   bench population is 18 tags. What this first run is actually testing is the **callback path**,
+   which is the half no unit test can reach: arm from the page, put a carton through, and see the
+   result *arrive*. If the page sits empty with the reader reporting a perfect carton, the callback
+   URL is the suspect before anything else — check `callbacks.jsonl` on the reader and remember that
+   the spool replays independently of arm state, so a backlog from an earlier address will retry all
+   day and read as the arm path being broken.
+
+   Two known-honest failures to expect rather than debug: `expected-token` blank reports
+   `NOT_CHECKED` (the tunnel sends no token today), and an empty TID column means FastID — which is
+   on, so TIDs should appear.
+
+1. 🔴 **Reconcile `power-off-os` in the site config.** `/etc/intelli/intelli-rfid-tunnel/application.yml`
+   line 282 is `power-off-os: true`, and the comment block immediately above it says **"FALSE FOR
+   NOW, deliberately"**. The value is what runs; the comment is what the next person believes. Same
+   shape as the old `session: 2` drift. Needs root — the file is `root:intelli-sbc 0640`.
+
+   Decide which is meant. **True is a real hazard on a bench unit**: a spurious IN3 hold powers the
+   board off and it needs hands at the panel to come back.
+
+2. **Watch O7 through the next IN3 shutdown** — the RED lamp, BCM 13. It was O6 until the
+   2026-09-05 rewiring, and watching O6 now means watching the green PASS lamp, which does nothing
+   during a shutdown. **This only works once `redeploy.sh` has reinstalled the shutdown hook**, since
+   the installed copy writes BCM 12. This is the acceptance test for the lamp fix and
+   nothing else proves it. Expect blinking → solid → **dark**, with a visibly longer gap before
+   dark than before — that gap is the root remount-ro and final sync you were previously being
+   invited to interrupt. If dark never comes, check the hook is still 0755: `systemd-shutdown`
+   silently skips a file it cannot execute.
+
+3. **Make journald persistent.** `/var/log/journal` exists but is empty, so journald writes to
+   `/run` and every shutdown's transcript dies at the next boot. That is why item 2 has to be
+   watched by eye rather than read out of a log afterwards.
+   ```bash
+   sudo systemd-tmpfiles --create --prefix /var/log/journal && sudo systemctl restart systemd-journald
+   ```
+   After that, `journalctl -b -1` answers "did that poweroff unmount cleanly?" in one command.
+
+4. **Trim the spool tail** (§2 above), or decide to leave it.
+
+5. **WITHDRAWN.** This said "deploy `e71a5f2`, which parks O7". Deploying that commit *as written*
+   would blank the channel the red and shutdown lamps now live on. It has been superseded by the
+   2026-09-05 rewiring commits, which are what `deploy/redeploy.sh` will pull.
+
+6. **Consider fsync per spool append.** The step-5 sync covers the shutdown path, but a carton
+   result is still only durable within ~30 s of an unexpected cut. That is a hot-path change (one
+   fsync per carton on eMMC) and a separate decision from anything done this session.
+
+7. **Still open from before:** the EnC stop delay versus EnS placement (a carton is dragged if EnC
+   stops the instant EnS fires) — unchanged, and still wants the real geometry.
+
+   **The discharge-starts-EnC consequence of the module-fault path is now solvable rather than
+   solved.** It was forced while EnC and ExC shared O1; they are separate channels since 2026-09-05,
+   so the fault path *can* raise O5 alone. Nothing does it yet, and `setBelts()` is where it goes.
+
+8. **Done — the IN4 discharge interlock is built** (`033351c`), see the banner. What is *not* done
+   is proving it against the real sensor: `pinctrl get 25` with the beam clear and blocked, then a
+   carton driven to the edge to watch O5 drop. Until that runs, the interlock is correct in tests
+   and unwitnessed on hardware.
+
+9. **Derive `tunnel.field.exit.sample-ms` from the geometry.** It is 250 ms, which at 0.5 m/s is
+   125 mm of travel past the beam before the belt is told to stop. Measure beam-to-edge, divide by
+   the ExC's linear speed, halve it. If the answer is under ~100 ms the sensor is too close to the
+   edge and moving it is the fix.
 
 ---
 
-*CM4 bench session, 2026-08-28; updated 2026-08-29 with the production bring-up and the
-fault-recovery fix.*
+## Traps this session added to the pile
+
+- **A NUL run inside a text file is the fingerprint of a hard cut**, and it dates the cut. ext4
+  journalled the inode's new size but the data blocks never landed. Nothing logs it and the app runs
+  straight over it.
+- **The CM4 has no RTC that survives an unclean cut**, so the boot after one restores a stale
+  timestamp and the log appears to run *backwards*. Two files stamped 15:17 can sit after a boot
+  line stamped 15:15. **Order by PID, not by clock** — a low PID means a fresh boot.
+- **`systemd-shutdown` silently skips a non-executable file** in `system-shutdown/`. The symptom is
+  a lamp that never goes dark on a board that is off, which reads as a hung shutdown and appears in
+  no log at all.
+
+---
+
+## Repositories
+
+**Six now, not five** — and one of them did not exist as a repo an hour ago. All clean and pushed.
+
+| Repo | Head |
+|---|---|
+| `intelli-rfid-reader` (docs) | 2026-09-05: the rewiring across `CLAUDE.md`, `docs/` and this file |
+| `intelli-rfid-tunnel` | 2026-09-05: `cbe8343` the rewiring, then the O5 diagnostic-write warning |
+| `intelli-rfid-core` | `b058f42` unchanged |
+| `intelli-rfid-reader-test` | `940c4d8` unchanged |
+| `intelli-rfid-admin` | `f843370` lamps moved up a channel, BELTS pill added |
+| `intelli-wms-test` | `db8e136` **root commit** — new today |
+
+`intelli-rfid-wayside` is a sixth app in the layout table but **is not checked out on this CM4**; do
+not read its absence as a deleted repo.
+
+**Walk `apps/*/` by directory when you do this, not the list above.** The root repo ignores `apps/`,
+so an app with no `.git` is invisible to every status command you would think to run — which is
+exactly how `intelli-wms-test` survived a reboot on luck alone.

@@ -9,9 +9,28 @@ hardware behaviour that are not derivable from the code.
 |---|---|
 | RFID module | Silion **SIM7500**, built on an Impinj **E710** Gen2 RF chip |
 | Host | Raspberry Pi **Compute Module 4**, on board the reader — this runs the apps |
-| Architecture | **aarch64** — use `libs/aarch64/libModuleAPIJni.so` |
+| Architecture | **aarch64**. Path moved with the SDK: v260721 has `libs/aarch64/`, **v260827 has `libs/linux/aarch64/`** |
+| Antennas | **The SIM7500 has ONE mono-static port.** The two connectors are fed from it by the board's **PE42442A SP4T**, switched by **GPIO8 (V1) / GPIO9 (V2)** — see below |
 | Serial port | **Confirmed `/dev/ttyAMA0`** on the CM4 bench rig (2026-08-27) **and on the production v2.x carrier** (2026-08-29, with `disable-bt` + `uart3`; UART3 takes `ttyAMA3`). A USB bridge gives `/dev/ttyUSB0` |
-| Region | `RG_IN` is the intent (865–867 MHz Indian band) — **no module we have accepts it**; run `RG_EU3`, see below |
+| Region | `RG_IN` is the intent (865–867 MHz Indian band) — **no module we have accepts it as an operating region**, even with the auth region unlocked to `RG_IN` (2026-09-07); run `RG_EU3` + the 3-channel hop table, see below |
+| Module version | Production module reads **`31.00.0E.80`** since the 2026-09-07 auth-region write, **not** the `31.00.00.80` quoted everywhere else. Same silicon; the third octet is the region marker |
+
+**The module cannot see the antenna switch, and that shapes every antenna test you will ever run
+here.** `MODULE_ONE_ANT`, `antportnumbers=1`, and `antenna-count: 1` is the correct config. The two
+fitted ports are selected only by GPIO8/9:
+
+| V2 (GPIO9) | V1 (GPIO8) | Port |
+|---|---|---|
+| 0 | 1 | **RF1 → J20 (ANT1)** |
+| 1 | 0 | **RF2 → J25 (ANT2)** |
+
+Three consequences. **The SDK's antenna argument is not the port** — `ants = {1}` is right for both,
+and changing it selects nothing. **Every `TAGINFO` reports the same antenna id**, so per-antenna
+attribution has to come from our own latched switch state. And **testing "both ports" with one
+antenna tests one port and a bare connector**, which is the mistake that cost 09-07; see the RF
+section below. Nothing in the application drives GPIO8/9 — the systemd unit sets them once at
+`ExecStartPre` and they never move, so there is no multiplexing and the second antenna is dead
+weight until someone writes it.
 
 **On the production v2.x carrier the module is off and held in reset at boot, and neither the app
 nor Linux does anything about it.** `RFID_EN` = GPIO22 (HIGH = on) and `RFID_NRST` = GPIO10
@@ -21,6 +40,24 @@ silence, which reads like a baud or SDK-version fault and is neither. Raise the 
 first, then EN, then NRST: `pinctrl set 8 op dh; pinctrl set 9 op dl; pinctrl set 22 op dh;
 pinctrl set 10 op dh`. The bench dev board needs none of this, so it is a production-only failure
 mode. See `CM4-PRODUCTION-BRINGUP.md` step 7.
+
+**`systemctl stop intelli-rfid-tunnel` POWERS THE MODULE OFF, and this will cost you an evening.**
+The unit's `ExecStopPost=+/usr/bin/pinctrl set 22 op dl` drops `RFID_EN` deliberately — "a stopped
+service is a quiet radio" — while `ExecStartPre` is what raises 8/9/22/10 in the first place.
+**Nothing else on this board raises them.** So the standard advice below, *stop the app to probe the
+pins*, leaves you probing a module that is switched off, and `InitReader_Notype` answers
+`MT_UNKNOWN_READER_TYPE` — which reads as a baud or SDK-version fault and is neither. Measured
+2026-09-07. Any probe run against a stopped service must raise the four pins itself;
+`/home/intelli-sbc/api/run/run.sh` does. NRST is deliberately *not* dropped on stop, so only EN
+comes back low.
+
+**Region does NOT survive a power cycle — the module reverts to `RG_NA`.** Measured 2026-09-07:
+after EN was dropped and raised, the module came up on `RG_NA` with the full 50-channel
+902–928 MHz hop table at 30 dBm, having been on `RG_EU3` before. The app hides this because
+`applyConfig()` sets the region on every connect, so it has never been visible in normal operation.
+**Consequence for probes: a probe that does not set the region explicitly is testing 902–928 MHz**,
+which is the wrong band for our tags and reads as total deafness. `ProbeBasic` sets and reads back
+region, power and session for exactly this reason; the vendor's `test_inventory10` does not.
 
 The apps run **on the reader itself**, not on a PC talking to a remote reader.
 
@@ -78,6 +115,7 @@ say.
 | **Exit Conveyor** | ExC | EZY-S100 + roller, downstream of the read zone |
 | **Entry Sensor** | EnS | SICK W26 photoelectric at the entry of the read zone |
 | **Exit Sensor** | ExS | SICK W26 photoelectric at the exit of the read zone |
+| **Discharge Sensor** | DsS | SICK W26 at the far edge of the ExC. **There is no end stop there**, so a carton that reaches the edge with the belt running goes on the floor |
 
 "the reader" and "TM" are the user's shorthand and mean exactly those two boxes.
 **The reader never drives a field device directly.** Every output goes through the TM, because a
@@ -85,29 +123,72 @@ reader opto output sinks 1.9 mA at +85 °C and an EZY-S100 control input needs s
 closest published equivalent, Itoh Denki CBM-105, draws 7.3 mA). Wiring:
 `docs/Tunnel-Interconnect.md`.
 
-### J26 functions are remapped for this system
+### J26 functions
 
-The `SPEED0-2` / `DIRECTION` / `RESULT_OK` / `RESULT_FAIL` names in the PLC documents are
-**superseded here**. Pins and BCM numbers are unchanged; only the meanings move.
+`FieldChannel` is the authoritative map and this table mirrors it.
 
 | J26 | Ch | BCM | Reliance tunnel function |
 |---|---|---|---|
-| 1 | OUT1 | 26 | `EnC_ExC_RUN` — Run A of EnC **and** ExC together. **Normally asserted**, see below |
+| 1 | OUT1 | 26 | `EnC_RUN` — Run A of EnC. **Normally asserted**, see below |
 | 2 | OUT2 | 20 | `RZC_RUN_A` |
 | 3 | OUT3 | 16 | `RZC_RUN_B` |
 | 4 | OUT4 | 19 | `RZC_REVERSE` |
-| 5 | OUT5 | 21 | `LAMP_PASS` (green) |
-| 6 | OUT6 | 12 | `LAMP_FAIL` (red) |
-| 7 | OUT7 | 13 | `SAFE_TO_POWER_OFF` — lamp beside the shutdown button; lit only once the counter is closed and the filesystem is read-only |
+| 5 | OUT5 | 21 | `ExC_RUN` — Run A of ExC. **Was `LAMP_PASS` until 2026-09-05** |
+| 6 | OUT6 | 12 | `LAMP_PASS` (green). **Was `LAMP_FAIL`** |
+| 7 | OUT7 | 13 | `LAMP_FAIL` (red), and the shutdown lamp. **Was the parked spare** |
 | 8 | — | — | `FIELD_COM` — the single field 0 V for all 11 channels |
 | 9 | IN1 | 23 | `ENTRY_SENSOR` ← EnS |
 | 10 | IN2 | 24 | `EXIT_SENSOR` ← ExS |
 | 11 | IN3 | 18 | `SHUTDOWN_REQUEST` ← panel push button, 5 s press |
-| 12 | IN4 | 25 | spare |
+| 12 | IN4 | 25 | `EXIT_FULL` ← DsS. **Was spare** |
 
 RZC speed is Run A and Run B **as a pair**: A only = 100 %, A+B = 75 %, B only = 50 %, neither =
 stop. EnC and ExC have Run A only, so they are run/stop at 100 % and share one channel — which is
-why O1 drives two card inputs in parallel and the TM has to be sized for it.
+why O1 drove two card inputs in parallel until 2026-09-05.
+
+**Rewired on site 2026-09-05, and J26 is now full.** Every output from O5 down moved so that the
+Exit Conveyor could have a channel of its own. The reason is DsS: there is no end stop on the ExC,
+so the ExC has to be stoppable *without* stopping the EnC, which a shared O1 made impossible. Two
+things follow. The line is **no longer serialised** — the previous carton can discharge while the
+next one is being read, so cycle time stops being read + discharge. And **there is no spare channel
+left**: O7 was the last one, and it was the earmarked home for the 1 Hz liveness heartbeat, which
+now has nowhere to go.
+
+### The exit interlock — one package at a time
+
+**Decided by the operator 2026-09-05, and the two halves are different kinds of thing.**
+
+- **The ExC is a level, not a phase.** O5 is `running && !exitOccupied` at every instant, computed
+  in one place by `ConveyorController.applyExc()`. It stops the moment IN4 asserts, whatever else is
+  happening. That is the whole of the fall-off protection, and it is deliberately outside the carton
+  state machine — **an interlock with modes is an interlock with a mode in which it does not
+  interlock.**
+- **A blocked exit never interrupts a read.** If IN4 asserts mid-carton the read runs to completion.
+  Only when the read *closes* against a still-occupied edge does the whole line stop, holding the
+  carton in the read zone; it resumes on its own the moment the edge clears. No operator action but
+  the lift.
+
+**The result is published either way.** A held discharge delays the carton, never the callback — the
+read has closed and the verdict is known. That is the mirror of `CartonRelease`'s rule that a slow
+WMS must not stall the conveyor, and both directions matter.
+
+**A blocked line waits indefinitely, and that is specified rather than overlooked.** There is no
+timeout, because a timeout could only resolve to discharging into an occupied edge.
+
+**The wait is not `hold()`.** That is the bench hold, which latches and refuses every command until a
+human releases it; this one resolves itself. Routing it through `hold()` would need someone at the
+panel to restart a line that is behaving exactly as designed.
+
+**IN4 is a sampled level on its own thread, not a `gpiomon` edge**, and all three reasons matter:
+occupancy *is* a level; `gpiomon` claims a line exclusively and would break a diagnostic read of
+line 25; and **an edge cannot tell you a carton was already at the edge when the app started** —
+precisely the state that must not be discharged into. `ExitOccupancyMonitor.start()` reads the level
+before it schedules anything. It is therefore also **independent of `tunnel.v1.gpio.active-low`**,
+since `FieldIo.read()` already speaks field sense.
+
+**The EnC still restarts at read close** rather than at the IN2 exit edge (operator, 2026-09-05:
+"fine for now"). With the belts split that is now a choice rather than a constraint, and moving it to
+the exit edge is a one-line change if a carton is ever fed in on top of one still in the zone.
 
 **IN3 shutdown, and the restart that follows it.** A 5 s press starts the shutdown sequence; O7's
 lamp says when the counter is closed and it is safe to remove 24 V. **Restart is a full power cycle
@@ -115,6 +196,78 @@ and there is no other way** — a shut-down CM4 does not come back on its own an
 system wakes it, so there is no remote recovery and a press means an engineer at the panel. The
 SAMD21 could physically do it (it holds `CM4_EN` off its own 24 V) but **nothing implements that and
 this system does not use it** — do not write code that assumes otherwise.
+
+### The RZC runs continuously in Super Fast Mode — O2 is held HIGH
+
+**Operator decision, 2026-09-09.** `tunnel.field.conveyor.rzc-always-run: true`: the Reading Zone
+Conveyor joins the EnC and the ExC as a belt that simply turns while the tunnel is armed, instead of
+starting on the EnS entry edge and stopping on the IN2 exit edge. Shipped in the packaged
+`application.yml` and in this unit's site config; the `FieldProperties` default stays `false`.
+
+**The gear moved 50 % → 100 % with it and that is the same decision, not a second one.** The
+EZY-S100 ladder is not monotonic — Run B alone is 50 %, Run A alone is 100 %, both is 75 % — so "the
+RZC is running" and "O2 is high" are different machines: at 50 % the belt turns with **O3** high and
+O2 dark. Run A alone is the only gear that leaves O2 high by itself, matching O1 and O5.
+`PackagedConfigTest` pins both values, because either one alone gives the wrong machine.
+
+Two things it buys, and two it does not touch:
+
+- **The transfer straddle stops being a timing problem** — the RZC is already pulling before EnS
+  fires, which is stronger than ordering a spin-up against the EnC stop. And **a missed IN2 edge can
+  no longer strand a box**, since there is no per-carton roller stop to miss; `discharge-max-ms` now
+  only warns.
+- **The exit interlock still wins**, and it is the reason this is not dangerous: a read that closes
+  against an occupied IN4 stops O1, O2 and O5 and holds the carton in the read zone, resuming by
+  itself when the package is lifted. **Every stop still stops** — disarm, module fault, bench hold.
+  Always-run is a resting state, never an override.
+- **The cost is real**: the roller runs all shift, and a carton can no longer be held still in the
+  read field, so more dwell now means a slower gear rather than a pause. At 100 % a carton crosses
+  the zone in half the time it did at 50 %, and reads per tag was already thin at 2–3 — **if a real
+  carton starts reporting short, step down to 75 % (both bits high, so O2 stays high) before
+  touching `settle-ms`.**
+
+### The reverse nudge — O4 pulsed mid-carton, and what a millisecond is worth here
+
+**Added 2026-09-09, off by default.** `tunnel.field.conveyor.reverse` (0, 1 or 2),
+`reverse-after-ms` and `reverse-for-ms` pulse **O4** during a carton's read, to jog the box a few
+millimetres backwards so its articles shift and a shadowed tag gets a second chance. It starts on
+the **IN1 read-open edge** — `ConveyorController.cartonEntered()`, which is where the carton
+actually begins — and `reverse-after-ms[i]` is the gap **before** pulse *i*, measured from the
+trigger for the first and **from the end of the previous pulse** for the rest.
+
+**It is not `reverse(RzcSpeed)`, and the difference is the whole design.** That stops the roller,
+waits `direction-change-dwell-ms` (250), then flips O4. A nudge cannot: the dwell alone is fifty
+times the pulse. So the nudge writes O4 **with the Run bits still high** — a direct reversal of a
+loaded drum motor, which is the one unmeasured motion this application commands. That is why it
+ships off and why `PackagedConfigTest` pins it off.
+
+**MEASURED 2026-09-09 on this CM4: every edge lands ~4 ms late and every pulse comes out ~4 ms
+wider than requested.** The real controller driven with `reverse: 2`, `[100, 101]` and `[3, 5]`,
+four cartons, warm JVM:
+
+| asked | delivered |
+|---|---|
+| rise at 100 ms | **108 ms** |
+| high for 3 ms | **7–8 ms** |
+| rise 101 ms after the fall | **+105 ms** |
+| high for 5 ms | **9–9.5 ms** |
+
+Repeatable to about 1 ms carton to carton. **A cold JVM costs the first pulse another ~25 ms**, on
+the first carton after a restart and no others. The cause is `pinctrl`: every level change is a
+fork, measured at **4.2 ms**, and the pin stays high across the fork that lowers it. **So nothing
+here can ask for less than ~7 ms** — a `reverse-for-ms` of 1 and of 3 are the same pulse. The
+controller logs the *achieved* width of every pulse at DEBUG; tune against that and never against
+the configured number.
+
+What the error costs is **how far the carton actually moves**, not correctness — nothing decodes
+this width, unlike the verdict pulse this project deleted. It is the reason the nudge is a few
+millimetres longer than the arithmetic says.
+
+**The sequence is cancelled and O4 driven low by anything that ends the carton** — the read
+closing, the IN2 edge, disarm, fault, bench hold — because it is folded into `cancelTimers()`.
+**Cancelling needs a generation token and not just `ScheduledFuture.cancel()`**: the pulses chain,
+so a falling edge already running when the cancel arrives has nothing left to cancel and would
+schedule the next rise regardless — a carton discharging with O4 going high behind it.
 
 ### O1 is a state machine, not a level
 
@@ -125,21 +278,25 @@ EnS sees a package (RZC takes over the carton) and goes HIGH again the moment th
 Four things follow, and three of them are not obvious:
 
 - **The backstop is load-bearing.** "Any outcome" must include the ones that are not outcomes: a read
-  that never closes, a reader fault, a supervisor reconnect. If no outcome arrives, O1 stays low and
-  the line is stopped with a box in the tunnel. `tunnel.max-duration-ms` must release O1 too, and the
-  fault path must define O1 explicitly rather than leaving it wherever it was.
+  that never closes, a reader fault, a supervisor reconnect. If no outcome arrives, O1 and O5 stay
+  low and the line is stopped with a box in the tunnel. `tunnel.max-duration-ms` must release them
+  too, and the fault path must define them explicitly rather than leaving them wherever they were.
 - **At boot the line does not run.** Outputs reset low, so EnC and ExC are stopped until the app is up
   and armed. That is the correct failsafe — a dead reader stops the line, it does not run it — but
   someone will power the panel up, see a dead conveyor and think the drive is broken. Say so in the
   operator instruction.
-- **EnC and ExC share one channel, so the line is serialised.** The previous carton cannot discharge
-  while the current one is being read. Cycle time is read + discharge, not max(read, discharge). That
-  is a throughput ceiling bought with the channel budget, and the way out of it is RS-485, which
-  addresses all three cards independently.
+- **EnC and ExC shared one channel until 2026-09-05, which serialised the line.** The previous
+  carton could not discharge while the current one was being read, so cycle time was read +
+  discharge rather than max(read, discharge) — a throughput ceiling bought with the channel budget.
+  **The copper no longer imposes it**, since the ExC has O5 of its own; `setBelts()` still commands
+  the two together, so the ceiling is now a software choice and removing it is free. RS-485 remains
+  the way to address all three cards independently, but this is no longer the argument for it.
 - **Stopping EnC the instant EnS fires drags the carton.** EnS is at the *entry* of the read zone, so
   at that moment the leading edge is on RZC and the trailing edge is still on EnC. Either delay the
   EnC stop by the transfer time, or place EnS far enough downstream that the carton is fully
-  transferred when it fires. **Unresolved — decide from the real geometry.**
+  transferred when it fires. **Unresolved — decide from the real geometry.** Since 2026-09-09 this
+  is only about the EnC: with `rzc-always-run` the RZC is already moving when EnS fires, so there is
+  no spin-up to order against the stop.
 
 **We supply the cards' control power**, which is the `+` / `-` pair on the left of the vendor's
 "PNP IO Control Wiring Principle" drawing: its switches `S1`/`S2`/`S3` are the TM's outputs and its
@@ -234,25 +391,74 @@ intelli-rfid-reader/            repo: intelli-rfid-reader — DOCS ONLY, ignores
     ├── intelli-rfid-core/          shared library — repo: intelli-rfid-core
     ├── intelli-rfid-reader-test/   bench acceptance — repo: intelli-rfid-reader-test
     ├── intelli-rfid-tunnel/        warehouse portal — repo
-    └── intelli-rfid-wayside/       trackside railway — repo
+    ├── intelli-rfid-admin/         laptop admin interface — repo: intelli-rfid-admin
+    ├── intelli-wms-test/           WMS simulator — repo: intelli-wms-test
+    └── intelli-rfid-wayside/       trackside railway — repo (NOT checked out on this CM4)
 ```
 
 `git init` belongs inside each app directory. **Never create a repo spanning `apps/`** — the root
 repo keeps that rule by ignoring `apps/` outright, so a stray `git add -A` at the root cannot
 swallow an app. Nesting the app repos would need submodules and is not what this project does.
 
+**That same ignore is why a new app can exist for hours with no repository at all and nothing
+complain.** `intelli-wms-test` was written, built and left uncommitted across a board reboot on
+2026-09-04 — the root `git status` stayed clean throughout, because the root repo does not look
+inside `apps/`, and the app itself had no `.git` to report anything. **`git init` is part of
+creating an app, not part of finishing one.** When walking the repos at close-out, walk `apps/*/`
+by directory and check each one *has* a repo, rather than iterating over the repos that exist.
+
 ## The apps
 
-| App | Port | Purpose |
-|---|---|---|
-| `intelli-rfid-reader-test` | 8080 | A new reader arrives: is it good? Reads a few tags, writes a few tags, reports pass/fail |
-| `intelli-rfid-tunnel` | 8081 | Warehouse entry/exit tunnel. A box of ~40 tagged articles passes through; a third-party app asks what was in it. Also commissions warehouse tags |
+Two of them run **on the reader**; two run **on the Windows laptop** and talk to a reader over the
+LAN. The port is the giveaway and the distinction matters, because a laptop app has no reader, no
+vendor jar and no core.
 
-| `intelli-rfid-wayside` | 8082 | Trackside railway reader. A train passes; produce the consist |
+| App | Port | Runs on | Purpose |
+|---|---|---|---|
+| `intelli-rfid-reader-test` | 8080 | reader | A new reader arrives: is it good? Reads a few tags, writes a few tags, reports pass/fail |
+| `intelli-rfid-tunnel` | 8081 | reader | Warehouse entry/exit tunnel. A box of ~40 tagged articles passes through; a third-party app asks what was in it. Also commissions warehouse tags |
+| `intelli-rfid-wayside` | 8082 | reader | Trackside railway reader. A train passes; produce the consist |
+| `intelli-wms-test` | 8083 | laptop | A WMS, reduced to arming Super Fast Mode and showing the carton that comes back |
+| `intelli-rfid-admin` | 8090 | laptop | The whole surface: v1 contract, internal endpoints, commissioning, key issuance, bench harness, call log, contract checker |
 
-`intelli-rfid-core` is the shared library underneath all three.
+`intelli-rfid-core` is the shared library underneath the three reader apps. **The two laptop apps
+deliberately do not depend on it** — shared DTOs would serialise and deserialise with the reader's
+own code, so a wire-format regression would cancel itself out on both sides and be invisible to the
+one test built to catch it. Both parse the reader's JSON field by field on purpose.
 
 **The tunnel app is retail/warehouse. Only the wayside app is rail.** Do not conflate them.
+
+### `intelli-wms-test` and `intelli-rfid-admin` overlap, and the overlap is the point
+
+Admin already contains a WMS simulator, so `intelli-wms-test` looks like a duplicate and is not. The
+two ask different questions:
+
+- **Admin asks *does the reader behave*.** It holds an ADMIN key, times and logs every call including
+  the ones that never connected, and checks each response against `docs/Intelli-RFID-RestAPI.docx`.
+- **`intelli-wms-test` asks *could a WMS integrator use it*.** The only honest way to answer that is
+  to hold **nothing but the INVENTORY key** and the five documented endpoints — so the call log, the
+  contract checker, commissioning and the key tooling are deliberately absent. Adding any of them
+  back would destroy what the app is for.
+
+It is **a temporary app, and the customer's own integration replaces it** (operator, 2026-09-04).
+That is why its `application.yml` carries the live `site-wms` INVENTORY key in plaintext: the jar is
+handed over and double-clicked with no setup, and the app is disabled by rotating that key on the
+reader rather than by revoking anything. Do not "fix" the committed key without checking that
+decision still stands.
+
+Two rules it enforces on screen, both of which exist to stop it flattering the reader:
+
+- **Found is `matched.count`, not the number of rows in the table.** The table lists everything that
+  answered, labelled `matched` / `unexpected` / `undecodable`, because 16 of the 18 bench tags carry
+  no GS1 header and "found 2" over an 18-row table is the correct answer.
+- **The verdict pill is the reader's own `complete`, never re-derived.** The contract says stop
+  reason and count are independent; a page computing *found ≥ expected* itself would quietly
+  disagree with the reader on the one number the customer cares about.
+
+`callback.url` blank means the app offers its own site-local IPv4 and labels it a guess — right on a
+laptop sharing the reader's LAN, wrong behind NAT. **Never `localhost`**: the reader would POST to
+itself, every carton would read perfectly, every result would die in a connection refused inside the
+*reader's* log, and the page would sit empty looking exactly like a reader that had stopped working.
 
 ### Two API surfaces on the tunnel, and only one of them is the contract
 
@@ -326,7 +532,125 @@ callback filters and offers; a single dispatcher thread does the fan-out. The qu
 (8192) and drops oldest-first under overload, counting drops — surfaced on `/api/reader/status` and
 `/actuator/health`.
 
+## The RF path was NOT dead — it was one antenna branch, and the unit runs ANT2 now
+
+**RESOLVED 2026-09-07. The section this replaces said the module or the board was faulty and that
+only a bench-board swap could narrow it. That was wrong, and the reason it was wrong is worth
+keeping: every "both ports tried" test up to that point was run with ONE antenna.**
+
+The SIM7500 has **one** mono-static port. The two J26-side antenna connectors are fed from it by the
+board's **PE42442A SP4T**, switched by **GPIO8 (V1) / GPIO9 (V2)** — the module cannot see the switch
+and reports the same antenna id whichever port is live. So flipping `ANT=2` while the only antenna
+stayed screwed to J20 did not test J25; it listened into a bare port. The 09-07 evidence table's
+"both fitted ports tried" line was therefore not evidence of anything.
+
+**With an antenna on BOTH ports and the tags unmoved, the two branches are 24 dB apart:**
+
+| port | distinct EPCs | best RSSI | worst |
+|---|---|---|---|
+| ANT1 / J20 | 3 | **−49 dBm** | −59 |
+| ANT2 / J25 | 8 | **−25 dBm** | −64 |
+
+−25 dBm sits on this rig's recorded −26 dBm baseline, so **the module, the PA and the SP4T are all
+healthy** and the loss is inside the J20 branch — its cable, its connector, or that arm of the
+switch. J20 is the port the systemd unit had always selected, which is the whole of the failure:
+the app spent 09-05 to 09-07 listening through the bad branch. Its last run before the change
+managed **506 reads in 20 minutes** where this module does ~60/s when healthy — degraded, not
+silent, which is why it read 2–5 tags at site rather than none.
+
+**`deploy/intelli-rfid-tunnel.service` now selects ANT2** (`pinctrl set 8 op dl; set 9 op dh`).
+`run.sh` still defaults to `ANT=1`, so **a probe run with no `ANT=` is testing the broken branch on
+purpose.** Put the unit back to ANT1 once J20 is repaired.
+
+**Still not established, and it needs no software:** whether the 24 dB is in the cable/antenna or in
+the board. Swap the two cables at the board, leave the antennas and tags where they are, and re-run
+both ports. If the weakness follows the cable it is the cable; if it stays on J20 it is the board.
+
+**What this corrects about the two "instruments that lie".** Both notes below stand and neither was
+the problem — the VSWR sweep still rails at 3.0095203 with an antenna fitted and with the port bare,
+and `connectedAntennas` is still just the configured count. But note what they cost: with no working
+antenna instrument on this board, a 24 dB branch loss is invisible to every diagnostic the reader
+has, and the only way to find it was a second antenna.
+
+### Confirmed working end to end, 2026-09-07
+
+Nine Super Fast cartons on ANT2, on the v260827 SDK, on the deployed jar:
+
+| seq | stopReason | tags | matched | lastNewTagMs | RSSI |
+|---|---|---|---|---|---|
+| 855 | SETTLED | 18 | 18 / 18 | 801 | −51…−29 |
+| 856 | SETTLED | 29 | 29 / 38 | 801 | −51…−26 |
+| 858 | SETTLED | 34 | 34 / 38 | 832 | −50…−31 |
+| 859 | SETTLED | **38** | **38 / 38** | 806 | −49…−25 |
+
+`complete: true, trustworthy: true` on 855 and 859. Carton time 2.09–2.98 s. **`lastNewTagMs` lands
+at 801–883 ms against a `settle-ms` of 800** — the watchdog's ~100 ms tick, exactly as measured on
+09-04. This is the first 38-article carton this project has read, and the largest population before
+it was 18.
+
+
 ## Vendor SDK facts
+
+### The unit runs SDK v260827 from 2026-09-07, and three things about the upgrade catch people
+
+- **The drop name is a date, not a version.** `ModuleAPI_J-v260827.jar` self-reports
+  `jarVersion:260730_v3.8.3.4r-soVersion:20260611`. There is no `260827` string inside it, so do not
+  go looking for one to confirm the upgrade — check `com.uhf:module-api-j:2.6.0827` in the fat jar
+  instead. Maven coordinates are `2.6.0827`; **2.6.0721 is still installed in `~/.m2`, so rolling
+  back is one line of `core/pom.xml`.**
+- **The native library moved.** v260721 had `libs/{32,64,aarch64}`; v260827 has
+  `libs/linux/{x86,x64,aarch64}` plus `libs/windows`. A path carried over from the old tree resolves
+  to nothing, and `deploy/install.sh` then falls through to "keep whatever is already installed" —
+  which is the OLD `.so`, silently, against the new jar.
+- **TWO `.so` files were being loaded and it had gone unnoticed for weeks.** `NativeLibraryLoader`
+  loads `rfid.reader.native-lib-path` by absolute path AND the vendor's static initialiser loads
+  from `-Djava.library.path`. The site config pointed the first into the SDK tree and the unit
+  pointed the second at `/opt/intelli/lib`. They were byte-identical, so nothing complained — and
+  they would have become two different *versions* on this upgrade. **Both must resolve to
+  `/opt/intelli/lib`**, which is the one `install.sh` keeps matched to the jar. Corrected in the
+  site config 2026-09-07.
+
+The SDK upgrade changed **no** API signature: core and tunnel compiled unmodified and all tests
+passed. It also **did not fix the deafness** — that was the antenna branch above.
+
+
+- **The VSWR sweep is useless on this carrier: it rails at `3.0095203` with the antenna connected
+  AND with the port bare.** That figure is *exactly* a 6.000 dB return loss to float precision
+  (`VSWR = (1+10^-0.3)/(1-10^-0.3)`), four channels identical to seven significant figures — a rail,
+  not a measurement. Measured both ways 2026-09-07. **`/api/diagnostics/antennas` therefore cannot
+  detect a disconnected antenna on this board and must never be used as an antenna check here**,
+  though its javadoc reasonably calls it "the first thing to check on a coverage complaint".
+  Two further traps: `vswrLimit` defaults to exactly `3.0f`, so the rail always reports
+  `healthy: false` by 0.0095 and tells you nothing about severity; and **the 1.119 baseline quoted
+  in `CM4-BENCH-HANDOFF.md` and `HANDOFF-CM4-TO-LAPTOP.md` is the BENCH DEV BOARD**, not this
+  production carrier, whose `CM4-PRODUCTION-BRINGUP.md` line still reads `VSWR <..>`. Comparing this
+  board against 1.119 is comparing two different units. If a real VSWR figure is ever needed here it
+  has to come from an external analyser.
+- **`ReaderInfo.connectedAntennas` is NOT a detection — it is a copy of `activeAntennas`**, i.e. the
+  configured `antenna-count`. Its javadoc said "antenna ports the module detected as physically
+  connected", which is false and cost time on 2026-09-07; the javadoc is now corrected. The module's
+  real answer is the start-up WARN `Module reported no connected antennas (MT_OK_ERR); falling back
+  to all N ports`, which this module emits **on every connect even when healthy** — it appeared 29
+  times on 09-04 while reading 18 of 18 tags. So neither the field nor the warning tells you whether
+  an antenna is attached.
+
+### The vendor's own demo sources — four traps, all met on 2026-09-07
+
+`API-java-v260827/demos/doc_demos/*.java` are single-file, have `main()`, and are the fastest way to
+test a module without any of our code. They are also written for the vendor's **networked** reader
+at `192.168.1.160`. Copies patched for `/dev/ttyAMA0` live in `/home/intelli-sbc/api/run/`.
+
+- **`antportnum` defaults to 16 and this module is `MODULE_ONE_ANT`.** `InitReader_Notype` then
+  returns `MT_INVALID_PARA`. The argument is total ports on the module, not connected antennas — it
+  is 1 here. `test_inventory10` already passes 1; `test_readerinfo` does not.
+- **Every demo prints `init the reader successfully` even after printing the error**, because there
+  is no `return` between the two. Trust the `init the reader err :` line and nothing else.
+- **The network demos NPE on a serial module.** `test_readerinfo` asks for MAC and IP, gets
+  `MT_CMD_FAILED_ERR` / `MT_OP_NOT_SUPPORTED`, then does `new String(rip.ip)` on the null.
+- **`test_paramgetandset` and `test_defaultparmgetandset` both set the region to `RG_PRC`**, and the
+  second writes it as a **saved-in-module default** that survives a power cycle. Do not run either
+  on a unit you care about.
+
 
 Confirmed from `API-linux-java-v260721/docs_en/doc_API_J_html/` — grep those files rather than
 guessing at signatures.
@@ -425,6 +749,45 @@ guessing at signatures.
   succeeds but does **not** satisfy it, so `new Reader()` still throws `UnsatisfiedLinkError` — 
   surfacing as an HTTP 500, not a 409. **Every launch command and systemd unit must pass
   `-Djava.library.path=/opt/intelli/lib`.** Verified on the CM4 2026-08-27.
+- **THE AUTHENTICATION REGION IS WRITABLE, AND IT IS NOT THE SAME THING AS THE OPERATING-REGION
+  WHITELIST. This module's auth region is now `RG_IN` and `RG_IN` is still refused.** Done on the
+  production module 2026-09-07 with Silion's own procedure, on the v260827 jar:
+
+  ```java
+  SpecObject sval = rdr.new SpecObject(Region_Conf.RG_IN);
+  rdr.SpecParamsForReader(0, true, sval);          // isset TRUE = write; type 0 = auth region
+  CustomParam_ST cp = rdr.new CustomParam_ST();     // then EITHER method 1:
+  cp.ParamName = "Reader/Savestandby"; cp.ParamVal = new byte[]{1};
+  rdr.ParamSet(Mtr_Param.MTR_PARAM_CUSTOM, cp);
+  rdr.CloseReader();                                // one call, enters boot
+                                                    // OR method 2: re-power the module
+  ```
+
+  `SpecParamsForReader(0, false, sv)` **reads** it — do that first, it is the only way to know what
+  to restore. This module read `RG_PRC` before the write, which is why its accepted set looks like
+  a China SKU. `ProbeAuthRead` / `ProbeAuthWrite` in `intelli-rfid-reader-test/tools/bench-probe`
+  are the two, and `ProbeAuthWrite` takes `-Dtarget=RG_PRC` to put it back.
+
+  **What it changed:** auth region `RG_PRC` → `RG_IN`, persisting across a re-power, and the
+  **hardware version string permanently changed `31.00.00.80` → `31.00.0E.80`** — the third octet
+  is the region marker and is how you tell from the outside. **Every document quoting
+  `31.00.00.80` for the production module is now stale**, and anyone diffing this module's version
+  against the bench module's will see two different strings on identical hardware.
+
+  **What it did NOT change:** `ParamSet(MTR_PARAM_FREQUENCY_REGION, RG_IN)` still returns
+  `MT_CMD_FAILED_ERR`, and the accepted set is exactly as before — `RG_NA` (1), `RG_EU3` (8),
+  `RG_PRC` (6), `RG_OPEN` (255), everything else refused. Tested twice: once in the full scan, and
+  once as the very first operation after a fresh module boot, in case the scan's eight preceding
+  region writes mattered. They did not. **So on sw `20.26.03.30` the two are independent, and the
+  next question for Silion is whether the operating whitelist also needs new module firmware.**
+  PENDING: a re-test after a full 24 V removal rather than an `RFID_EN` cycle — the module clearly
+  re-read NVM on the EN cycle (the version changed), but a cold start is a stronger reset.
+
+  **This corrects a claim made earlier the same evening** that `RG_IN` was a firmware SKU limit no
+  SDK could lift and that the scan should not be re-run on a new SDK drop. There *is* an unlock, it
+  is in both jars, and a scan that only exercises `ParamSet` cannot see it. The `RG_EU3` +
+  3-channel hop table workaround remains what this project runs: `865700 866300 866900`, set after
+  the region and read back, re-verified in the same session.
 - **Region is a firmware SKU limit, the two modules differ, and neither accepts `RG_IN`.** The
   production SIM7500 on the v2.x carrier accepts **`RG_NA` (1), `RG_EU3` (8), `RG_PRC` (6) and
   `RG_OPEN` (255)** and refuses everything else with `MT_CMD_FAILED_ERR` — and it **ships set to
@@ -504,12 +867,16 @@ guessing at signatures.
   when `connect()`/`disconnect()` says an operator has taken over.
 
   **Fault behaviour on the Reliance tunnel, decided 2026-09-02: the package exits forward and the red
-  lamp comes on.** O4 released, RZC driven until the carton is clear, O1 high to discharge, O6
-  asserted. The carton is reported as `TIMEOUT` / `complete: false` and the callback still goes — a
+  lamp comes on.** O4 released, RZC driven until the carton is clear, O1 and O5 high to discharge,
+  **O7** asserted (the red lamp moved there on 2026-09-05). The carton is reported as `TIMEOUT` /
+  `complete: false` and the callback still goes — a
   carton that leaves unread and produces no result is one the WMS thinks never existed. This applies
   to a *module* fault, where the JVM is alive to act; a dead JVM or lost 24 V drives every output low
-  and the lamp is dark, which is the failsafe and is correct. **Consequence to resolve: discharging
-  also starts EnC, because EnC and ExC share O1, so the next carton is fed into a failed tunnel.**
+  and the lamp is dark, which is the failsafe and is correct. **Consequence, which the rewiring made solvable rather
+  than solved:** discharging still starts the EnC, so the next carton is fed into a failed tunnel.
+  Until 2026-09-05 that was forced — EnC and ExC shared O1 and there was no way to run one without
+  the other. They are separate channels now, so the fault path *can* raise O5 alone. Nothing does it
+  yet, and `ConveyorController.setBelts()` is where it would go.
 
   Verified on hardware 2026-08-29 with a real `IO_RECV_TIMEOUT`: five failed attempts backing off
   5→10→20→40→60 s while the module was unreachable, recovery with inventory restarted the moment it
@@ -674,6 +1041,50 @@ count at 90 ms and reported `stopReason: COUNT_REACHED` with `matched.count: 0` 
 it had found everything it was looking for and then listing none of it. `V1Service.countsTowardsExpected`
 and `ResultMapper` are now tested against the same population precisely so they cannot drift apart.
 
+**Tunnel v1 — the reader works for whatever EAN it is armed with. The shipped SKU allowlist is
+gone (2026-09-07).** `rfid.gs1.valid-eans` carried three specific SKUs in the *packaged*
+`application.yml`, and `V1Service.validateEan` refuses any EAN outside a non-empty list — so
+`POST /api/v1/mode` answered 400 `invalid_ean` for every other SKU, on every unit built from that
+file, whatever site it went to. It ships `[]` now. An EAN is still validated (13/14 digits, GS1
+mod-10 check digit), just not enumerated.
+
+What is lost is only the typo check: a WMS arming for a SKU nobody stocks now gets a carton whose
+every article lands in `unexpected` with `complete: false`, instead of a 400 at the tunnel. **A site
+that wants an allowlist sets it in its own `/etc/intelli/<app>/application.yml`** — never in the
+packaged file, and `PackagedConfigTest` now fails the build if one reappears there.
+
+**`company-prefix` is a different thing and still restricts.** It gates COMMISSIONING only
+(`CommissioningController.validateEan`), never reading or arming, so a carton of any EAN reads and
+counts correctly regardless of it. Note the two reader apps disagree: the tunnel ships `8909478` and
+**`intelli-rfid-reader-test` still ships `8905527`**, so the bench harness refuses to commission the
+SKU the tunnel writes — a 400 `invalid_ean` that looks like a bad EAN and is a stale config in
+another app.
+
+**Tunnel v1 — once an EAN is armed, only that SKU's tags hold the settle window open, and this is
+two-phase on purpose.** Settle asks "has the population stopped growing", and the population in
+question is the armed SKU's. Before this, a tag that could never count still bought the carton
+another full settle window — a neighbouring carton, the SSCC label, supplier stock — so with
+`exitOnCount: false` (the Super Fast default, where settle is the ONLY thing that ends a read) a
+foreign tag was the one thing a non-matching tag could still decide. `SessionSpec.resetsSettle`
+carries the rule; foreign tags are still recorded, still reported as `unexpected`, and still open a
+session under auto-trigger.
+
+**The phase is load-bearing and the naive version is a trap.** Scoping from the first millisecond
+looks right and is not: `lastNewTagNanos` starts at session open and would never advance, so "the
+population has stopped growing" is vacuously true from t=0 for a population that has not started.
+Two failures follow, and both reach the customer. A carton whose articles are shadowed past the
+window closes `SETTLED` with `matched: 0` while the field is still answering — and on a 40-article
+carton, shadowing is exactly what the settle window exists for. And `ResultMapper.stopReason`
+re-derives SETTLED from `lastNewTagMs`, so a read that never heard the SKU at all reports **SETTLED
+instead of TIMEOUT** — the one word the contract uses to tell a WMS its count is a lower bound.
+**So until the first article of the armed SKU answers, any new EPC still holds the window open.** A
+carton holding none of the armed SKU therefore behaves exactly as it always did: it settles on its
+own traffic and publishes promptly rather than stalling the line to the ceiling.
+
+**Consequence for tuning:** `durationMs − lastNewTagMs == the last tag's sighting`, which is how
+`settle-ms` was derived from the spool on 09-04, now holds only for the requested SKU's tags. Do the
+`firstSeen` diff over matched tags, not the whole tag list.
+
 **Tunnel v1 — an undecodable tag never counts.** However many there are. On the bench population 16
 of 18 tags carry no GS1 header at all, so a count that included them would close a carton on tags
 that are not articles of the requested SKU and report a short carton as complete.
@@ -707,8 +1118,8 @@ two things can close a carton**, and the one that happens first names the stop r
 > as it stands the trigger fires on beam *clear* — every carton would open its session as it leaves.
 > Use the fix already identified in the GPIO notes: **`gpiomon -l` / `--active-low`, on both libgpiod
 > v1 and v2**, which makes "rising" mean *the channel became active* and matches `FieldIo`. Read
-> "rising edge" throughout this section as *field-active edge* once that lands. **IN3's five-pulse
-> burst is unaffected in substance** — five asserted pulses still give five edges.
+> "rising edge" throughout this section as *field-active edge* once that lands. **IN3 is
+> unaffected** — it is sampled as a level and never reaches the edge monitor.
 
 | what closed the window | `stopReason` |
 |---|---|
@@ -733,9 +1144,50 @@ discarded, and only an IN1 edge opens a window. `maxDurationMs` stays as the bac
 sensors the mode falls back to opening on the first tag and closing on settle, which is not
 equivalent and is reported as `degraded` in `/api/v1/reader/status`.
 
-**Corrected 2026-08-31**, from `HANDOFF-LAPTOP-TO-CM4-TUNNEL-05.md` §3.3 — the interface sent to the
-PLC vendor. It replaces an earlier rule in which the exit sensor owned the end outright, the count
-and settle were both merely observed, and a count that was never met beat everything.
+**That "once per carton" rule was only half implemented, and the WMS saw the other half. MEASURED
+2026-09-09 on the production unit: 129 `SETTLED` results against 114 `PACKAGE_EXITED` in one
+afternoon — very nearly one spurious carton for every real one, each box reported twice with two
+different counts.** The mechanism is in the log in full:
+
+```
+20:53:21.119  IN1  -> session A opens
+20:53:22.647  IN1  (ignored: a read is running)
+20:53:23.827  IN1  (ignored: a read is running)
+20:53:24.179  settle closes A          -> callback 1: SETTLED, 39 of 40
+20:53:25.149  IN1  -> session B opens          <-- same box, still in the zone
+20:53:27.130  IN2  closes B            -> callback 2: PACKAGE_EXITED, 37 of 40
+```
+
+**Settle closes a read while the carton is still physically in the zone and still crossing the
+entry beam.** The stale IN2 edge was consumed; the stale IN1 edge opened a whole new carton. The
+guard was one-sided, and the second result is always the worse one — it is the tail of the same
+box, so it reports a *lower* count than the result the WMS already had.
+
+**Debounce cannot close this and raising it makes things worse.** The extra entry edges are
+**1.2–1.5 s apart** — real beam events, not contact bounce — and the second session opened **4.0 s**
+after the first. A debounce wide enough to swallow that would swallow the next genuine carton.
+
+**Fixed 2026-09-09 by `tunnel.v1.gpio.reopen-block-ms` (default 10000): a carton whose read has
+closed holds the entry trigger shut until IN2 says it has left.** A carton closed *by* the exit edge
+has already gone and blocks nothing. The timeout is a wedge-guard only — a dead exit sensor lifts
+the block on its own with a WARN, because **a tunnel that stops taking cartons is a stopped line and
+that is worse than one that occasionally publishes a box twice**. `0` restores the old behaviour.
+`CartonPublishedOnceTest` pins all of it.
+
+**This only became visible on 2026-09-09 because that is the day IN2 started firing at all** —
+before it, the spool holds essentially no `PACKAGE_EXITED` (36 SETTLED and zero on 09-08). The
+duplicate sessions may well have been opening for longer and closing as a second `SETTLED`.
+
+**Still open, and it is a field question rather than a software one: why does the entry sensor emit
+five rising edges for one carton?** The guard above makes the duplicates harmless but does not
+explain them. The spacing is suspiciously regular across cartons, and the reverse nudge — 1 pulse
+at 2000 ms for 1000 ms, live on this unit — can drag a box back across EnS and forward again, which
+would manufacture a genuine extra edge. Check the EnS alignment and re-run with `reverse: 0` before
+concluding it is the sensor.
+
+**Corrected 2026-08-31.** It replaces an earlier rule in which the exit sensor owned the end
+outright, the count and settle were both merely observed, and a count that was never met beat
+everything.
 
 **Tunnel v1 — a Super Fast carton is a fast read followed by a fixed wait, and the wait is the
 larger half.** Measured on the production CM4 2026-08-31 across **8 consecutive cartons** (9 tags,
@@ -747,12 +1199,83 @@ watchdog runs on a ~100 ms tick and overshoots. `PACKAGE_EXITED` cartons in the 
 at ~1.4 s because the IN2 edge cut the wait short, which is exactly what a conveyor's exit sensor is
 for.
 
+**`settle-ms` is 800 on the production unit from 2026-09-04, down from the packaged 1500.** The
+window only has to exceed the largest gap between consecutive *new* EPCs inside one carton, and that
+is far smaller than the window was: measured over 20 cartons (sequences 733–752, 16–18 tags),
+**median worst-gap 231 ms, worst 406 ms** — 1500 was 3.7× the worst case. 800 keeps 2× and takes the
+carton from ~2.8 s to ~2.0 s, with the reading itself (last new EPC at 1098–1409 ms) untouched.
+**Derive it that way rather than by feel**: from the spool, sort each result's tag `firstSeen`
+values, diff consecutive ones, take the worst across many cartons, double it. The bench population
+is 18 unshadowed tags, so a real 40-article carton will have longer gaps and this number must be
+re-derived there — **too low reads a carton short and reports it complete, with no other symptom.**
+
+> **But that derivation is CIRCULAR if you run it on cartons read at the window you are testing,
+> and the 09-04 number above was derived exactly that way.** A gap longer than `settle-ms` cannot
+> appear in the data: the window closes the carton, and the tags that had not yet answered are
+> simply absent from the result. So the measured worst gap is **censored at the window** — the
+> analysis can only ever report that the current setting is comfortable, whatever it is set to.
+> The symptom it is blind to is the one that matters, because a carton cut short reports `SETTLED`
+> and `complete: true` when the count happens to be met and logs nothing either way.
+>
+> **Only cartons read at a window WIDER than the candidate are evidence for that candidate.**
+> Re-derived 2026-09-08 over the whole spool, 416 `SETTLED` cartons, worst `firstSeen` gap per
+> carton:
+>
+> | day | window | n | median gap | p90 | worst | cartons > 800 ms |
+> |---|---|---|---|---|---|---|
+> | 08-29 | 1500 | 224 | 251 | 664 | **1445** | 13 |
+> | 08-31 | 1500 | 85 | 234 | 716 | **1503** | 5 |
+> | 09-01 | 1500 | 3 | 404 | 514 | 514 | 0 |
+> | 09-02 | 1500 | 8 | 372 | 567 | 567 | 0 |
+> | 09-03 | 1500 | 25 | 238 | 350 | 406 | 0 |
+> | 09-04 | 1500 | 3 | 286 | 287 | 287 | 0 |
+> | 09-04 | 800 | 61 | 236 | 348 | 573 | 0 |
+> | 09-07 | 800 | 7 | 240 | 623 | 623 | 0 |
+>
+> **The uncensored evidence for 800 is the 39 cartons of 09-01…09-04 that ran at 1500**: a gap up
+> to 1500 ms was free to appear there and the worst was **567 ms**. That is what justifies 800, and
+> it is a 1.4× margin on the worst case rather than the 2× the paragraph above claims.
+>
+> **The 08-29/08-31 rows are not noise and they are not RF.** 18 of those 309 cartons had gaps
+> between 800 and 1503 ms — including full 18-tag cartons — and their RSSI (median −44, worst −50)
+> is no worse than 09-07's (median −43, worst −51), so the bad J20 branch does not explain them
+> either. Gap does not correlate with per-tag read count. What changed at 09-01 was configuration,
+> and `session: 2` is the prime suspect: an S2 tag still holding its inventoried flag from the
+> previous carton answers late, which lands in the data as exactly this — a long delay before a
+> tag's *first* sighting. **Anything that silences a tag temporarily shows up as gap, not as loss**,
+> and a settle window is the thing that has to absorb it.
+>
+> **Bigger populations showed SHORTER gaps, not longer** (30+ tags: median 200 ms, worst 274 ms
+> over the 09-07 cartons), which is the opposite of what the paragraph above predicts — more
+> articles means more arrivals to fill the window. It is only 2 cartons and it does not settle
+> anything, but do not assume a 40-article carton needs a wider window than an 18-article one.
+>
+> **So the open question is not answered and cannot be answered from the existing spool.** All
+> seven 38-article cartons were read at 800. To learn whether a big shadowed population produces
+> gaps in the 800–1500 band, **set `settle-ms: 1500`, run a batch of full 38-article cartons, and
+> read the gap distribution off those** — then bring the window back down to twice the worst. Any
+> other order measures the window rather than the carton.
+
 **Detection on the bench population is total, and the RSSI filter is discarding nothing.** Same
 measurement: **72 of 72 tag detections**, every carton `SETTLED` with 9 of 9. RSSI **−41.6 to
 −50.9 dBm**, each tag varying only ~1 dB run to run — so every tag sits **20 dB or more above the
-−72 dBm `rssi-threshold-dbm` floor**. Tighten toward −55/−50 to make it mean "the tags in front of
-the antenna", which is also how to stop commissioning's TID discovery picking arbitrary tags out of
-the whole population.
+−72 dBm `rssi-threshold-dbm` floor**.
+
+**That measurement used to end "tighten toward −55/−50". Do not — it was wrong, and a larger
+sample disproves it.** MEASURED 2026-09-04 on the production unit, per-tag `bestRssi` over 20
+consecutive cartons (sequences 733–752, 18 distinct EPCs): tag medians run **−29 to −46 dBm**, but
+the **weakest single detection is −61 dBm**. One article (`…0138`) swings **−61 to −27 dBm** carton
+to carton while every other tag varies by a few dB — it moves in the box, and it alone sets the
+floor. **A −55 threshold would have dropped every read of that tag in its weak cartons**, reporting
+an 18-article population as a complete 17. The `~1 dB run to run` figure above came from 9 tags
+sitting still; it does not survive a population that is handled.
+
+The rule that generalises: **the threshold must clear the weakest detection of the weakest article,
+not the median of the population**, and the two are 17 dB apart here. `−72` leaves 11 dB below the
+worst case and is what this unit runs. **A too-tight threshold is silent** — it does not log, it
+shortens cartons and reports them complete. Tighten only with evidence of a neighbouring carton
+bleeding in; there is none on this rig, where all 18 EPCs appear in 13–20 of the 20 cartons and
+every one is a genuine member of the population.
 
 **Singulation order is random and carries no meaning.** One tag was first at 57 ms in one carton and
 nearly last at 1219 ms in another, at unchanged signal strength. Nothing should read meaning into
@@ -781,24 +1304,22 @@ looks like a missed optimisation and it is not: the customer may be holding the 
 deterministic period, and a read that finishes early leaves it in the field. Verified on the bench:
 count met at 189 ms, response returned at 3082 ms.
 
-## The PLC field interface (connector J26)
+## The field interface (connector J26)
 
-The tunnel drives a **Delta DVP12SA211R** over eleven opto-isolated field channels. The interface is
-**closed**: `docs/Intelli-RFID-Reader-DVP12SA211R-PLC-Integration.docx` went to the PLC vendor on
-2026-08-30 and their ladder is written against it. **Where the code and that document disagree, the
-code is wrong**, and no timing in it may be rounded to a nicer number.
+The reader drives the tunnel over eleven opto-isolated field channels, all of them through the
+**Tunnel Manager**. There is no machine between this application and the drive cards, so every
+channel is a decision this app makes and holds.
 
-- **`com.intelli.rfid.tunnel.plc.FieldChannel` is the authoritative channel map** — OUT1–7 on BCM
-  26/20/16/19/21/12/13, IN1–4 on BCM 23/24/18/25. **Do not take channel functions from
-  `docs/PLC-INTEGRATION-DVP12SA2.md` §4**: it still carries the superseded map (`RESULT_OK` /
-  `RESULT_FAIL` on OUT5/OUT6, `SPARE_IN` on IN3) *and describes itself as authoritative*. It
-  disagrees with the `.docx` on five channels. `FieldChannelTest` pins the disagreement so nobody
-  "fixes" the enum to match the stale file.
+- **`com.intelli.rfid.tunnel.field.FieldChannel` is the authoritative channel map** — OUT1–7 on BCM
+  26/20/16/19/21/12/13, IN1–4 on BCM 23/24/18/25. It is a hard-coded enum on purpose: a channel that
+  could be moved from a config file is a channel that can silently disagree with the copper.
+  `FieldChannelTest` pins every committed function individually, so a change of meaning has to be
+  made deliberately rather than arriving as a diff to a table of numbers.
 - **`IN1`/`IN2` are ambiguous and it will cost someone a day.** The J26 field channels and the
   SIM7500 module's own GPI pins are both called IN1/IN2 in their own documentation and are different
   silicon. Everything in this project means the J26 channels. **The module's GPI is deliberately
   unused** for the inventory trigger: it can start a read faster than we can but cannot take part in
-  the verdict, the heartbeat, the shutdown handshake or the zone state machine.
+  the verdict, the shutdown handshake or the zone state machine.
 - **Field sense is inverted on inputs and not on outputs, and that asymmetry is the day-one bug.**
   An output asserted at J26 is GPIO **high**; an input asserted at J26 (24 V present) reads GPIO
   **low**, because the 24 V lights the opto's LED and pulls the pin down. `FieldIo` does the
@@ -821,39 +1342,39 @@ code is wrong**, and no timing in it may be rounded to a nicer number.
   0.44 V of margin instead of 1.0 V. `PinctrlFieldIo` turns those internal pulls off at start-up.
   **That is right on the carrier and wrong on a bare bench** — with nothing wired to J26 there is no
   external pull-up to take over and the pins float, which on IN1 manufactures cartons. Hence
-  `tunnel.plc.disable-input-pulls`.
-- **The verdict on OUT5 is width-encoded, so scheduler latency is a correctness problem.** One
-  pulse per carton: **100 ms = FAIL, 500 ms = PASS**, decoded by the PLC in 60–200 and 400–600 ms
-  bands, with *everything else* — any other width, more than one pulse, or nothing at all — read as
-  FAIL. A 500 ms pulse that lands at 380 ms is not a slow pass, it is a **fail**, and it fails
-  silently at the customer on a carton that was fine. So the width is measured and logged on every
-  pulse, `outOfBand` is counted, and the hold sleeps most of the way then **spins the last 2 ms**.
-  **Measured on the production CM4 2026-08-31 over 20 cartons: PASS 496–504 ms, FAIL 98–100 ms,
-  none outside the band** — but the machine was near idle, and bench test 6 wants 100 cartons under
-  read load before that number is trusted. `ResultSignalHardwareTest` is that measurement and is
-  skipped unless `-Dplc.hardware=true`.
+  `tunnel.field.disable-input-pulls`.
+- **The verdict is two lamps, one lit for `lamps.hold-ms` (5 s) and then dark.** O6 green, O7 red;
+  **both moved up a channel on 2026-09-05**, when the ExC took O5.
+  The other lamp goes out at once, so exactly one is ever lit and both dark is the resting state.
+  A new verdict cancels the previous dwell rather than waiting it out, so back-to-back cartons each
+  get their full 5 s. `hold-ms: 0` latches instead, for a line that reads one carton an hour.
+
+  **The dwell is not a payload, and that distinction is the whole reason a timer is allowed here.**
+  The predecessor on the pass lamp encoded the verdict *in the width* — 100 ms FAIL, 500 ms PASS,
+  decoded in 60–200 and 400–600 ms bands — which made scheduler latency a correctness problem: a
+  500 ms pulse delivered at 380 ms was a silent **fail** on a carton that was fine. Here the
+  *channel* carries the meaning and the duration carries none, so a hold that runs long or short is
+  a lamp lit a moment longer, not a wrong answer. **Never encode a second meaning in the dwell**,
+  and never shorten it to something an operator can miss.
 - **PASS is exactly `complete == true`** — the carton held what was expected. A carton whose count
-  could not be judged at all is *not* a pass: the interface has two answers and no third one, and
-  **there is no "no verdict"** — reaching the end of a carton undecided emits FAIL explicitly,
-  because the PLC reads silence as FAIL anyway and emitting it is the difference between an outcome
-  and a guess that happened to match.
+  could not be judged at all is *not* a pass: there are two lamps, two states, and **no "no
+  verdict"** — reaching the end of a carton undecided lights FAIL explicitly, because that is the
+  difference between an outcome and a guess that happened to match.
 - **The verdict is signalled on the thread that closed the session, not on the result executor.**
-  Same reason the carton release is: both are physical signals to the conveyor and neither may wait
+  Same reason the carton release is: both are physical signals at the tunnel and neither may wait
   on the WMS. `results` is single-threaded and `callbacks.send()` blocks for up to five attempts
-  with backoff, so a verdict dispatched behind it would arrive after the PLC's window had closed —
-  a dead WMS would have turned every carton into a fail. Building the result is a decode over one
-  carton's tags and costs microseconds; only the send is handed off.
+  with backoff, so a verdict queued behind it would light minutes late — a dead WMS would have
+  turned every carton's lamp into a lie. Setting two pin levels costs microseconds; only the send is
+  handed off.
 - **The carton trigger watches GPIO *rising* edges, but a field-asserted input is GPIO *low*.**
-  24 V on an input lights the opto and pulls the pin down, so with the PLC asserting a 2 s
-  `ZONE_ARRIVE` pulse the read window opens on the **trailing** edge — two seconds after the carton
-  arrived. Confirmed on this board 2026-08-31 by driving line 18: a field-assert produced 0 events,
-  the de-assert produced 1. **Unresolved by decision, 2026-08-31**: the optical sensor may be
-  configured to match instead, and on the bench a push button gives a rising edge on *release*.
-  The software fix, if it is chosen, is `gpiomon -l / --active-low` — on both v1 and v2 — which
-  flips edge sense so "rising" means *the channel became active*, matching `FieldIo`. **IN3's burst
-  is unaffected in substance** (five asserted pulses still give five trailing edges). Note the
-  inconsistency this leaves: `/api/v1/diagnostics/io` reports field sense while the edge monitor
-  triggers on raw GPIO, so the screen can show IN1 asserted at a moment the trigger has not fired.
+  24 V on an input lights the opto and pulls the pin down, so as it stands the read window opens on
+  beam *clear* rather than on the carton arriving. Confirmed on this board 2026-08-31 by driving
+  line 18: a field-assert produced 0 events, the de-assert produced 1. **Decided 2026-09-02: fix it
+  in software** with `gpiomon -l / --active-low` — on both v1 and v2 — which flips edge sense so
+  "rising" means *the channel became active*, matching `FieldIo`. IN3 is unaffected: it is sampled
+  as a level and never reaches the edge monitor. Note the inconsistency until that lands:
+  `/api/v1/diagnostics/io` reports field sense while the edge monitor triggers on raw GPIO, so the
+  screen can show IN1 asserted at a moment the trigger has not fired.
 - **libgpiod v1 and v2 need different `gpiomon` arguments, and the two machines disagree.** The
   bench rig on Bookworm has **v1.6.3**; the production CM4 on Trixie has **v2.2.1**. v2 renamed all
   three things the monitor uses: `--rising-edge` → `--edges=rising`, the chip became `-c <chip>`
@@ -875,60 +1396,45 @@ code is wrong**, and no timing in it may be rounded to a nicer number.
   pull**, so an input reads high in both states and no edge is produced. Drive the pin instead —
   `pinctrl set 18 op dl` then `op dh` — which does produce real edges, verified on this board
   2026-08-31. Put it back to `ip pd` afterwards.
-- 🔴 **SUPERSEDED FOR THE RELIANCE TUNNEL, 2026-09-02: IN3 is a push button held for 5 seconds, not
-  a pulse burst.** The five-pulse protocol below was designed for the PLC interface, where the only
-  thing that could ask for a shutdown was another machine. **There is no PLC on this line** — IN3 now
-  runs to a physical button in the panel (`docs/Tunnel-Interconnect.md` §8), so the request is a
-  **level held continuously for `hold-ms` (5000)**, not a counted pattern.
+- **IN3 is a push button held for 5 seconds — a level, sampled, never a counted pattern.**
+  Implemented 2026-09-02 in `field/ShutdownRequestMonitor`, which polls `FieldIo.read(IN3)` every
+  `sample-ms` (250) on its own thread. It is deliberately **not** on `GpioEdgeMonitor`: a level is
+  the thing being measured, and reading it through `pinctrl` also stays clear of the exclusive claim
+  `gpiomon` takes on every line it watches. IN3 is therefore no longer on that command line at all.
 
-  **This is not `pulses: 1` in disguise, and the difference is the whole point.** A single edge was
-  measured unsafe: it fired twice unprompted on a bare pin whose only pull was the carrier's external
-  10 k. A 5 s *continuous* assert cannot be produced by an EFT burst or a floating input, and the
-  button now sits behind 24 V and the field opto through the Tunnel Manager, which is a far better
-  noise margin than the unwired pin that misfired. Sample the level; **do not count edges.**
+  **Releasing abandons the hold outright — nothing is banked.** Two four-second presses are not an
+  eight-second hold, so a line chattering asserted/released, which is what noise looks like, can
+  never accumulate its way to a request.
 
-  Keep the burst — make the protocol selectable (`tunnel.plc.shutdown.mode: BURST | HOLD`, default
-  BURST) so the wayside and any future PLC site are untouched and the tunnel opts in. Three rules the
-  HOLD path needs and the BURST path never did:
-  1. **Require an inactive→active transition after start-up before a hold can be accepted.** A stuck
-     button or a shorted line reads active forever, and without this the unit shuts down again the
-     moment it finishes booting — an unbootable reader with no fault anywhere.
-  2. **Refuse to act for the first N seconds after start-up**, for the same reason.
-  3. **Drive O7 `SAFE_TO_POWER_OFF` at the end of the sequence** — it is the only signal the operator
-     gets, because restart is a full power cycle and there is no other way back.
+  **Why a hold and not an edge, measured.** A single edge fired twice unprompted on this board on
+  2026-09-01, at 13:48:50 and 19:41:35, with nothing driving GPIO18 either time. Each ran the full
+  controlled shutdown correctly in ~130 ms and left the reader stopped and `CLOSED` — which from
+  outside looks exactly like a dead reader: `/actuator/health` shows `OUT_OF_SERVICE`,
+  `secondsSinceLastRead` climbs, and nothing reads. **Check for `SHUTDOWN REQUESTED` in the log
+  before diagnosing a reader that has stopped for no reason.** A continuous 5 s assert cannot be
+  produced by an EFT burst or a floating input, and the button now sits behind 24 V and the field
+  opto through the Tunnel Manager rather than on a bare pin.
 
-  Everything below still applies to BURST, and the logging lesson applies to both.
+  **Two start-up guards, and both are needed**, because a stuck button or a shorted line reads
+  asserted forever and would otherwise shut the unit down on every boot — an unbootable reader with
+  no fault anywhere to explain it, on a line where restart is a full power cycle with an engineer at
+  the panel.
+  1. **`require-release-first`** is the one that holds: a hold may only begin from an observed
+     released→asserted transition, so a line never seen released can never start one. The verdict is
+     latched at the *start* of the assert, so a later release cannot retroactively bless it.
+  2. **`startup-grace-ms` (30 s)** is the weaker second guard — on its own it only *delays* the
+     shutdown of a stuck line.
 
-- **The shutdown request on IN3 is judged after a quiet period, not on its Nth pulse.** Acting the
-  instant the count is reached makes the rule "at least N" rather than **exactly N**, so a six-pulse
-  burst — or an EFT storm on a line sharing its return with ten others — would be accepted on its
-  way past. The tally is judged after `quiet-ms` of silence, which costs about a second against a
-  60 s budget. `tunnel.plc.shutdown.pulses` is configurable for bench work with a push button;
-  **at 1 there is no pattern left and any single edge is a shutdown request**, so a non-default is
-  warned about at start-up.
+  **`hold-ms` is 5000 and a non-default is warned about at start-up**; so is turning
+  `require-release-first` off. The monitor measures uptime from its **first sample**, not from
+  construction, so the grace and the samples share one clock and cannot be defeated by the two
+  disagreeing.
 
-  **`pulses: 1` is not merely unsafe in theory — it fired twice unprompted on this board on
-  2026-09-01**, at 13:48:50 and 19:41:35, with nothing driving GPIO18 either time. Each one ran the
-  full controlled shutdown correctly in ~130 ms and left the reader stopped, `CLOSED`, and the
-  heartbeat low, which from the outside looks exactly like a dead reader: `/actuator/health` shows
-  `OUT_OF_SERVICE`, `secondsSinceLastRead` climbs, and nothing reads. **Check for
-  `SHUTDOWN REQUESTED` in the log before diagnosing a reader that has stopped for no reason.**
-  The pin sits at `ip pn | hi` — `PinctrlFieldIo` deliberately disables the internal pull so the
-  carrier's external 10 kΩ pull-up defines the level, which leaves a single unwired input with very
-  little noise margin. This is the measured case for why the committed interface is a five-pulse
-  burst and not a level or a single edge, and it is a reason to put `pulses` back to 5 as soon as
-  bench work allows.
+  **Debugging needs TRACE.** At INFO you get the start-up `Watching IN3 (BCM 18)…` line and the WARN
+  when a hold is accepted, and nothing else; DEBUG adds only the assert and the abandon. Every
+  sample's running hold time is at TRACE — set
+  `logging.level.com.intelli.rfid.tunnel.field: TRACE` for bench test 5.
 
-  **Debugging the burst needs TRACE, because DEBUG reports only the outcome.** At INFO — the
-  packaged default, and the live site config sets no `logging:` block at all — you get the start-up
-  `Watching IN3 (BCM 18)…` line, the `pulses != 5` warning, and the WARN when a burst is *accepted*,
-  and nothing else. DEBUG on `com.intelli.rfid.tunnel.plc` adds only "burst outran its window" and
-  "burst of N is not a shutdown request", both of which fire after the fact. **Neither level records
-  an individual edge**, and an edge swallowed by `tunnel.v1.gpio.debounce-ms` is logged by
-  `GpioEdgeMonitor` under a different logger again — so a five-pulse pattern that fails to fire
-  leaves no way to see how many edges actually arrived. `ShutdownRequestMonitor.onEdge` therefore
-  traces every edge with its running tally and its offset into the window; set
-  `logging.level.com.intelli.rfid.tunnel.plc: TRACE` for bench test 5.
 - **Shutdown step 3 fails on an idle reader, and the sequence is right to carry on.** Step 1 stops
   inventory and drops the carrier, which leaves the session `CLOSED`; step 3, "finish any in-flight
   tag write", then throws `ReaderException: Reader is not connected (state=CLOSED)` even when there
@@ -937,21 +1443,81 @@ code is wrong**, and no timing in it may be rounded to a nicer number.
   line in the log of every clean shutdown. Worth making step 3 a no-op when no write is outstanding,
   so that an ERROR there means something.
 
+- **The IN3 shutdown is a real ordered `systemctl poweroff`, and the risk was never the shutdown —
+  it was the lamp saying "safe" one phase too early. Fixed 2026-09-04.** From this board's own
+  `man bootup`, a systemd shutdown has two phases: units run up to `final.target`, and *then*
+  `systemd-poweroff.service` replaces PID 1 with `systemd-shutdown`, which is what unmounts the
+  remaining filesystems, **remounts root read-only and syncs**. `umount.target` covers everything
+  except root, and root is the one that matters.
+
+  `intelli-shutdown-lamp.service` was `After=umount.target Before=final.target`, so it drove the lamp dark
+  in phase one — while `/` was still mounted rw with dirty pages waiting on the final sync. Its own
+  comment claimed dark "cannot be reached before the filesystems are quiesced"; it could. An
+  operator quick with the panel switch was cutting power during that sync, which is exactly the
+  corruption the whole sequence exists to prevent, reached by a different route.
+
+  **The fix is that the lamp is no longer a unit.** `deploy/intelli-lamp.shutdown` installs to
+  `/usr/lib/systemd/system-shutdown/`, which `systemd-shutdown` runs *after* the root remount-ro and
+  immediately before power is cut (`man systemd-halt.service`). `/usr/bin/pinctrl` and
+  `/dev/gpiomem` are both still available there. **It must be 0755** — systemd-shutdown silently
+  skips a file it cannot execute, and the symptom is a lamp that never goes dark on a board that is
+  off, which reads as a hung shutdown and appears in no log. It puts the lamp out for `poweroff` and
+  `halt` only: on `reboot` the board is coming back, so dark would be a lie for the few seconds
+  until it does, and the app clears both lamps at start-up anyway.
+
+- **Step 5 now actually syncs, and until 2026-09-04 it did not.** It was called "flush every
+  outstanding write; leave storage safe to interrupt" while only awaiting `CallbackSender.awaitQuiet()`
+  — which is *network* quiescence. `JsonlSpool.append` is a plain appending `Files.writeString` with
+  **no fsync**, and this board's `dirty_expire_centisecs` is 3000, so up to **30 seconds** of carton
+  results could be sitting in page cache when the button was pressed. `ShutdownSequence.systemSync()`
+  forks `/bin/sync` after the callback flush; it is injected like `exit` so tests can pin the order
+  without forking anything. This is what makes the *blink* phase survivable if 24 V is pulled early;
+  it is the other half of the lamp fix, not a substitute for it. A failing sync is logged and step 6
+  is still reached.
+
+- **What is genuinely NOT a corruption risk here, so nobody re-derives it.** `sudo systemctl poweroff`
+  is the same call `sudo poweroff` makes — no `--force`, no direct `reboot(2)`. The 120 ms an
+  operator perceives as "instant" is the app's five steps only; the OS phase runs at full length
+  after it. What it is *not* like is bare `sudo shutdown`, which is `shutdown -h +1` and waits a
+  full minute before doing anything — that is the comparison that makes IN3 feel abrupt. Root is
+  `ext4 rw,noatime` with the default `data=ordered`, so metadata is journalled and even a hard cut
+  gives a journal replay, not a broken filesystem: what a cut costs is recent *data*, which shows up
+  as NUL-filled tails in whatever was being appended. It is eMMC, not an SD card.
+
+- **A NUL run inside a text file is the fingerprint of a hard power cut, and it dates the cut.**
+  Found 2026-09-04: 3377 NUL bytes in `intelli-rfid-tunnel.log` immediately before a boot line, and
+  1689 at the tail of `spool/inventory-2026-09-04.jsonl`. ext4 had journalled the inode's new size
+  but the data blocks never reached the card. **Both read paths in `JsonlSpool` catch a bad line and
+  skip it at DEBUG**, so the app starts and runs normally over the damage and nothing ever complains
+  — check for it explicitly rather than waiting to be told. Trim with `truncate -s <last good byte>`.
+  Related trap: **the CM4 has no RTC that survives an unclean cut**, so the boot after one restores a
+  stale timestamp and the log appears to go *backwards*. Two files whose contents say 15:17 can sit
+  after a boot line stamped 15:15. Do not reconstruct a timeline from the clock alone — PIDs are the
+  reliable ordering (a low PID means a fresh boot).
+
+- **journald on this board is volatile: `/var/log/journal` exists but is empty**, so
+  `journalctl --list-boots` shows only the current boot and the entire transcript of a shutdown is
+  gone at the next start. That is why a question like "did that poweroff unmount cleanly?" has to be
+  answered from `/opt/intelli/logs/` and the kernel ring buffer instead. Make it persistent with
+  `sudo systemd-tmpfiles --create --prefix /var/log/journal && sudo systemctl restart systemd-journald`.
+
 - **The serial counter needs no flushing at shutdown, by construction.** `SequenceCounter.next()`
   calls `channel.force(true)` before returning each number, so the high-water mark is durable at
   every instant rather than at exit. Step 4 of the shutdown sequence therefore *confirms* — it reads
   the file back independently of the in-memory counter, which is the only check that would catch the
   two having drifted — rather than committing anything.
-- **The heartbeat gets its own thread and nothing else ever goes on it.** OUT6 toggles at 1 Hz and
-  the PLC stops the conveyor if it sees no transition for 3 s, so anything that can block — a
-  callback retrying against a dead WMS, a spool replay, an inventory round — must not be able to sit
-  in front of the next toggle. Deadlines are absolute rather than sleeps, because sleeping the
-  half-period accumulates every write's latency into permanent drift.
-- **The heartbeat stops last, and that ordering is load-bearing.** It is a `SmartLifecycle` at
-  `Integer.MIN_VALUE` so Spring stops it after every other bean has flushed. It means only "the
-  application is running", never "the module is up". Dropping it earlier tells the PLC it is safe to
-  cut power while the serial counter is still being written — the exact corruption the shutdown
-  sequence exists to prevent.
+- **There is no liveness heartbeat, there is no longer anywhere to put one, and that is a real loss
+  to be aware of.** OUT6 used to toggle
+  at 1 Hz so a watchdog could stop the line after 3 s of silence — a *hardware* liveness signal that
+  survived a hung JVM. OUT6 became the red lamp, O7 was earmarked to take the heartbeat back, and
+  the site rewiring of 2026-09-05 spent O7 on the red lamp instead — so **J26 is full and nothing
+  replaces that signal**: a wedged
+  application leaves every output wherever it last set it. What limits the damage is that O1 is
+  released by the read budget rather than held by a running loop, so a carton cannot be stranded
+  indefinitely by a stall alone. **If a liveness signal is ever wanted back it needs a channel this
+  connector does not have** — RS-485 to the drive cards is the way out, and it would free O1–O5 at
+  the same time. It also needs its own thread, and nothing else may ever go on that thread, because a callback retrying
+  against a dead WMS would sit in front of the next toggle.
 
 ## Conventions
 
@@ -1005,11 +1571,11 @@ installs the unit file and reloads systemd, so the build tree is no longer a run
 ```bash
 curl -X POST -H "X-API-Key: <admin key>" -H 'Content-Type: application/json' \
      -d '{"configuredLevel":"TRACE"}' \
-     localhost:8081/actuator/loggers/com.intelli.rfid.tunnel.plc
+     localhost:8081/actuator/loggers/com.intelli.rfid.tunnel.field
 ```
 
 Prefer that over a config edit — a restart re-inits the module and loses the state being
-investigated, which for an intermittent burst on IN3 is the whole point.
+investigated, which for an intermittent shutdown request on IN3 is the whole point.
 
 **Logs go to `/opt/intelli/logs/intelli-rfid-tunnel.log` as well as journald** (decision
 2026-09-01 — `/opt` keeps the runtime under one prefix, and `/var/log/intelli` has never existed on
@@ -1022,6 +1588,18 @@ wrong because journald keeps working. Check `ls -l /opt/intelli/logs/` after a d
 
 ## Gotchas
 
+- **`systemctl stop` leaves the unit in `failed` state, and it is cosmetic.** The JVM exits 143 on
+  SIGTERM and the unit declares no `SuccessExitStatus=143`, so a perfectly clean stop reports
+  `failed` and `systemctl is-active` says `failed` rather than `inactive`. `Restart=on-failure` does
+  not fire on a deliberate stop, so nothing misbehaves — but do not read `failed` after a stop as
+  evidence of a crash. The same SIGTERM produces `gpiomon exited with 143; the sensors are not being
+  watched` in the log at every shutdown, which is shutdown noise and not a sensor fault.
+- **A probe needs the module powered, and stopping the app is what switches it off.** See the
+  Hardware section: `ExecStopPost` drops `RFID_EN`, and nothing but the systemd unit ever raises
+  the four bring-up pins. Raise them yourself (`pinctrl set 8 op dh; pinctrl set 9 op dl;
+  pinctrl set 22 op dh; pinctrl set 10 op dh`) or use `/home/intelli-sbc/api/run/run.sh`, which
+  does it, refuses to start if a JVM still holds `/dev/ttyAMA0`, and takes `ANT=2` for J25.
+  Then set the region explicitly — a power cycle reverts the module to `RG_NA`.
 - **Ask the operator to start and stop the apps.** Claude Code on the CM4 cannot reliably manage a
   long-running process: a backgrounded JVM gets killed at tool-call boundaries, and
   `pkill -f '<app-name>'` matches Claude's own wrapper shell and kills that instead (exit 144). Use

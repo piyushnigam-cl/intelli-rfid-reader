@@ -2,7 +2,7 @@
 
 **No handoff had reached this project.** Nothing in `intelli-rfid-reader` referenced the PCB — the
 only hardware content was the vendor SIM7500/SIM3500 datasheets in `Hardware/`, plus the GPIO
-assumptions I invented while writing `PLC-Digital-IO-Interface.md`. Several of those assumptions were
+assumptions I invented while drafting the field I/O interface. Several of those assumptions were
 wrong. This document is the extract.
 
 **Source of truth** (read 2026-08-22, hardware rev `0861de5`):
@@ -35,8 +35,9 @@ wrong. This document is the extract.
 | Network | Ethernet, CM4's own MAC/PHY, HR911130A magjack |
 | Power | 24 V in → buck → 5 V → CM4 + reader |
 
-The field I/O block is **7 out + 4 in + 1 shared common on a 12-way connector** — exactly the
-interface the PLC spec describes. J26 *is* the connector in `PLC-Digital-IO-Interface.md`.
+The field I/O block is **7 out + 4 in + 1 shared common on a 12-way connector**. J26 *is* the
+tunnel's whole field interface; the authoritative channel map is
+`com.intelli.rfid.tunnel.field.FieldChannel`.
 
 ---
 
@@ -74,22 +75,57 @@ earlier revision is wrong (see §11).
 **The output GPIOs are deliberately non-contiguous** — assigned by a crossing-minimising solver. You
 cannot drive all seven with one masked `GPSET0`/`GPCLR0` write. Use the table.
 
-### 2.1 J26 mapped onto the PLC functions
+### 2.1 J26 mapped onto the tunnel functions
 
-| J26 pin | Channel | BCM | PLC function (`PLC-Digital-IO-Interface.md`) |
+Mirrors `FieldChannel`, which is authoritative. Pins and BCM numbers are a property of the board and
+have never moved — but the **functions on them moved on 2026-09-05**, when the site was rewired.
+
+| J26 pin | Channel | BCM | Function |
 |---|---|---|---|
-| 1 | OUT1 | **26** | `SPEED0` |
-| 2 | OUT2 | **20** | `SPEED1` |
-| 3 | OUT3 | **16** | `SPEED2` |
-| 4 | OUT4 | **19** | `DIRECTION` |
-| 5 | OUT5 | **21** | `RESULT_OK` |
-| 6 | OUT6 | **12** | `RESULT_FAIL` |
-| 7 | OUT7 | **13** | `HEARTBEAT` (proposed use of the spare) |
+| 1 | OUT1 | **26** | `EnC_RUN` — Run A of the Entry Conveyor alone |
+| 2 | OUT2 | **20** | `RZC_RUN_A` |
+| 3 | OUT3 | **16** | `RZC_RUN_B` |
+| 4 | OUT4 | **19** | `RZC_REVERSE` |
+| 5 | OUT5 | **21** | `ExC_RUN` — Run A of the Exit Conveyor |
+| 6 | OUT6 | **12** | `LAMP_PASS` (green) |
+| 7 | OUT7 | **13** | `LAMP_FAIL` (red), and the shutdown lamp |
 | 8 | FIELD_COM | — | shared return, all 11 channels |
-| 9 | IN1 | **23** | `ZONE_ARRIVE` |
-| 10 | IN2 | **24** | `ZONE_OCCUPIED` |
-| 11 | IN3 | **18** | `READER_ENABLE` |
-| 12 | IN4 | **25** | `SPARE_IN` / `RESCAN_REQUEST` |
+| 9 | IN1 | **23** | `ENTRY_SENSOR` ← EnS |
+| 10 | IN2 | **24** | `EXIT_SENSOR` ← ExS |
+| 11 | IN3 | **18** | `SHUTDOWN_REQUEST` ← panel push button, held 5 s |
+| 12 | IN4 | **25** | `EXIT_FULL` ← DsS, the Discharge Sensor at the far edge of the ExC |
+
+**The rewiring, 2026-09-05.** Every output from O5 down shifted by one and IN4 gained a sensor:
+
+| Ch | Was | Is |
+|---|---|---|
+| OUT1 | `EnC_ExC_RUN`, both belts on one channel | `EnC_RUN` |
+| OUT5 | `LAMP_PASS` | `ExC_RUN` |
+| OUT6 | `LAMP_FAIL` | `LAMP_PASS` |
+| OUT7 | parked spare | `LAMP_FAIL` + shutdown lamp |
+| IN4 | parked spare | `EXIT_FULL` |
+
+**Why**: there is no end stop on the Exit Conveyor, so a carton reaching the discharge edge with the
+belt running goes on the floor. The ExC had to become stoppable **without** also stopping the EnC,
+and a shared O1 made that impossible. DsS on IN4 is what detects the carton at the edge.
+
+Two consequences that outlive the renumbering:
+
+- **The line need no longer be serialised.** The previous carton *can* discharge while the next is
+  being read, so cycle time need not be read **plus** discharge. That was the throughput ceiling the
+  shared channel bought, and the copper no longer imposes it — without needing RS-485. **The
+  software has not yet taken the win**; see the note below.
+- 🔴 **J26 is now FULL — there is no spare channel of either direction.** O7 was the last free
+  output and was the earmarked home for the 1 Hz liveness heartbeat; that channel is spent and
+  **nothing replaces it**. A twelfth function on this connector now costs a board change — or, for
+  anything the drive cards already expose themselves, RS-485.
+
+**Software note, so the drawings and the behaviour are not confused.** `ConveyorController` still
+writes O1 and O5 **identically**, through one `setBelts()` seam — the copper is split, the commands
+are not yet. Observable belt behaviour is therefore unchanged from before the rewiring. What is
+*decided* is the wiring and the seam; what is **open** is (a) whether a blocked exit should also hold
+the RZC and the EnC — back-pressure — and (b) whether the EnC should stay stopped until the IN2 exit
+edge rather than restarting at read close. Do not read the split copper as split behaviour.
 
 ---
 
@@ -118,7 +154,7 @@ Three more input requirements from the board docs:
   with ~0.44 V of margin instead of ~1.0 V. Set no-pull (or pull-up) explicitly at start-up.
 - **Debounce ≥ 10 ms.** EFT bursts (IEC 61000-4-4) couple through the opto's barrier capacitance and
   register as false edges; the same debounce covers cross-channel coupling on the shared
-  `FIELD_COM`. Our configured 15 ms is inside this. Keep `READER_ENABLE` longer (100 ms) — a
+  `FIELD_COM`. Our configured 15 ms is inside this. Keep a held input longer (100 ms) — a
   spurious low there costs a power cycle.
 - **All 11 channels share one return.** Every field device on J26 must be on **one** 24 V source and
   return. Split field supplies are not supported, and this is repeated as an installation
@@ -133,7 +169,7 @@ Three more input requirements from the board docs:
   energising at power-on, on a trackside device driving actuators, is the worst available failure.
   Do not ever move a field output onto GPIO2–8."*
 - Therefore `SPEED = 000` at boot and on any CM4 failure ⇒ **conveyor stopped**. The failsafe assumed
-  in `PLC-Digital-IO-Interface.md` §2.1 is confirmed by the hardware, not merely hoped for. Still
+  in §2.1 above is confirmed by the hardware, not merely hoped for. Still
   loop-test it at commissioning — see §10.
 - **All four inputs read inactive at boot** — the 10 k external pull-up wins over the internal
   pull-down regardless of which reset group the pin is in. Chosen for exactly that reason.
@@ -145,7 +181,7 @@ Three more input requirements from the board docs:
 
 ---
 
-## 5. 🔴 The field outputs may not be able to drive the PLC — check this first
+## 5. 🔴 The field outputs cannot drive a field device directly — this is why the TM exists
 
 From `IO-BLOCK-SIZING.md`, and it is the most consequential thing in this document.
 
@@ -160,28 +196,28 @@ not the part's headline 100 % linear CTR:
 
 (Counter-intuitively **hot is the bad corner**, not cold — 0.76× at +85 °C versus 0.94× at −40 °C.)
 
-The board doc's own verdict: this drives *"a PLC digital input of IEC 61131-2 **Type 1 or Type 3**
+The board doc's own verdict: this drives *"a digital input of IEC 61131-2 **Type 1 or Type 3**
 (≥ 2 mA at 15 V is the Type 1 threshold, so this is **marginal-to-adequate**), an SSR/opto input, or
 a logic-level receiver."* And: *"It will **NOT** drive a coil relay, a lamp, a contactor, or an IEC
 **Type 2** input (6 mA)."*
 
-**Why this matters for the tunnel specifically.** Three of our seven outputs are a concern:
+**This is settled, and the answer is the Tunnel Manager.** Every one of the seven outputs lands on
+something that needs more than 1.9 mA: an EZY-S100 control input (the closest published equivalent,
+Itoh Denki CBM-105, draws 7.3 mA) or a lamp. **The reader therefore never drives a field device
+directly** — all seven go through the TM, which does the field-side conditioning. See
+`Tunnel-Interconnect.md`.
 
-- `SPEED0..2` and `DIRECTION` most likely land on a **VFD** or motion-controller digital input.
-  VFD inputs commonly draw 5–10 mA. If so, **these four channels cannot be driven directly.**
-- `RESULT_OK` / `RESULT_FAIL` are fine *as specified* — the user's spec has the **PLC** driving the
-  lamps, so we are only driving a PLC input. But if anyone at site "simplifies" this by wiring a
-  stack-light or relay straight to pins 5/6, it will not work, and it will fail *intermittently and
-  hot* rather than cleanly.
+Note what this used to mean for O1 in particular: it drove **two** card inputs in parallel, because
+EnC and ExC shared the channel, so the TM had to be sized for the pair. **The 2026-09-05 rewiring
+ends that** — O1 drives the EnC alone and O5 the ExC alone, so O1–O5 are now five channels of one
+card input each and the ≥ 100 mA rating that was specific to O1 is no longer a special case. It is
+still specified that way and there is no reason to relax it.
 
-**The fix is known and small, but it is a hardware change:** one N-MOSFET per affected channel on the
-field side (opto drives the gate, MOSFET switches the load) — about seven extra parts, *not currently
-in the design*.
-
-**Action, before anything else on this interface:** get the PLC and VFD input specifications and the
-IEC 61131-2 input type (1, 2 or 3) with the actual input current. That single answer decides whether
-this board can drive the tunnel as specified or needs an interposing stage. It belongs at the top of
-the integrator question list in `PLC-Digital-IO-Interface.md` §11.
+**The failure mode to watch for at site** is somebody "simplifying" this by wiring a stack-light or
+a relay straight to the lamp pins — **which are now 6 and 7, not 5 and 6**. It will not work, and it
+will fail *intermittently and hot* rather than cleanly. Note the trap the renumbering leaves behind:
+pin 5 is now a **conveyor** channel, so the old mistake made against an old drawing does not blow a
+lamp, it energises the Exit Conveyor.
 
 Also noted: **the 11 field lines currently carry no surge protection** (deliberate, parked pending
 placement — `IO-BLOCK-SIZING.md`). A conveyor and its VFD share the field ground and are a good
@@ -201,8 +237,9 @@ The four inputs have no equivalent problem. Re-deriving `IO-BLOCK-SIZING.md`'s f
 
 The tightest corner is the *low*-voltage end, and it holds with 1.6× in hand.
 
-**Why one direction is a problem and the other is not**: on the input side the **PLC** supplies the
-drive — we are simply a 3.4 mA load, which any PLC output sources without noticing. On the output
+**Why one direction is a problem and the other is not**: on the input side the **field device**
+supplies the drive — we are simply a 3.4 mA load, which any 24 V PNP sensor output sources without
+noticing. On the output
 side **we** supply the drive, through an opto that is a deliberately weak source. Whoever has to
 provide the current owns the problem, and on this interface that is us, on outputs only.
 
@@ -211,14 +248,17 @@ Two things to watch rather than fix:
 - **The 6.8 kΩ input resistors are the tightest thermal item on the board's field side.** At 30 V
   each dissipates 122 mW in a 1206. That is 49 % of the headline 250 mW rating, but thick-film 1206s
   derate above +70 °C: at +85 °C the part is rated ~206 mW, so 122 mW is **59 %, a 1.7× margin**, and
-  at +100 °C it is 75 %. Fine, but note that `READER_ENABLE` is held high *continuously* while the
-  reader runs and `ZONE_OCCUPIED` is high for much of each cycle — these are steady-state conditions,
+  at +100 °C it is 75 %. Fine, but note that a held input such as `SHUTDOWN_REQUEST` sits high while the
+  reader runs and the sensors sit high for much of each cycle — these are steady-state conditions,
   not brief pulses. If the field supply runs at the high end of tolerance in a hot enclosure, this is
   the number to check.
 - **The input source must be a real driver, not another weak solid-state output.** 3.4 mA at 24 V is
-  nothing for a PLC output or a dry contact, but if any of the four inputs ends up driven by another
+  nothing for a sensor output or a dry contact, but if any of the four inputs ends up driven by another
   opto-isolated output with the same 1.9 mA class of limit, the problem reappears on that channel.
-  Worth one question to the integrator about what actually drives pins 9–12.
+  **All four are now known and all four are fine**: pins 9, 10 and 12 are SICK W26 switching outputs
+  (EnS, ExS and, since 2026-09-05, DsS — a real PNP transistor sourcing tens of mA) and pin 11 is the
+  panel push button through the TM. Nothing on this connector is fed by another opto sink. Re-ask the
+  question only if a channel's source ever changes.
 
 Practical consequence for the interposer: **leave the inputs alone.** They do not need boosting, and
 routing them through an added board only puts more contacts in series with the read trigger.
@@ -235,14 +275,14 @@ routing them through an added board only puts more contacts in series with the r
   after.**
 - The module exposes its own 3.3 V output on its pin 12 — that is an **output**, ≤ 20 mA. Never feed it.
 
-### 6.0 The module's own 2 GPI / 2 GPO — and why they are not a PLC port
+### 6.0 The module's own 2 GPI / 2 GPO — and why they are not a field port
 
 The SIM7500's own `IN1`/`IN2`/`OUT1`/`OUT2` do **not** go to J26. They go to a **separate Degson 5-way
 terminal** (4 signals + GND), each line through 33 Ω plus an ESD diode. It looks like a field port
-because it lands on a terminal block, but it is **a 3.3 V logic port**, and it is not PLC-ready on
+because it lands on a terminal block, but it is **a 3.3 V logic port**, and it is not field-ready on
 three independent counts:
 
-| | Module GPIO | What a 24 V PLC interface needs |
+| | Module GPIO | What a 24 V field interface needs |
 |---|---|---|
 | Output level | ~3.3 V (V_OL ≤ 0.3 V) | Omron ON threshold is **≥ 14.4 V** — 3.3 V registers as nothing |
 | Input tolerance | V_IH ≥ 2.7–3.0 V, **absolute max −0.3 V to VCC** | 24 V applied here **destroys the pin** |
@@ -254,13 +294,13 @@ our isolated 24 V field outputs** (1.89 mA). It is the wrong voltage and unprote
 help — but it does show where the current is being lost.
 
 **Nothing was given up by not using them.** They are a local auxiliary port for logic inside the same
-enclosure. Making them PLC-ready would need exactly the same treatment as every other field line —
+enclosure. Making them field-ready would need exactly the same treatment as every other field line —
 isolation, level shift, drive, one channel at a time — so there is no shortcut hiding there.
 
 
 ### 6.1 This gives us a software reader power-cycle — and it changes the pin-11 design
 
-`PLC-Digital-IO-Interface.md` §3.3 treats "power cycle essential to restart the reader" as requiring
+An earlier draft treated "power cycle essential to restart the reader" as requiring
 the 24 V to drop, which drags the CM4's filesystem — and the serial counter — into every restart.
 
 **The board makes a reader-only power cycle available in software**: drop `RFID_EN`, or pulse
@@ -335,7 +375,7 @@ cannot distinguish our two antennas.
 cannot switch on its round boundaries. Hot-switching mid-round is within the switch's ratings but
 will corrupt the round in progress. The likely pattern is *stop inventory → switch GPIO8/9 → restart
 inventory* per dwell, and **the stop/start overhead is now the thing that sets the minimum sensible
-dwell.** If a stop/start costs 50 ms, the 60 ms dwell proposed in `PLC-Digital-IO-Interface.md` is
+dwell.** If a stop/start costs 50 ms, the 60 ms dwell once proposed for this interface is
 ~50 % overhead and the right answer is a much longer dwell with fewer switches.
 
 **This replaces the deleted risk as the antenna question to measure first:** time
@@ -415,16 +455,23 @@ An **ATSAMD21G18A** runs off the 24 V rail **independently of the CM4** and supe
 That matters for our pin-11 sequence, which ends in `poweroff`: if the 24 V does *not* actually drop,
 nothing restarts the CM4 except the SAMD21. Two things to settle:
 
-- If pin 11 → `poweroff` and the PLC then genuinely removes 24 V, a fresh power-on boots normally.
-- If the PLC does **not** remove 24 V (or removes it and the SAMD21's own rail is unaffected), the
+- If pin 11 → `poweroff` and 24 V is then genuinely removed, a fresh power-on boots normally.
+- If 24 V is **not** removed (or is removed and the SAMD21's own rail is unaffected), the
   unit stays dark until the SAMD21 releases `CM4_EN`. **The SAMD21 firmware must therefore implement
   the restart**, and its startup hold-off must be gated on `PM->RCAUSE` (`POR|BOD12|BOD33` = real
   power cycle, hold; `EXT|WDT|SYST` = a debug or watchdog reset, leave the CM4 alone). Ungated, every
   firmware upload hard-cuts a running CM4.
 
-There is also a design opportunity here: the heartbeat we proposed on J26 pin 7 for the *PLC* has a
-local analogue — the SAMD21 can watch the CM4 independently and recover it without the PLC being
+There is also a design opportunity here, and since 2026-09-05 it is **the only one left**: the 1 Hz
+liveness heartbeat this project used to emit on J26 has a local analogue — the SAMD21 can watch the
+CM4 independently and recover it without anything
+on J26 being
 involved at all. Worth deciding which watchdog owns which failure before both try.
+
+**That is no longer a preference between two options.** The rewiring took O7 for the red lamp, which
+was the last free output and the earmarked home for the heartbeat (§2.1), so **J26 cannot carry a
+liveness signal at all any more.** If a hardware liveness signal is wanted back it has to come from
+the SAMD21 or from a board change; there is nowhere on this connector to put it.
 
 ---
 
@@ -439,8 +486,8 @@ involved at all. Worth deciding which watchdog owns which failure before both tr
 | `RFID_NRST` | GPIO24 | **GPIO10** |
 | Antenna LEDs D18/D19 | GPIO12 / GPIO13 | **GPIO17 / GPIO27**; 12/13 are now **OUT6/OUT7** |
 
-The danger is specific: **GPIO23 and GPIO24 are now field inputs IN1 and IN2** — our `ZONE_ARRIVE`
-and `ZONE_OCCUPIED`. Code written from the stale document would drive two field inputs as outputs
+The danger is specific: **GPIO23 and GPIO24 are now field inputs IN1 and IN2** — our `ENTRY_SENSOR`
+and `EXIT_SENSOR`. Code written from the stale document would drive two field inputs as outputs
 while believing it was enabling the reader.
 
 One naming collision to be aware of: older RF documents use `J26`/`J27` for the third and fourth
@@ -498,20 +545,25 @@ in the production process document or the strap is decorative.
 4. The product's isolation claim is **"basic insulation, 24 V field circuit, 2.5 kV impulse
    withstand"** — *not* 2500 Vrms, which is the opto's component rating, not the system's.
 5. **Commissioning must loop-test all 11 channels.** The series protection resistors can fail *open*
-   with no indication, so an untested channel may be silently dead.
+   with no indication, so an untested channel may be silently dead. **Since 2026-09-05 all eleven
+   carry a live function** — there is no parked channel left to exercise harmlessly, so every loop
+   test now moves a belt, lights a lamp or reads a real sensor. Confirm with site before driving any
+   output, per item 2, and do not treat the old "just pulse the spare" habit as still available.
 
 ---
 
 ## 14. What changes in our documents
 
-| Document | Change |
+The field I/O draft this section used to correct has been deleted — the corrections themselves are
+the part worth keeping, so they are restated here as standalone findings.
+
+| Finding | Detail |
 |---|---|
-| `PLC-Digital-IO-Interface.md` §10 | GPIO numbers were invented placeholders. Replace with §2.1 above. |
-| " §2 | The claim that J26 pins 9/10 also reach the module's IN1/IN2 is **wrong** — the module's own 2 GPI / 2 GPO go to a separate 3.3 V Degson terminal, not to J26. `BackReadOption.IsGPITrigger` is therefore **not** reachable from the PLC without an extra interface. The trigger becomes a CM4 GPIO interrupt. Honestly, the cost is small: a host-side start is single-digit milliseconds against a 5-second budget, and the start-up cost we actually cared about is handled by keeping the module warm. |
-| " §2.1 | Answered: outputs are **sinking**, `FIELD_COM` is the shared return, isolation is opto (TLP291-4). |
-| " §4.1 | `activeHigh` must split — outputs active-high at GPIO, **inputs active-low**. |
-| " §7 | Failsafe confirmed by design (outputs on GPIO ≥ 9, pull-down at boot). |
-| " §11 | **Add the input-type question as item 0**: IEC 61131-2 type and input current for the PLC *and the VFD*, because of §5 above. |
+| GPIO numbers | The early draft's numbers were invented placeholders. §2.1 above is the real map, and `FieldChannel` is authoritative in code. |
+| J26 does **not** reach the module's GPI | The module's own 2 GPI / 2 GPO go to a separate 3.3 V Degson terminal. `BackReadOption.IsGPITrigger` is therefore **not** reachable from J26 without an extra interface, and the trigger is a CM4 GPIO interrupt instead. The cost is small: a host-side start is single-digit milliseconds against a multi-second budget. |
+| Output topology | Outputs are **sinking**, `FIELD_COM` is the shared return, isolation is opto (TLP291-4). |
+| Sense is not uniform | Outputs active-high at the GPIO, **inputs active-low**. `FieldIo` owns the inversion. |
+| Boot failsafe | Confirmed by design — outputs on GPIO ≥ 9, pull-down at boot, so the line does not run until software drives it. |
 | `SGTIN-96-Encoding-Reliance.md` §4 | `powerDbm: 30` → **27**, ambient-dependent; add E7 throttle. |
 | " §7.6 | Add the 570 kHz BLF constraint — FM0 at 640 kHz sits near the buck sideband. |
 | " §7.8 | **Delete the RG_IN dwell risk** — the module does not switch our antennas. Replace with measuring stop/switch/start overhead. |
@@ -522,9 +574,9 @@ in the production process document or the strap is decorative.
 
 ## 15. Open questions raised by the hardware
 
-1. 🔴 **IEC 61131-2 input type and current for the PLC and the VFD.** Decides whether the 1.9 mA
-   guaranteed sink is adequate or seven MOSFETs are needed. Everything else on the field interface
-   is downstream of this answer. (§5)
+1. ~~**IEC 61131-2 input type and current.**~~ **Answered, and the answer is the Tunnel Manager.**
+   The 1.9 mA guaranteed sink drives nothing on this line directly, so every output is conditioned
+   field-side by the TM. (§5, `Tunnel-Interconnect.md`)
 2. **Does pin 11 need to remove 24 V from the whole unit, or only guarantee the reader restarts?**
    A reader-only cycle is available in software and avoids the CM4 filesystem hazard entirely. (§6.1)
 3. **Deployment band and radiated-power limit** — the board is EU-band; the tunnel is `RG_IN`. Open
@@ -533,6 +585,7 @@ in the production process document or the strap is decorative.
    consume more link budget than any software setting. (§9.2)
 5. **Field-side surge protection on the 11 J26 lines** is currently absent by decision. With a
    conveyor and VFD on the same field ground, is that still the right call? (§5)
-6. **Which watchdog owns CM4 recovery** — the PLC via pin 11, or the SAMD21 via `CM4_EN`? Both can.
-   Decide before both do. (§10)
+6. **Which watchdog owns CM4 recovery?** Nothing does today: the SAMD21 could (it holds `CM4_EN`
+   off its own 24 V) but nothing implements it, and there is no PLC. Restart after a shutdown is a
+   full power cycle with an engineer at the panel. (§10)
 7. **Java GPIO binding** — pi4j v2 over libgpiod, proven on this kernel, with bias control. (§12)

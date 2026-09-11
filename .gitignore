@@ -9,6 +9,7 @@ apps/
 # Vendor SDK and datasheets are copied in separately, not tracked (CLAUDE.md).
 # Globbed so a newer SDK drop is ignored without editing this file.
 API-linux-java-*/
+API-java-*/
 Hardware/
 
 # Files the desktop bridge could not delete

@@ -1,11 +1,17 @@
 # Field-output interposer — small board beside IntelliRFIDv2
 
+> **Superseded in premise, 2026-09-01.** This note was written when the Reliance tunnel was expected
+> to have a PLC. **It does not: the reader drives the conveyor itself**, through the Tunnel Manager.
+> References to a PLC below are the *context this was argued in*, not a description of the system —
+> the current field interface is `com.intelli.rfid.tunnel.field.FieldChannel` and
+> `docs/Tunnel-Interconnect.md`. Kept because the electrical reasoning is still sound.
+
 **Short answer: yes, and it is the right fix.** A small interposer that plugs into **J26** and sits
 beside the main board solves the drive-current problem completely, needs no rework of the existing
 PCB, and — critically — **does not touch the product's isolation claim**, because it lives entirely
 on the field side of the barrier that is already there.
 
-Context: `Hardware-IntelliRFIDv2.md` §5 and `PLC-Digital-IO-Interface.md`.
+Context: `Hardware-IntelliRFIDv2.md` §5 and `Tunnel-Interconnect.md`.
 Status: **design note, no hardware built or measured.** Component values below are worked from the
 board team's own guaranteed figures and are illustrative — final selection belongs to whoever draws
 the board.
@@ -142,7 +148,7 @@ array inputs** so a dead 5 V rail leaves the outputs off.
 outputs from sinking (NPN) to sourcing (PNP), which changes the field convention.
 
 **This may be free.** Whether `FIELD_COM` is 0 V or +24 V is still open question 1 in
-`PLC-Digital-IO-Interface.md` §11 — nobody has committed to sinking yet. If the PLC and VFD want
+Nobody had committed to sinking when this was written. If the field devices want
 sourcing outputs, Option B is simultaneously the simpler board **and** the only way this hardware can
 deliver them at all. Ask before choosing a topology.
 

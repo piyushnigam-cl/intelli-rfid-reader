@@ -1,5 +1,11 @@
 # Proposal — a warehouse variant of IntelliRFID
 
+> **Superseded in premise, 2026-09-01.** This note was written when the Reliance tunnel was expected
+> to have a PLC. **It does not: the reader drives the conveyor itself**, through the Tunnel Manager.
+> References to a PLC below are the *context this was argued in*, not a description of the system —
+> the current field interface is `com.intelli.rfid.tunnel.field.FieldChannel` and
+> `docs/Tunnel-Interconnect.md`. Kept because the electrical reasoning is still sound.
+
 **To:** the board team · **From:** the tunnel software side · **2026-08-22**
 **Companion to:** `Board-v3-Digital-IO-Change-Request.md`. Read that first — CR-1 applies here too.
 Nothing below has been built or measured.
@@ -110,11 +116,11 @@ needed.
 
 ## 4. The safety split — and why J26 must not change
 
-**Keep `SPEED0-2` and `DIRECTION` on native CM4 GPIO ≥ 9. Do not move them to an expander or to the
+**Keep the conveyor run and reverse lines on native CM4 GPIO ≥ 9. Do not move them to an expander or to the
 SAMD21.** The conveyor-stops-on-any-failure property is a *hardware* property today: those pins are
 in the BCM2711's pull-down reset group, so the outputs come up off with no software involved. An I²C
 bus lockup leaves an expander's outputs in their last state, which for a speed command is the wrong
-failure. `RESULT_OK`/`RESULT_FAIL` gate pallet release, so I would keep those native too.
+failure. The verdict lamps gate what an operator does with a pallet, so I would keep those native too.
 
 Which leads to the cleanest thing about this proposal:
 
@@ -135,7 +141,7 @@ documentation, and an installer who has wired one has wired both. That is the ar
 
 ## 5. Proposed channel budget
 
-Against what the tunnel actually wants (`PLC-Digital-IO-Interface.md`):
+Against what the tunnel actually wants:
 
 | New channel | Why |
 |---|---|
