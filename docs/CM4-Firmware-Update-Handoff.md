@@ -1,5 +1,9 @@
 # LAPTOP → CM4: update the SIM7500 to Silion's 2026-08-19 firmware, over the serial port
 
+> **DONE on the production module 2026-09-11.** It runs sw `20.26.08.19`, **`RG_IN` is accepted**
+> (26 regions in all), and the tunnel now runs `region: RG_IN`. The filed report is at the end of
+> §7. Everything below is kept as the procedure for the next flash.
+
 **Direction: laptop → CM4.** Written 2026-09-11 from the vendor package alone — **nothing here has
 touched a module.** Claims are tagged **MEASURED** (our own earlier hardware runs), **READ** (vendor
 Python source, which is exactly what their `.exe` tools are built from) or **INFERRED**.
@@ -368,4 +372,26 @@ SIM7500 firmware update, <date>, <bench|production>, serial <…>:
 - hop table {865700,866300,866900} under EU3: accepted & reads back yes/no
 - rfMode 107 substitution unchanged: yes/no
 - RSSI @30cm/20dBm: <…> dBm (baseline -26)   tags <n>/18   temp <…> C   acceptance PASS/FAIL
+```
+
+### Filed 2026-09-11 — production, the only board in use
+
+```
+SIM7500 firmware update, 2026-09-11, production, serial 30262503F5:
+- before: fw 20260330, hw field 31.00.0E.80 (auth octet 0E INDIA), ProbeAuthRead not run before
+          (after: RG_IN), Impinj 2.02.02, baud 115200, power-on->APP NO (00000000 - normal here)
+- flash dump vs 03-30 image: IDENTICAL, 237908 bytes, sha256 c51918d3...a7306cbc5
+- vendor family warning shown: no (script started in BOOT)
+- MCU: OK in 79.3 s (1948 packets, CHECK_Firmware OK, first APP entry 653 ms)   Impinj: skipped
+- after power cycle: layer BOOTLOADER at power-up (as before), fw 20260819, hw field 31.00.0E.80
+          (auth octet unchanged: y), baud 115200, power-on->APP NO (unchanged)
+- regions accepted: 26 - all but RG_EU, RG_EU2, RG_PRC2, RG_CE_LOW_HIGH, RG_LAOS   RG_IN: YES
+          (hop 865100 865700 866300 866900)   boot region: RG_NA (unchanged)
+- hop table {865700,866300,866900} under EU3: accepted & reads back yes
+- rfMode 107 substitution unchanged: NOT RUN
+- RSSI: no like-for-like figure. 40 tags hand-spread in front of J25: 28 answering at -32 dBm best
+        under RG_EU3, 30 at -32 dBm best under RG_IN a minute later. Stacked, the same tags gave 9 at
+        -51 dBm - geometry, not firmware.   temp: not read   acceptance: NOT RUN
+- tunnel: connects and reads on the new firmware; site config switched to region: RG_IN at 20:46,
+          applyConfig() read-back clean, reads only on 865.1/865.7/866.3/866.9 MHz
 ```

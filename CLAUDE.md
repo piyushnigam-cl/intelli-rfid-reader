@@ -12,8 +12,8 @@ hardware behaviour that are not derivable from the code.
 | Architecture | **aarch64**. Path moved with the SDK: v260721 has `libs/aarch64/`, **v260827 has `libs/linux/aarch64/`** |
 | Antennas | **The SIM7500 has ONE mono-static port.** The two connectors are fed from it by the board's **PE42442A SP4T**, switched by **GPIO8 (V1) / GPIO9 (V2)** — see below |
 | Serial port | **Confirmed `/dev/ttyAMA0`** on the CM4 bench rig (2026-08-27) **and on the production v2.x carrier** (2026-08-29, with `disable-bt` + `uart3`; UART3 takes `ttyAMA3`). A USB bridge gives `/dev/ttyUSB0` |
-| Region | `RG_IN` is the intent (865–867 MHz Indian band) — **no module we have accepts it as an operating region**, even with the auth region unlocked to `RG_IN` (2026-09-07); run `RG_EU3` + the 3-channel hop table, see below |
-| Module version | Production module reads **`31.00.0E.80`** since the 2026-09-07 auth-region write, **not** the `31.00.00.80` quoted everywhere else. Same silicon; the third octet is the region marker |
+| Region | **`RG_IN` since 2026-09-11** (865–867 MHz Indian band, hops 865.1/865.7/866.3/866.9 MHz). It became possible only after the module firmware update below; on sw `20.26.03.30` it was refused even with the auth region unlocked. **If the firmware is ever rolled back, the site config must go back to `RG_EU3` in the same step** |
+| Module version | Production module: hw **`31.00.0E.80`** since the 2026-09-07 auth-region write (**not** the `31.00.00.80` quoted everywhere else; the third octet is the region marker), and sw **`20.26.08.19`** since the 2026-09-11 firmware flash (was `20.26.03.30`) |
 
 **The module cannot see the antenna switch, and that shapes every antenna test you will ever run
 here.** `MODULE_ONE_ANT`, `antportnumbers=1`, and `antenna-count: 1` is the correct config. The two
@@ -88,7 +88,32 @@ degrades read rate instead of hitting the cutout mid-carton, and log CC33 per PA
 Radiated power is a **separate, still-open question** — 30 dBm conducted plus antenna gain against
 the Indian 865–867 MHz limit has nothing to do with heat.
 
-### Module firmware — Silion's 2026-08-19 package (laptop 2026-09-11, not yet run)
+### Module firmware — Silion's 2026-08-19 package: FLASHED on production 2026-09-11, and RG_IN works
+
+**Result first.** The production module (serial `30262503F5`, the only board in use) was flashed
+from `20.26.03.30` to **`20.26.08.19`** on 2026-09-11. The procedure: flash dump byte-identical to the
+03-30 MiniTP image, then the MCU write (79 s, checksum verified), then an `RFID_EN` power cycle. The hw
+field stayed `31.00.0E.80` and the SDK still reads the auth region as `RG_IN`. **`RG_IN` is now
+accepted and reads back**, with hop table `865100 865700 866300 866900` kHz. The region whitelist
+opened generally, from 4 regions to **26**; only `RG_EU`, `RG_EU2`, `RG_PRC2`, `RG_CE_LOW_HIGH` and
+`RG_LAOS` are still refused. Ask Silion whether that breadth is intended. The module still powers up
+on `RG_NA`, so setting the region on every connect is still required. **The site config runs
+`region: RG_IN` since 20:46 that day**, and the tunnel reads under it: `applyConfig()` read-back
+clean, reads only on the four in-band channels (EU3's out-of-band 867.5 MHz is gone), and with the
+same 40-tag layout 30 tags at best −32 dBm against 28 at −32 dBm on `RG_EU3` a minute earlier. Raw
+outputs are in the kit: `probe-before/after-production-2026-09-11.txt`,
+`authread-after-…`, `region-scan-after-…`.
+
+**A stacked tag bundle reads like a broken reader. Do not use one to judge the firmware.** 40 tags in
+a hand-held stack gave 9 steady answers at −51 to −65 dBm. The same tags "spread a bit" gave 28–30
+at −32 dBm best, four minutes later, on the same firmware. Inlays touching each other detune and
+shadow one another.
+
+**Still open:** radiated power under the Indian limit, which `RG_IN` now makes a live question; a
+like-for-like carton read against 09-07's 38/38; and the rest of handoff §3.7 (rfMode 107
+substitution, acceptance run).
+
+The pre-flash notes follow, kept because they are how the next flash should be run.
 
 An update *within* the V2.2.2 MiniTP line our modules run (sw `20.26.03.30` is its 2026-03-30
 build), flashed **from the CM4 over `/dev/ttyAMA0` at 115200** with Silion's own Python scripts:
@@ -795,6 +820,8 @@ guessing at signatures.
   once as the very first operation after a fresh module boot, in case the scan's eight preceding
   region writes mattered. They did not. **So on sw `20.26.03.30` the two are independent, and the
   next question for Silion is whether the operating whitelist also needs new module firmware.**
+  **ANSWERED 2026-09-11: it did.** After the flash to `20.26.08.19`, with the auth region still
+  `RG_IN`, `RG_IN` is accepted and the unit runs it (see "Module firmware" near the top).
   PENDING: a re-test after a full 24 V removal rather than an `RFID_EN` cycle — the module clearly
   re-read NVM on the EN cycle (the version changed), but a cold start is a stronger reset.
 
@@ -803,7 +830,9 @@ guessing at signatures.
   is in both jars, and a scan that only exercises `ParamSet` cannot see it. The `RG_EU3` +
   3-channel hop table workaround remains what this project runs: `865700 866300 866900`, set after
   the region and read back, re-verified in the same session.
-- **Region is a firmware SKU limit, the two modules differ, and neither accepts `RG_IN`.** The
+- **SUPERSEDED for the production module on 2026-09-11.** On sw `20.26.08.19` it accepts 26 regions,
+  `RG_IN` included. What follows describes sw `20.26.03.30`, and still describes the bench module.
+  **Region is a firmware SKU limit, the two modules differ, and neither accepts `RG_IN`.** The
   production SIM7500 on the v2.x carrier accepts **`RG_NA` (1), `RG_EU3` (8), `RG_PRC` (6) and
   `RG_OPEN` (255)** and refuses everything else with `MT_CMD_FAILED_ERR` — and it **ships set to
   `RG_NA`**, 902–928 MHz, which is illegal to key up on in India. Region is therefore not a setting
@@ -819,7 +848,9 @@ guessing at signatures.
   grid is a coarse 860–960 MHz 10 MHz ladder, are refused), and **`ParamSet` on the region rewrites
   the table**, so the hop table must be written *after* the region on every connect.
   `ReaderSession.applyConfig()` does not do this yet — it should, with the same read-back as the
-  other six.
+  other six. **Less urgent since 2026-09-11:** under `RG_IN` the stock table is already all in-band.
+  The unit had been hopping on 867.5 MHz under `RG_EU3` the whole time, because nothing narrowed the
+  table. It only matters again if the unit ever goes back to `RG_EU3`.
 - **The bench module is locked to `RG_EU3`.** Setting each
   `Region_Conf` and reading it back is the only way to find out: `MTR_PARAM_RF_SUPPORTEDREGIONS`
   returns `MT_INVALID_PARA`. On the bench SIM7500 every region except `RG_EU3` (8) — `RG_IN` (4) and

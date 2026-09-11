@@ -1,9 +1,40 @@
 # Resume here — CM4 session, next sitting
 
-**Sections are newest first. The 2026-09-09 one is a PAUSE, not a close: two operator steps are
+**Sections are newest first. 2026-09-11 (firmware + RG_IN) is on top. The 2026-09-09 one is a PAUSE, not a close: two operator steps are
 outstanding and the RZC change is committed but not deployed. Below it, the 2026-09-07 rewrite —
 the session that FIXED the deafness, upgraded the SDK and made the armed EAN authoritative — which
 itself supersedes the "the reader is deaf, it is hardware" head that stood here earlier that day.**
+
+---
+
+## ✅ 2026-09-11 — MODULE FIRMWARE FLASHED TO 20.26.08.19, AND THE UNIT RUNS RG_IN
+
+**The long-standing `RG_IN` question is answered: the old module application was the block.** The
+production module (the only board in use, serial `30262503F5`) went from sw `20.26.03.30` to
+`20.26.08.19` using Silion's 2026-08-19 kit (`docs/CM4-Firmware-Update-Handoff.md`, report filed at
+its end). The flash dump beforehand was byte-identical to the 03-30 MiniTP image. The MCU write took
+79 s and verified. Hw `31.00.0E.80` and the auth region `RG_IN` both survived. The module now accepts
+**26 regions, `RG_IN` included** (it accepted 4 before). It still powers up on `RG_NA`.
+
+### State the unit was left in
+- Tunnel service **running**, on module fw `20.26.08.19`, **`region: RG_IN`** in
+  `/etc/intelli/intelli-rfid-tunnel/application.yml` (backup of the `RG_EU3` file:
+  `application.yml.bak-2026-09-11`, root:root). Reads land only on 865.1/865.7/866.3/866.9 MHz.
+- About 40 SGTIN tags lying spread in front of J25; 28–30 of them answer at −32 dBm best.
+- The module powers up in its **bootloader** with the autoboot flag off. That is normal here; the SDK
+  starts the application on connect. Do not set the flag.
+
+### Next, in order
+1. **Radiated power under the Indian limit.** It was always open, but `RG_IN` now means the unit
+   claims to be on the Indian band. 30 dBm conducted + antenna gain has to be checked against the
+   allocation.
+2. **A like-for-like carton read** against 09-07 (38/38, −25 dBm best, J25), for a real
+   before/after on read performance. Today's check was hand-spread tags only.
+3. Rest of handoff §3.7: rfMode 107 substitution, `POST /api/acceptance/run`, temperature.
+4. **Ask Silion:** the 03-30 → 08-19 changelog, and whether the whitelist opening from 4 regions to
+   26 is intended.
+5. **If the firmware is ever rolled back** (`rollback/` image = exactly what ran before), put
+   `region: RG_EU3` back in the site config in the same step, or the tunnel will fail at connect.
 
 ---
 
