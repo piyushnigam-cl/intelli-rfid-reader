@@ -1,0 +1,49 @@
+mode as found = 107
+
+--- set + read back MTR_PARAM_POTL_GEN2_TAGENCODING ---
+value        ParamSet         readback     verdict
+[Silion E-series profile space, per ReaderConfig.rfMode]
+101          MT_OK_ERR        101          ACCEPTED
+103          MT_OK_ERR        103          ACCEPTED
+105          MT_OK_ERR        105          ACCEPTED
+107          MT_OK_ERR        107          ACCEPTED
+111          MT_OK_ERR        111          ACCEPTED
+112          MT_OK_ERR        112          ACCEPTED
+113          MT_OK_ERR        113          ACCEPTED
+115          MT_OK_ERR        115          ACCEPTED
+[ETSI Lower Band mode ids, per RF-Modes-E710.md sec.3]
+203          MT_OK_ERR        203          ACCEPTED
+202          MT_OK_ERR        107          ALIASED (silently changed)
+226          MT_OK_ERR        107          ALIASED (silently changed)
+225          MT_OK_ERR        107          ALIASED (silently changed)
+224          MT_OK_ERR        107          ALIASED (silently changed)
+223          MT_OK_ERR        107          ALIASED (silently changed)
+222          MT_OK_ERR        107          ALIASED (silently changed)
+291          MT_OK_ERR        107          ALIASED (silently changed)
+241          MT_OK_ERR        107          ALIASED (silently changed)
+244          MT_OK_ERR        107          ALIASED (silently changed)
+281          MT_OK_ERR        107          ALIASED (silently changed)
+205          MT_OK_ERR        107          ALIASED (silently changed)
+285          MT_OK_ERR        107          ALIASED (silently changed)
+[same ids in the SDK RFMODE EX22 encoding, 0xFF000000 | id]
+-16777013    MT_OK_ERR        -16777013    ACCEPTED
+-16777014    MT_OK_ERR        -16777014    ACCEPTED
+-16776990    MT_OK_ERR        -16776990    ACCEPTED
+-16776991    MT_OK_ERR        -16776991    ACCEPTED
+-16776992    MT_OK_ERR        -16776992    ACCEPTED
+-16776993    MT_OK_ERR        -16776993    ACCEPTED
+-16776994    MT_OK_ERR        -16776994    ACCEPTED
+-16776925    MT_OK_ERR        -16776925    ACCEPTED
+-16776975    MT_OK_ERR        -16776975    ACCEPTED
+-16776972    MT_OK_ERR        -16776972    ACCEPTED
+-16776935    MT_OK_ERR        -16776935    ACCEPTED
+-16777011    MT_OK_ERR        -16777011    ACCEPTED
+-16776931    MT_OK_ERR        -16776931    ACCEPTED
+
+ACCEPTED (set ok AND reads back as itself): [101, 103, 105, 107, 111, 112, 113, 115, 203, -16777013, -16777014, -16776990, -16776991, -16776992, -16776993, -16776994, -16776925, -16776975, -16776972, -16776935, -16777011, -16776931]
+ALIASED  (set ok but reads back as something else): 202->107 226->107 225->107 224->107 223->107 222->107 291->107 241->107 244->107 281->107 205->107 285->107 
+
+restoring mode 107 -> MT_OK_ERR
+reads back as 107
+
+closed.

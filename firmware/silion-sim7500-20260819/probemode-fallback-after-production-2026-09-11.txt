@@ -1,0 +1,22 @@
+
+park on 105 -> MT_OK_ERR, reads back 105
+  set 222    -> MT_OK_ERR  reads back 107
+  set 203    -> MT_OK_ERR  reads back 203
+  set 999    -> MT_OK_ERR  reads back 107
+  set 0      -> MT_OK_ERR  reads back 107
+
+park on 113 -> MT_OK_ERR, reads back 113
+  set 222    -> MT_OK_ERR  reads back 107
+  set 203    -> MT_OK_ERR  reads back 203
+  set 999    -> MT_OK_ERR  reads back 107
+  set 0      -> MT_OK_ERR  reads back 107
+
+park on -16776994 -> MT_OK_ERR, reads back -16776994
+  set 222    -> MT_OK_ERR  reads back 107
+  set 203    -> MT_OK_ERR  reads back 203
+  set 999    -> MT_OK_ERR  reads back 107
+  set 0      -> MT_OK_ERR  reads back 107
+
+restore 107 -> MT_OK_ERR, reads back 107
+
+closed.
