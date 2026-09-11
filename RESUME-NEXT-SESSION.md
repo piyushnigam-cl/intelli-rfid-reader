@@ -24,6 +24,9 @@ its end). The flash dump beforehand was byte-identical to the 03-30 MiniTP image
 - The module powers up in its **bootloader** with the autoboot flag off. That is normal here; the SDK
   starts the application on connect. Do not set the flag.
 
+**Session closed 2026-09-11 ~21:15 by the operator.** Everything is committed and pushed. The tunnel
+service is running and reading on `RG_IN`: `READING`, fw `20.26.08.19`, 0 read errors.
+
 ### Next, in order
 1. **Radiated power under the Indian limit.** It was always open, but `RG_IN` now means the unit
    claims to be on the Indian band. 30 dBm conducted + antenna gain has to be checked against the
@@ -38,8 +41,12 @@ its end). The flash dump beforehand was byte-identical to the 03-30 MiniTP image
    **reader-test bug to fix:** its `application.yml` ships `antenna-count: 4`, wrong for this
    one-port module. It was run with `--rfid.reader.antenna-count=1`. Its 08-31 jar also bundled the
    old v260721 SDK, so it is rebuilt now, but only in `target/`.
-4. **Ask Silion:** the 03-30 → 08-19 changelog, and whether the whitelist opening from 4 regions to
-   26 is intended.
+4. **Send Silion the report**: `docs/Silion-SIM7500-Firmware-20260819-Report.md` (also published as
+   a private page: https://claude.ai/code/artifact/15f233d2-7647-45bb-8678-8f5b0b29865d). It asks
+   seven numbered questions. The one that matters is **Q2**: with an INDIA auth region the module now
+   accepts 26 operating regions, and a deployed unit needs to be locked to `RG_IN`. Q3 (whether
+   `RG_IN` enforces power limits in firmware) feeds item 1. Not sent as of session close; the
+   operator sends it.
 5. **If the firmware is ever rolled back** (`rollback/` image = exactly what ran before), put
    `region: RG_EU3` back in the site config in the same step, or the tunnel will fail at connect.
 
