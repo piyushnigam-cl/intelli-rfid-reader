@@ -1,0 +1,20 @@
+Enabling module: ANT2 (J25) select, RFID_EN, release RFID_NRST
+ 8: op -- pu | lo // GPIO8 = output
+ 9: op -- pd | hi // GPIO9 = output
+10: op -- pd | hi // GPIO10 = output
+22: op -- pd | hi // GPIO22 = output
+sdkver: jarVersion:260730_v3.8.3.4r-soVersion:20260611
+hw: 31.00.0E.80   sw: 20.26.08.19
+operating region (MTR_PARAM_FREQUENCY_REGION): RG_NA
+
+SpecParamsForReader GET sweep (isset=false, nothing is written):
+  type=0 seed=null       -> MT_OK_ERR            val=RG_IN  [Region_Conf]
+  type=0 seed=RG_IN      -> MT_OK_ERR            val=RG_IN  [Region_Conf]
+  type=1 seed=null       -> MT_OK_ERR            val=null
+  type=1 seed=RG_IN      -> MT_OK_ERR            val=RG_IN  [Region_Conf]
+  type=2 seed=null       -> MT_OK_ERR            val=null
+  type=2 seed=RG_IN      -> MT_OK_ERR            val=RG_IN  [Region_Conf]
+  type=3 seed=null       -> MT_OK_ERR            val=null
+  type=3 seed=RG_IN      -> MT_OK_ERR            val=RG_IN  [Region_Conf]
+
+closed. Nothing was written.

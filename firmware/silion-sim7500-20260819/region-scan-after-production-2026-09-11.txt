@@ -1,0 +1,73 @@
+Enabling module: ANT2 (J25) select, RFID_EN, release RFID_NRST
+ 8: op -- pu | lo // GPIO8 = output
+ 9: op -- pd | hi // GPIO9 = output
+10: op -- pd | hi // GPIO10 = output
+22: op -- pd | hi // GPIO22 = output
+sdkver: jarVersion:260730_v3.8.3.4r-soVersion:20260611
+hw: 31.00.0E.80  sw: 20.26.08.19
+
+REGION             VALUE  ParamSet               read back
+------------------------------------------------------------------------
+RG_NA              1      MT_OK_ERR              RG_NA        ACCEPTED
+                   hop: 915250 902750 927250 915750 903250 926750 908250 918250 ... (50 channels)
+RG_EU              2      MT_CMD_FAILED_ERR      -            
+RG_EU2             7      MT_CMD_FAILED_ERR      -            
+RG_EU3             8      MT_OK_ERR              RG_EU3       ACCEPTED
+                   hop: 865700 866300 866900 867500 kHz (4)
+RG_KR              3      MT_OK_ERR              RG_KR        ACCEPTED
+                   hop: 920300 917300 919100 918500 917900 919700 kHz (6)
+RG_PRC             6      MT_OK_ERR              RG_PRC       ACCEPTED
+                   hop: 922125 920625 924375 922375 920875 924125 922625 921125 ... (16 channels)
+RG_PRC2            10     MT_CMD_FAILED_ERR      -            
+RG_OPEN            255    MT_OK_ERR              RG_OPEN      ACCEPTED
+                   hop: 910000 860000 960000 900000 870000 940000 920000 890000 ... (11 channels)
+RG_IN              4      MT_OK_ERR              RG_IN        ACCEPTED
+                   hop: 865100 865700 866300 866900 kHz (4)
+RG_JP              5      MT_OK_ERR              RG_JP        ACCEPTED
+                   hop: 916800 918000 919200 920400 kHz (4)
+RG_CE_HIGH         12     MT_OK_ERR              RG_CE_HIGH   ACCEPTED
+                   hop: 916300 917500 918700 kHz (3)
+RG_HK              13     MT_OK_ERR              RG_HK        ACCEPTED
+                   hop: 922250 920250 924750 922750 921250 924250 920750 923250 ... (10 channels)
+RG_TAIWAN          14     MT_OK_ERR              RG_TAIWAN    ACCEPTED
+                   hop: 924750 920750 922250 927250 925250 921250 922750 926750 ... (14 channels)
+RG_MALAYSIA        15     MT_OK_ERR              RG_MALAYSIA  ACCEPTED
+                   hop: 920750 919250 922750 921250 919750 922250 920250 921750 kHz (8)
+RG_SOUTH_AFRICA    16     MT_OK_ERR              RG_SOUTH_AFRICA ACCEPTED
+                   hop: 918800 918200 917800 917200 916200 917000 916400 916000 ... (17 channels)
+RG_BRAZIL          17     MT_OK_ERR              RG_BRAZIL    ACCEPTED
+                   hop: 927250 926250 923250 924750 905250 904750 902750 919750 ... (35 channels)
+RG_THAILAND        18     MT_OK_ERR              RG_THAILAND  ACCEPTED
+                   hop: 922250 920250 924750 922750 921250 924250 920750 923250 ... (10 channels)
+RG_SINGAPORE       19     MT_OK_ERR              RG_SINGAPORE ACCEPTED
+                   hop: 922250 920250 924750 922750 921250 924250 920750 923250 ... (10 channels)
+RG_AUSTRALIA       20     MT_OK_ERR              RG_AUSTRALIA ACCEPTED
+                   hop: 922250 920250 924750 922750 921250 924250 920750 923250 ... (10 channels)
+RG_URUGUAY         22     MT_OK_ERR              RG_URUGUAY   ACCEPTED
+                   hop: 927250 926750 926250 921250 924750 916750 922750 919750 ... (23 channels)
+RG_VIETNAM         23     MT_OK_ERR              RG_VIETNAM   ACCEPTED
+                   hop: 920250 918750 922250 920750 919250 921750 919750 921250 kHz (8)
+RG_ISRAEL          24     MT_OK_ERR              RG_ISRAEL    ACCEPTED
+                   hop: 916250 kHz (1)
+RG_PHILIPPINES     25     MT_OK_ERR              RG_PHILIPPINES ACCEPTED
+                   hop: 918250 918750 919250 919750 kHz (4)
+RG_INDONESIA       26     MT_OK_ERR              RG_INDONESIA ACCEPTED
+                   hop: 922250 920750 921250 921750 kHz (4)
+RG_NEW_ZEALAND     27     MT_OK_ERR              RG_NEW_ZEALAND ACCEPTED
+                   hop: 924250 922250 926750 924750 923250 926250 922750 925250 ... (10 channels)
+RG_PERU            28     MT_OK_ERR              RG_PERU      ACCEPTED
+                   hop: 927250 926750 926250 916750 919750 921750 918250 921250 ... (23 channels)
+RG_RUSSIA          29     MT_OK_ERR              RG_RUSSIA    ACCEPTED
+                   hop: 916200 917400 918600 919800 kHz (4)
+RG_CE_LOW_HIGH     30     MT_CMD_FAILED_ERR      -            
+RG_JP2_LBT6        31     MT_OK_ERR              RG_JP2_LBT6  ACCEPTED
+                   hop: 916800 918000 919200 920400 920600 920800 kHz (6)
+RG_JP3_NLBT19      32     MT_OK_ERR              RG_JP3_NLBT19 ACCEPTED
+                   hop: 916800 918000 919200 920400 920600 920800 921000 921200 ... (19 channels)
+RG_LAOS            33     MT_CMD_FAILED_ERR      -            
+
+--- restoring RG_EU3 + the Indian 3-channel hop table ---
+set RG_EU3 -> MT_OK_ERR
+set hop    -> MT_OK_ERR
+hop reads  -> 865700 866300 866900 kHz (3 channels)
+closed.
