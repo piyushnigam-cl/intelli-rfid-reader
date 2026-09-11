@@ -105,6 +105,16 @@ flash through `/dev/ttyAMA0` while the tunnel JVM is still talking on it. `pgrep
 `fuser -v /dev/ttyAMA0` are the only guard. On production, raise the pins with **ANT2**
 (`8 dl, 9 dh`) and run every `run.sh` re-measure with `ANT=2`, or the RSSI comparison measures J20.
 
+**MEASURED 2026-09-11, production baseline before any flash:** fw `20260330`, hw `31.00.0E.80`
+(auth `0x0E INDIA`), APP descriptor `31.70.00.20` naming itself `SIM7500`, serial `30262503F5`,
+bootloader `22.02.18.00`, Impinj `2.02.02` (the kit's own, so no E710 flash), stored baud 115200.
+**The module powers up in its BOOTLOADER, with the power-on → APP flag off (`00000000`), and that is
+normal**: the Java SDK starts the application itself on connect, which is why the tunnel has come up
+after every `RFID_EN` cycle. Any raw-protocol tool sees `layer 0x11` first; `fw_probe.py --to-app`
+sends the `0x04`. Do not "fix" it by setting the autoboot flag. The vendor MCU script's family
+warning appears only if it starts with the module in APP, where `SIM7500` → `SIMx500` misses its
+`SIMx500新` list. Started from BOOT it reads the `…80` hardware field and classes the module MiniTP.
+
 ## Naming — the Reliance warehouse tunnel
 
 From 2026-09-01 the Reliance tunnel **drives the conveyor itself; there is no PLC**. Use these names

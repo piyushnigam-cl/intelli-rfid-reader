@@ -10,7 +10,10 @@ Kit: `firmware/silion-sim7500-20260819/` (its `README.md` maps every file to the
 `python3-serial` 3.5 and `tmux` are installed, and every vendor function `fw_probe.py` calls exists in
 `lib/ModuleAPI.py` (its connect sends only a `0x03` version query). Three corrections from that review
 are folded in: the port is not locked (§3.1, §5), and on the production unit the antenna select and
-the RSSI baseline must be ANT2/J25 (§3.1, §3.7).
+the RSSI baseline must be ANT2/J25 (§3.1, §3.7). **The same day the production baseline was probed**
+(§3.2). That corrected two more draft expectations: the module powers up in its bootloader with the
+autoboot flag off, which is normal here (§3.2, §3.6). And the family warning appears only if the
+upgrade script starts with the module in APP (§3.4).
 
 ## 0. The short version
 
@@ -21,9 +24,13 @@ the RSSI baseline must be ANT2/J25 (§3.1, §3.7).
 - **How:** on the CM4, over `/dev/ttyAMA0` at **115200**, using Silion's own Python upgrade scripts,
   unmodified. No Windows tool can do it: on the v2.1 carrier the module's UART goes only to CM4
   GPIO14/15 and the USB flash path was removed from the board.
-- **Order:** the **bench dev-board module first.** The production carrier only after the bench module
-  passes acceptance on the new build. The `RG_IN` answer can only come from the **production**
-  module, because it is the only one whose auth region has been written to `RG_IN`.
+- **Order: there is only one board.** The laptop draft said to flash the bench dev-board module
+  first. **Operator, 2026-09-11: the production CM4 is the only board in use**, so there is no
+  bench module to go first. This unit is both the trial and the target, and the §3.3 flash dump is
+  the whole of the safety margin. It proves the family, and it is the byte-exact backup of what this
+  module runs today, alongside the `rollback/` image. Treat every "bench" line below as not
+  applicable. The `RG_IN` answer could only ever come from this module anyway, because it is the only
+  one whose auth region has been written to `RG_IN`.
 - **Gate:** the vendor script's own sanity check will very likely warn that our module takes a
   *different* firmware family. §2 explains why, and step 3.3 is the flash dump that settles it. Do not
   click through that warning without the dump.
@@ -128,7 +135,29 @@ Bench dev board: nothing to do.
 ```bash
 python3 probe/fw_probe.py /dev/ttyAMA0:115200 | tee probe-before.txt
 ```
-Expect: `APP (0x12)`, fw date `20260330`, Impinj `2.02.02`, baud `115200`, power-on → APP `yes`.
+**Production baseline, MEASURED 2026-09-11** (`probe-before-production-2026-09-11.txt` in the kit):
+
+| field | production module |
+|---|---|
+| layer at power-up | **`BOOTLOADER (0x11)`**, and it stays there (re-probed a minute later) |
+| power-on → APP flag | **`00 00 00 00` = off** |
+| fw date | `20260330`, the V2.2.2 MiniTP 03-30 build |
+| hw version field | `31.00.0E.80`, auth `0x0E INDIA` |
+| hw descriptor (APP `0x05`, offset 25) | `31.70.00.20` |
+| bootloader ver | `22.02.18.00` |
+| module name | BOOT: `SIM7100,INDIA,80` · APP: **`SIM7500`** (see §3.4) |
+| serial | `30262503F5` |
+| Impinj E710 | `2.02.02`, already the kit's version, so **§3.5 is skipped** |
+| stored baud | `115200` |
+
+**The module powering up in its bootloader is normal on this unit, not a fault.** The flag is off, and
+the tunnel has connected after every `RFID_EN` cycle it has ever had, each of which is a cold start
+into the bootloader. So the Java SDK starts the application itself on connect. **Run the probe with
+`--to-app` from the start**, which sends that same `0x04`. Without it, the Impinj, baud and flag lines
+are not read.
+
+The laptop draft expected `APP (0x12)` and power-on → APP `yes`. That was wrong for production. The
+bench module is unmeasured; expect the same until its probe says otherwise.
 Also expect the hw version field and auth region: bench `31.00.00.80` → `0x00`; **production
 `31.00.0E.80` → `0x0E INDIA`**. Record that line, because §3.6 checks the flash left it alone. On
 `NO ANSWER`, fix that before anything else. The probe talks only to the port it is given; the vendor
@@ -156,6 +185,19 @@ cd .. && python3 probe/fw_probe.py /dev/ttyAMA0 --to-app     # the read leaves i
 ```bash
 cd mcu && PYTHONPATH=../lib python3 upgrade_mcu.py
 ```
+**Whether the §2 family warning appears depends on which layer the module is in when the script
+starts.** **READ** in `upgrade_mcu.py` (`NeedMiniTPFirmware`) and checked against the production
+baseline:
+- **Started in BOOT:** the script reads the hardware field (`31.00.0E.80`), sees it end in `0x80`, and
+  classes the module as MiniTP. So **no warning**. The name it prints there is `SIM7100,INDIA,80`,
+  because `0x05` is unsupported in the bootloader and it decodes the short field instead. That
+  `7100` is a naming artefact; don't read a family into it.
+- **Started in APP:** it names the module from the `0x05` descriptor as `SIM7500` and normalises that
+  to `SIMx500`. Its MiniTP list holds `SIMx500新` but not `SIMx500`, so **the SIMx100/SMP warning
+  appears**. This is the naming-table gap §2 describes.
+
+So the warning is evidence of neither family. The §3.3 dump still decides. After 3.3 the module is in
+the bootloader anyway, so you can skip that `--to-app` and go straight into 3.4.
 | It prints | Meaning | You |
 |---|---|---|
 | `请输入读写器地址(可留空自动搜索):` | reader address (blank = search everything) | `/dev/ttyAMA0:115200` |
@@ -185,18 +227,24 @@ cd ../impinj && PYTHONPATH=../lib python3 upgrade_impinj.py
 ```bash
 pinctrl set 22 op dl; sleep 2; pinctrl set 22 op dh; sleep 0.3     # v2.1 (NRST stays high)
 #   bench: pull the DC for 5 s
-python3 probe/fw_probe.py /dev/ttyAMA0:115200 | tee probe-after.txt
+python3 probe/fw_probe.py /dev/ttyAMA0:115200 --to-app | tee probe-after.txt
 ```
-Expect: `APP (0x12)` **on its own**, fw date `20260819`, baud `115200`, power-on → APP `yes`, and
-**the hw version field unchanged**: production still `31.00.0E.80` / auth `0x0E INDIA`, and
+Expect: **`BOOTLOADER` at power-up, exactly as before the flash** (production baseline, §3.2), then
+`APP` after the probe's `0x04`. Also fw date `20260819`, baud `115200`, and power-on → APP still
+`00 00 00 00`. And **the hw version field unchanged**: production still `31.00.0E.80` / auth `0x0E INDIA`, and
 `ProbeAuthRead` agrees. If the third octet has gone back to `00`, the flash reset the auth region.
 Stop and tell the user before restoring it with `ProbeAuthWrite -Dtarget=RG_IN`, because a
-region-scan result from a module in that state means nothing. If it
-comes up in the bootloader, `--to-app` gets you through this session but the Java app will not
-connect. Set the flag from the kit root with `PYTHONPATH=lib python3 tools/set_autoboot_app.py`:
-enter the address, then at `不自动→直接回车 / 自动→输入1并回车` type **`1`**. It ends by resetting the
-module (`0x09`); with the flag on, it should come back in APP, and that is the test. Ctrl+C at the
-next prompt.
+region-scan result from a module in that state means nothing.
+
+**Do not run `tools/set_autoboot_app.py` just because it comes up in the bootloader.** The laptop
+draft said the Java app would not connect to a module in that state. The production module has always
+powered up that way, with the flag off, and the Java app connects every time. Setting the flag is a
+change to module state that nothing needs, made in the same session as a flash, and it would muddy
+any before/after comparison. **The real test is §3.7:** the tunnel service starts and reads. Only if
+it cannot connect *and* the probe shows `BOOTLOADER`, set the flag: from the kit root run
+`PYTHONPATH=lib python3 tools/set_autoboot_app.py`, enter the address, and at
+`不自动→直接回车 / 自动→输入1并回车` type **`1`**. It ends with a `0x09` reset. Ctrl+C at the next
+prompt.
 
 ### 3.7 Back into service, and re-measure what firmware can move
 Restart (`sudo systemctl start intelli-rfid-tunnel` on production), then repeat the

@@ -1,0 +1,43 @@
+== fw_probe on /dev/ttyAMA0:115200
+/dev/ttyAMA0:115200手动成功获取版本获取版本0read_msg:FF140300002202180031000E802026033026033000000000101B47
+layer            : BOOTLOADER (0x11)
+Error在BOOT层获取05版本(不支持) read_msg:FF00050101D564
+Successful在BOOT层获取03版本 read_msg:FF140300002202180031000E802026033026033000000000101B47
+Bootloader    Ver:22 02 18 00
+Hardware      Ver:31 00 0E 80
+Firmware     Date:20 26 03 30
+Firmware      Ver:26 03 30 00
+Supported Protool:00 00 00 10
+version reply    : FF 14 03 00 00 22 02 18 00 31 00 0E 80 20 26 03 30 26 03 30 00 00 00 00 10 1B 47
+fw date          : 20260330  ->  V2.2.2 MiniTP 2026-03-30  <- what every module we own shipped with
+hw version field : 31.00.0E.80   (bench 31.00.00.80; production 31.00.0E.80 since 09-07)
+auth region      : 0x0E = INDIA   (3rd octet; must be unchanged by a flash)
+module name      : SIM7100,INDIA,80   (vendor tool naming)
+serial number    : 30262503F5
+  ATTENTION  : module is not in APP - Impinj version, baud and power-on flag need APP; re-run with --to-app
+== fw_probe on /dev/ttyAMA0:115200
+/dev/ttyAMA0:115200手动成功获取版本获取版本0read_msg:FF140300002202180031000E802026033026033000000000101B47
+module is in its BOOTLOADER; --to-app given, sending 0x04 ...
+Successful切换到APP回应84.809ms read_msg:FF140400002202180031000E8020260330260330000000001012C7
+当前在APP,GetLayer==0x12
+layer            : APP (0x12)
+Successful在APP层获取05版本 read_msg:FF540500002202180031000E80202603302603300000000010317000200BB801F400000000000000000000000000000000000000000000000053494D3735303000000000000000000000000000000000000000000000000000ACFE
+Bootloader    Ver:22 02 18 00
+Hardware      Ver:31 70 00 20
+Firmware     Date:20 26 03 30
+Firmware      Ver:26 03 30 00
+Supported Protool:00 00 00 10
+version reply    : FF 54 05 00 00 22 02 18 00 31 00 0E 80 20 26 03 30 26 03 30 00 00 00 00 10 31 70 00 20 0B B8 01 F4 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 53 49 4D 37 35 30 30 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 AC FE
+fw date          : 20260330  ->  V2.2.2 MiniTP 2026-03-30  <- what every module we own shipped with
+hw version field : 31.00.0E.80   (bench 31.00.00.80; production 31.00.0E.80 since 09-07)
+auth region      : 0x0E = INDIA   (3rd octet; must be unchanged by a flash)
+hw descriptor    : 31.70.00.20   (offset 25; what the vendor tool names the module from)
+module name      : SIM7500   (vendor tool naming)
+serial number    : 30262503F5
+Impinj E710 fw   : 2.02.02  (kit carries 2.02.02)
+stored baud      : 115200
+power-on -> APP  : 00 00 00 00  (NO - after a power cycle it will sit in the bootloader)
+-- verdict
+  MCU app    : 20260330 -> run mcu/upgrade_mcu.py
+  Impinj E710: already 2.02.02 - SKIP impinj/upgrade_impinj.py
+  ATTENTION  : power-on-to-APP flag is off
