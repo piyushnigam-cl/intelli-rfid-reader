@@ -6,6 +6,11 @@ Python source, which is exactly what their `.exe` tools are built from) or **INF
 Kit: `firmware/silion-sim7500-20260819/` (its `README.md` maps every file to the vendor original).
 **Revised 2026-09-11** after pulling the 09-07 CM4 work: the production module's auth region is now
 `RG_IN`, and that turns this update into the `RG_IN` test (§0, §6).
+**Reviewed on the production CM4 2026-09-11**, before any module was touched: kit checksums pass,
+`python3-serial` 3.5 and `tmux` are installed, and every vendor function `fw_probe.py` calls exists in
+`lib/ModuleAPI.py` (its connect sends only a `0x03` version query). Three corrections from that review
+are folded in: the port is not locked (§3.1, §5), and on the production unit the antenna select and
+the RSSI baseline must be ANT2/J25 (§3.1, §3.7).
 
 ## 0. The short version
 
@@ -89,6 +94,7 @@ a write halfway through.
 ```bash
 cd ~/rfid/intelli-rfid-reader && git pull
 cd firmware/silion-sim7500-20260819 && sha256sum -c SHA256SUMS
+command -v tmux || sudo apt install tmux     # on the production CM4 since 2026-09-11; check the bench rig
 tmux new -s fw
 ```
 
@@ -98,10 +104,23 @@ sudo systemctl stop intelli-rfid-tunnel      # production; bench: stop whatever 
 pgrep -x java                                # must print nothing
 fuser -v /dev/ttyAMA0                        # must print nothing
 ```
+**These two checks are the only guard on the port. Nothing else will stop you.** **READ:** pyserial
+on Linux takes no lock unless it is opened with `exclusive=True`
+(`serialposix.py`: `if self._exclusive is not None: … flock`), and `ModuleAPI.py` never passes it. The
+vendor's "port occupied" message (`被占用，拒绝访问`) matches Windows error text (`拒绝访问。`) and
+cannot fire here. So with the tunnel JVM still up, the probe and the upgrade scripts **open
+`/dev/ttyAMA0` anyway**. The two processes then take turns on each other's replies. For the probe that
+is a confusing answer. **During a write it is a corrupted packet stream into flash.** If
+`pgrep -x java` or `fuser` prints anything, stop there.
+
 **v2.1 carrier only.** The unit's `ExecStopPost` drops `RFID_EN`, so stopping the service **turns
-the module off**. Raise it again, in the usual order (antenna select, then EN, then NRST):
+the module off**. Raise it again, in the usual order (antenna select, then EN, then NRST).
+**Select ANT2/J25**, the branch the unit runs: J20 is 24 dB down (CLAUDE.md, "The RF path was NOT
+dead"). The flash itself does not care, since no RF is keyed. But the select stays wherever this line
+puts it through §3.6 and into the §3.7 measurements, and the service's own `ExecStartPre` selects ANT2.
 ```bash
-pinctrl set 8 op dh; pinctrl set 9 op dl; pinctrl set 22 op dh; pinctrl set 10 op dh; sleep 0.2
+pinctrl set 8 op dl; pinctrl set 9 op dh; pinctrl set 22 op dh; pinctrl set 10 op dh; sleep 0.2
+#            ^^ V1 low        ^^ V2 high  = RF2 -> J25 (ANT2).  8 dh / 9 dl would be J20, the bad branch.
 ```
 Bench dev board: nothing to do.
 
@@ -182,7 +201,11 @@ next prompt.
 ### 3.7 Back into service, and re-measure what firmware can move
 Restart (`sudo systemctl start intelli-rfid-tunnel` on production), then repeat the
 `CM4-PRODUCTION-BRINGUP.md` step 8 probes and compare against the recorded baselines:
-- `bash run.sh Probe2 /dev/ttyAMA0 2700 1000` gives region acceptance. Before: bench `RG_EU3` only;
+- **On the production unit, every `run.sh` line here takes `ANT=2`.** `run.sh` defaults to `ANT=1`,
+  which is J20, the branch that is 24 dB down (CLAUDE.md). Region acceptance does not depend on the
+  antenna, but the RSSI and tag-count lines below do. **A 3.7 run without `ANT=2` will look as if the
+  new firmware cost 24 dB.** Bench: no `ANT=` needed.
+- `ANT=2 bash run.sh Probe2 /dev/ttyAMA0 2700 1000` gives region acceptance. Before: bench `RG_EU3` only;
   production `RG_NA/EU3/PRC/OPEN`, unchanged by the 09-07 auth write. **Is `RG_IN` accepted now on
   the production module?** That is the headline result. On the bench module it proves nothing either
   way, because its auth region was never written. Use the SDK the unit currently runs (v260827). A
@@ -194,7 +217,9 @@ Restart (`sudo systemctl start intelli-rfid-tunnel` on production), then repeat 
   from `ETSI_LOWER` to `CHINA`, and what that means is **unknown**. Check the boot region again rather
   than assuming it is still `RG_NA`.
 - Does rfMode still silently substitute 107 (`docs/RF-Modes-E710.md`)?
-- RSSI baseline −26 dBm at ~30 cm and 20 dBm; 18/18 bench tags; temperature.
+- RSSI baseline −26 dBm at ~30 cm and 20 dBm; 18/18 bench tags; temperature. **On production that
+  baseline holds only on ANT2/J25**: measured −25 dBm there on 2026-09-07, against −49 dBm best on
+  ANT1/J20 with the same tags unmoved. Compare ANT2 with ANT2, or the comparison measures the cable.
 - `POST /api/acceptance/run` should return PASS.
 
 ## 4. If something goes wrong
@@ -228,7 +253,10 @@ Restart (`sudo systemctl start intelli-rfid-tunnel` on production), then repeat 
 - Do not write the auth region (`SpecParamsForReader` type 0 / `Ex/initregion`) as part of this.
   Production's is already `RG_IN`. The only exception is restoring it if §3.6 finds the flash reset
   it, and only after telling the user.
-- Only one process on the port. A leftover JVM holding it looks like a dead module.
+- Only one process on the port. A leftover JVM holding it looks like a dead module. **And on Linux
+  the port is not locked (§3.1)**: a second process opens it without complaint, so the vendor
+  scripts will write flash through a port the JVM is also talking on. `pgrep -x java` and `fuser`
+  first, every time.
 
 ## 6. What this update will and will not settle
 

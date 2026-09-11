@@ -98,7 +98,12 @@ auth-region entry under Vendor SDK facts), so if the region scan changes after t
 application was the block. Two traps. First, the vendor script will probably warn "wrong family
 (SIMx100/SMP)" for a module that names itself `SIM7500`; settle that with the flash dump in step 3.3
 before accepting. Second, never leave its address prompt blank: it then probes every `/dev/tty*`,
-`ttyAMA3` (the SAMD21) included.
+`ttyAMA3` (the SAMD21) included. Third, found on the CM4 2026-09-11: **the port is not locked.**
+pyserial on Linux takes no `flock` unless opened `exclusive=True`, which `ModuleAPI.py` never does,
+and its "port occupied" message matches Windows error text only. So the scripts will happily write
+flash through `/dev/ttyAMA0` while the tunnel JVM is still talking on it. `pgrep -x java` and
+`fuser -v /dev/ttyAMA0` are the only guard. On production, raise the pins with **ANT2**
+(`8 dl, 9 dh`) and run every `run.sh` re-measure with `ANT=2`, or the RSSI comparison measures J20.
 
 ## Naming — the Reliance warehouse tunnel
 
