@@ -109,9 +109,15 @@ a hand-held stack gave 9 steady answers at −51 to −65 dBm. The same tags "sp
 at −32 dBm best, four minutes later, on the same firmware. Inlays touching each other detune and
 shadow one another.
 
+**Acceptance PASSES on the new firmware**, on J25 at 20 dBm (2026-09-11): connection, identity,
+**VSWR 1.377** and 28 tags; the write step was not requested. The same run on J20 fails, at VSWR
+3.0095 with 0 tags. That result overturns the "VSWR sweep is useless" note (see Vendor SDK facts).
+**The 107 fallback is unchanged.** The reader-test jar had to be rebuilt first: the 08-31 build
+bundled the v260721 SDK jar. It also ships `antenna-count: 4`, wrong for this one-port module, so it
+was launched with `--rfid.reader.antenna-count=1`.
+
 **Still open:** radiated power under the Indian limit, which `RG_IN` now makes a live question; a
-like-for-like carton read against 09-07's 38/38; and the rest of handoff §3.7 (rfMode 107
-substitution, acceptance run).
+like-for-like carton read against 09-07's 38/38; and what a *bare* J25 reads on the VSWR sweep.
 
 The pre-flash notes follow, kept because they are how the next flash should be run.
 
@@ -606,11 +612,14 @@ purpose.** Put the unit back to ANT1 once J20 is repaired.
 the board. Swap the two cables at the board, leave the antennas and tags where they are, and re-run
 both ports. If the weakness follows the cable it is the cable; if it stays on J20 it is the board.
 
-**What this corrects about the two "instruments that lie".** Both notes below stand and neither was
-the problem — the VSWR sweep still rails at 3.0095203 with an antenna fitted and with the port bare,
-and `connectedAntennas` is still just the configured count. But note what they cost: with no working
-antenna instrument on this board, a 24 dB branch loss is invisible to every diagnostic the reader
-has, and the only way to find it was a second antenna.
+**What this corrects about the two "instruments that lie". CORRECTED AGAIN 2026-09-11: the VSWR
+sweep does not lie. It was reporting the J20 fault.** Swept the same minute on the same firmware
+(`20.26.08.19`): **J25 reads 1.377 (16 dB return loss) and 28 tags; J20 reads 3.0095 (6 dB) and 0
+tags.** The 09-07 sweeps that earned it the "useless" label were taken while the unit was still on
+J20, before J20 was known to be the bad branch, and J25 had never been swept. So the 24 dB branch
+loss was *not* invisible to the reader's diagnostics. The VSWR sweep saw it, and it was dismissed as
+a rail. `connectedAntennas` is still just the configured count. See the corrected VSWR entry under
+Vendor SDK facts.
 
 ### Confirmed working end to end, 2026-09-07
 
@@ -654,18 +663,29 @@ The SDK upgrade changed **no** API signature: core and tunnel compiled unmodifie
 passed. It also **did not fix the deafness** — that was the antenna branch above.
 
 
-- **The VSWR sweep is useless on this carrier: it rails at `3.0095203` with the antenna connected
-  AND with the port bare.** That figure is *exactly* a 6.000 dB return loss to float precision
-  (`VSWR = (1+10^-0.3)/(1-10^-0.3)`), four channels identical to seven significant figures — a rail,
-  not a measurement. Measured both ways 2026-09-07. **`/api/diagnostics/antennas` therefore cannot
-  detect a disconnected antenna on this board and must never be used as an antenna check here**,
-  though its javadoc reasonably calls it "the first thing to check on a coverage complaint".
-  Two further traps: `vswrLimit` defaults to exactly `3.0f`, so the rail always reports
+- **CORRECTED 2026-09-11: the VSWR sweep WORKS on this carrier, and it tells the good branch from
+  the bad one.** Acceptance on sw `20.26.08.19` at 20 dBm, same tags, same minute, only the SP4T
+  moved: **J25/ANT2 → 1.3766781 on all four `RG_IN` channels (16 dB return loss), PASS, 28 tags.
+  J20/ANT1 → 3.0095203 (6 dB), FAIL, 0 tags.** **The module reports return loss in whole dB**, so
+  every channel reads identical to seven figures: 1.3767 is exactly 16 dB, 3.0095 exactly 6 dB.
+  Identical figures across channels are quantisation, not a rail. **The 09-07 "useless" verdict came
+  from sweeps taken on J20**, the branch later found to be 24 dB down, and J25 had never been swept.
+  A dead branch reads the same with an antenna fitted or not, which is exactly what was seen. **So
+  `/api/diagnostics/antennas` is the one built-in antenna check this board has; use it, per port.**
+  Not yet known: what a *bare* J25 reads (probably the same 6 dB floor, but unmeasured), and whether
+  J25 would also have read 16 dB on sw `20.26.03.30`, which cannot now be tested without a rollback.
+  The original entry follows as the record of the mistake:
+  ~~**The VSWR sweep is useless on this carrier: it rails at `3.0095203` with the antenna connected
+  AND with the port bare.**~~ That figure is *exactly* a 6.000 dB return loss to float precision
+  (`VSWR = (1+10^-0.3)/(1-10^-0.3)`), four channels identical to seven significant figures. That was
+  read as a rail; it is a 1 dB-quantised measurement. Measured both ways 2026-09-07, on J20.
+  Two further traps, still true: `vswrLimit` defaults to exactly `3.0f`, so a 6 dB branch reports
   `healthy: false` by 0.0095 and tells you nothing about severity; and **the 1.119 baseline quoted
   in `CM4-BENCH-HANDOFF.md` and `HANDOFF-CM4-TO-LAPTOP.md` is the BENCH DEV BOARD**, not this
   production carrier, whose `CM4-PRODUCTION-BRINGUP.md` line still reads `VSWR <..>`. Comparing this
-  board against 1.119 is comparing two different units. If a real VSWR figure is ever needed here it
-  has to come from an external analyser.
+  board against 1.119 is comparing two different units. **This carrier's own figure, since
+  2026-09-11: 1.377 on J25** (16 dB return loss), 3.0095 on J20. An external analyser is still the
+  way to get anything finer than the module's 1 dB steps.
 - **`ReaderInfo.connectedAntennas` is NOT a detection — it is a copy of `activeAntennas`**, i.e. the
   configured `antenna-count`. Its javadoc said "antenna ports the module detected as physically
   connected", which is false and cost time on 2026-09-07; the javadoc is now corrected. The module's
@@ -992,11 +1012,19 @@ guessing at signatures.
   222.** Measured on the bench SIM7500 2026-08-28: of the eight values in `ReaderConfig`'s javadoc
   only 103, 105, 107, 112 and 113 are accepted — **101, 111 and 115 are silently discarded**. All 13
   ETSI LB mode IDs work when written as `0xFF000000 | id`.
+  **The production module on sw `20.26.08.19` (2026-09-11, `ProbeMode scan`) accepts more:** all
+  eight Silion ids including 101, 111 and 115, plus **bare `203`**, which reads back as 203. What
+  bare 203 selects is unknown. Every other bare ETSI id still aliases to 107, and all 13 EX22 ids are
+  still accepted. **Do not attribute the difference to the firmware**: the production module was
+  never mode-scanned on `20.26.03.30`, so this is as likely a bench-versus-production difference.
 - **`ParamSet` on `MTR_PARAM_POTL_GEN2_TAGENCODING` returns `MT_OK_ERR` for every value, valid or
   not** — 999 and 0 included — and **any unrecognised value silently snaps the module to 107**. 107
   is a hard fallback, not the previously-set value: verified by parking on 105, 113 and EX22-222
   first and writing junk over each. So `rf-mode: 222` in a config file lands on 107 with no error
   anywhere. **Read the parameter back and compare — the return code carries no information.**
+  **Unchanged on sw `20.26.08.19`** (production, `ProbeMode fallback`, 2026-09-11): 222, 999 and 0
+  all return `MT_OK_ERR` and read back 107 from parks on 105, 113 and EX22-222. The read-back in
+  `applyConfig()` is still load-bearing.
 - **`rfMode = 107` is manual ETSI LB mode 244**: 175 tags/s, −91.0 dBm, Miller M=4, Tari 20 µs, BLF
   250 kHz. **Inferred from a read-rate fingerprint, not proven.** The 13 EX22 modes reproduced the
   manual's declared rate ordering monotonically, and pairing each Silion profile back-to-back with

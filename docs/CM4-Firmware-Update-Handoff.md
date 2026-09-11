@@ -388,10 +388,15 @@ SIM7500 firmware update, 2026-09-11, production, serial 30262503F5:
 - regions accepted: 26 - all but RG_EU, RG_EU2, RG_PRC2, RG_CE_LOW_HIGH, RG_LAOS   RG_IN: YES
           (hop 865100 865700 866300 866900)   boot region: RG_NA (unchanged)
 - hop table {865700,866300,866900} under EU3: accepted & reads back yes
-- rfMode 107 substitution unchanged: NOT RUN
+- rfMode 107 substitution unchanged: YES (222/999/0 -> 107 from parks on 105, 113, EX22-222). Accepted
+          set is wider than the bench module's 08-28 list: 101/111/115 and bare 203 read back as
+          themselves. Production was never scanned on 03-30, so not attributable to the firmware.
 - RSSI: no like-for-like figure. 40 tags hand-spread in front of J25: 28 answering at -32 dBm best
         under RG_EU3, 30 at -32 dBm best under RG_IN a minute later. Stacked, the same tags gave 9 at
-        -51 dBm - geometry, not firmware.   temp: not read   acceptance: NOT RUN
+        -51 dBm - geometry, not firmware.   temp: not read
+- acceptance (reader-test rebuilt on v260827, antenna-count=1, 20 dBm, no write test): PASS on
+          J25 - VSWR 1.377 (16 dB RL), 28 tags, best -40 dBm. Same minute on J20: FAIL - VSWR 3.0095
+          (6 dB RL), 0 tags. The VSWR sweep works; the 09-07 'rail' was J20's fault.
 - tunnel: connects and reads on the new firmware; site config switched to region: RG_IN at 20:46,
           applyConfig() read-back clean, reads only on 865.1/865.7/866.3/866.9 MHz
 ```

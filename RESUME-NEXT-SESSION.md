@@ -30,7 +30,14 @@ its end). The flash dump beforehand was byte-identical to the 03-30 MiniTP image
    allocation.
 2. **A like-for-like carton read** against 09-07 (38/38, −25 dBm best, J25), for a real
    before/after on read performance. Today's check was hand-spread tags only.
-3. Rest of handoff §3.7: rfMode 107 substitution, `POST /api/acceptance/run`, temperature.
+3. ~~rfMode 107 check, acceptance run~~ **done 2026-09-11**: the 107 fallback is unchanged, and
+   acceptance PASSES on J25. **The VSWR sweep works:** J25 reads 1.377 (16 dB return loss) and J20
+   reads 3.0095 (6 dB) in the same minute, so the 09-07 "useless" note was J20's fault; `CLAUDE.md`
+   is corrected. Still to do: sweep a **bare** J25 (unscrew its antenna) to learn what "no antenna"
+   reads, and record the module temperature under load.
+   **reader-test bug to fix:** its `application.yml` ships `antenna-count: 4`, wrong for this
+   one-port module. It was run with `--rfid.reader.antenna-count=1`. Its 08-31 jar also bundled the
+   old v260721 SDK, so it is rebuilt now, but only in `target/`.
 4. **Ask Silion:** the 03-30 → 08-19 changelog, and whether the whitelist opening from 4 regions to
    26 is intended.
 5. **If the firmware is ever rolled back** (`rollback/` image = exactly what ran before), put
