@@ -36,3 +36,10 @@ Thumbs.db
 
 # Transient credential handoff file - never commit, deleted after use
 .git-creds-temp
+
+# Python bytecode
+__pycache__/
+*.pyc
+
+# Per-module flash dumps written by firmware/*/probe/read_app_flash.py
+firmware/*/probe/*.bin

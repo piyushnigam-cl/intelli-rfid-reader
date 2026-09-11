@@ -159,53 +159,28 @@ decoded `SPEED n of 7` pill. Under TUNNEL those labels are wrong and the pill is
 already returns `function` per channel, so render that string and drop the hardcoded table and the
 speed decode. The tab then follows the profile automatically and cannot drift again.
 
-### 3.3 The two field devices, and what they mean for your code
+### 3.3 The two field devices — what they change about how a test is run
 
-Full specifications and wiring are in `docs/Tunnel-Interconnect.md`. These are the facts that change
-what the software must do or must not claim.
+The specifications are in `docs/Field-Devices-W26-and-S100.md`, checked against the vendor PDFs, and
+**that document wins over anything here**. This section keeps only what changes how a test is run or
+what a test may claim.
 
-**EZY-S100 — three of them (EnC, RZC, ExC). A rebadged Winroller S100.**
-
-- Control is three optocoupler inputs per card — **Run A, Run B, Reverse** — plus a common, jumpered
-  PNP with `COM` to the control 0 V. Speed on RZC is the A/B pair: A = 100 %, A+B = 75 %, B = 50 %,
-  neither = stop. EnC and ExC have Run A alone, on one shared channel.
-- **Acceleration and deceleration are 0.39–3.9 s, set by a DIP switch on the card, not by us.**
-  Against a ~2.5 s carton that is enormous — at the slow end the belt is still ramping through the
-  entire read. **Record the DIP setting alongside every test result; a carton duration is meaningless
-  without it**, and two runs at different ramp settings are not comparable.
-- **Brake mode is also a DIP** (electronic / free / servo) and it decides how long RZC takes to stop
-  before it can reverse. That dead time sits inside every Double Pass cycle and is in none of our
-  timings. Measure it once and state it.
-- 🔴 **We drive them blind, and every test quietly assumes we do not.** Each card has a SPEED pulse
-  output and an ERROR output. **Neither is wired** — after EnS, ExS and the shutdown button, J26 has
-  nothing left. So the software cannot tell whether a conveyor actually moved, stalled, or faulted:
-  "the carton exits forward" in §7.1 is a command, not an observation, and Test 6 cannot verify its
-  own third assertion. **IN4 is spare.** Wiring the three ERROR outputs together onto it would give at
-  least a single "a card is unhappy" bit for one wire. Put it to the operator — it is cheap now and
-  needs a panel visit later.
-- The card boots in I/O mode (`BDAT0.3` defaults to I/O), so the digital path needs no setup. `485A`
-  and `485B` are on the same terminal and cable W14 is being pulled unused, so a later Modbus upgrade
-  needs no rewiring — and Modbus is where the missing feedback would come from.
-- **The vendor states the speed range three different ways** — 600–6900 rpm, 500–3485 rpm and
-  100–1000 rpm in three documents. **Do not put an rpm figure in any test output.** Report belt speed
-  as measured, in m/s.
-
-**SICK W26 — EnS and ExS.**
-
-- 10–30 V DC, ≤ 30 mA unloaded, push-pull PNP/NPN, Imax ≤ 100 mA, short-circuit and reverse-polarity
-  protected. PNP HIGH is about `UB − 2.5 V`, so the reader input sees ~21.5 V, not 24 V.
-- 🔴 **Response is ≤ 500 µs and switching is 1 kHz. `tunnel.v1.gpio.debounce-ms` is 50** — a hundred
-  times slower than the sensor. **The debounce, not the sensor, is the timing floor of every
-  trigger.** At a 0.5 m/s belt that is **25 mm of carton travel on every edge**, biasing every latency
-  number these tests produce in the same direction. Measure it once, state it in the report, and
-  subtract it — do not leave a systematic that size sitting unlabelled inside the results. Lowering
-  the debounce is not free: it is there because EFT couples through the opto barrier, and it must
-  stay above ~10 ms and below ~150 ms (the IN3 burst).
-- **Light-switching versus dark-switching is still unchosen**, and it is what decides the polarity in
-  §3A.1. Pick whichever makes "carton present" = 24 V at the reader input — which depends on whether
-  the ordered variant is a proximity or a retro-reflective type. Open item 4.
-- The exact ordering code is not chosen either; the figures above are from `WTB26P-24161120A00` as a
-  representative part. Confirm against whatever is actually bought before trusting the 2.5 V drop.
+- **Ramp and brake are DIP settings on each EZY-S100, not ours.** Braking has no terminal at all.
+  Against a ~2.5 s carton, a slow ramp spans the whole read, and brake mode sets the RZC's dead time
+  inside every reverse. **Record the DIP settings with every test result.** Two runs at different
+  settings are not comparable, and the vendor states no factory default.
+- 🔴 **We drive the conveyors blind.** Each card has `SPEED` and `ERROR` outputs and neither is wired.
+  Since the 09-05 rewiring J26 is full (§3.1a), so there is no pin left to wire them to. "The carton
+  exits forward" (§7.1) is a command, not an observation, and Test 6 cannot verify it from the
+  reader's side. Feedback, when it comes, is Modbus on `485A/B`, which needs the RS-485 route in
+  `docs/Machine-Controller-Option.md`, not J26.
+- **Do not put an rpm figure in any test output.** The vendor's documents give three different speed
+  ranges. Report belt speed as measured, in m/s.
+- **The debounce is a systematic in every trigger latency.** `tunnel.v1.gpio.debounce-ms` is 50,
+  while a W26's own response is sub-millisecond on the representative part (its electrical data is
+  still open, Field-Devices §3). So the debounce, not the sensor, is the timing floor: about 25 mm of
+  carton travel per edge at 0.5 m/s. Measure it once, state it, and subtract it. It must stay above
+  ~10 ms (EFT couples through the opto), and §3A.2 caps it at ~150 ms.
 
 ## 3A. Fixes still outstanding — verified, not assumed
 

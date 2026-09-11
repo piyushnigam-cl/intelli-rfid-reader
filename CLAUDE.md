@@ -51,6 +51,18 @@ degrades read rate instead of hitting the cutout mid-carton, and log CC33 per PA
 Radiated power is a **separate, still-open question** — 30 dBm conducted plus antenna gain against
 the Indian 865–867 MHz limit has nothing to do with heat.
 
+### Module firmware — Silion's 2026-08-19 package (laptop 2026-09-11, not yet run)
+
+An update *within* the V2.2.2 MiniTP line our modules run (sw `20.26.03.30` is its 2026-03-30
+build), flashed **from the CM4 over `/dev/ttyAMA0` at 115200** with Silion's own Python scripts:
+`docs/CM4-Firmware-Update-Handoff.md`, kit `firmware/silion-sim7500-20260819/`. **It is the test the
+`RG_IN` question is waiting for.** The production module's auth region is already `RG_IN` (see the
+auth-region entry under Vendor SDK facts), so if the region scan changes after this flash, the module
+application was the block. Two traps. First, the vendor script will probably warn "wrong family
+(SIMx100/SMP)" for a module that names itself `SIM7500`; settle that with the flash dump in step 3.3
+before accepting. Second, never leave its address prompt blank: it then probes every `/dev/tty*`,
+`ttyAMA3` (the SAMD21) included.
+
 ## Naming — the Reliance warehouse tunnel
 
 From 2026-09-01 the Reliance tunnel **drives the conveyor itself; there is no PLC**. Use these names
