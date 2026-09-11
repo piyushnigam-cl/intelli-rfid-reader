@@ -175,6 +175,26 @@ D=$(ls -t *.bin | head -1); R=../rollback/EX10_HC_APPV222_MiniTP_2026-03-30-1729
 ls -l "$D" "$R"; cmp -n "$(stat -c%s "$R")" "$D" "$R" && echo "IDENTICAL over the 03-30 image"
 cd .. && python3 probe/fw_probe.py /dev/ttyAMA0 --to-app     # the read leaves it in the bootloader
 ```
+**MEASURED on production 2026-09-11: `IDENTICAL`, full length.** 237,908 bytes read in 29 s. The
+dump's SHA-256 is `c51918d3…a7306cbc5`, the same as `rollback/…03-30….bin1`, and its MD5 matches the
+README. The module's own `0x08` verify also passed. **The family question is closed for this module:
+it runs the exact MiniTP 03-30 image, so the 08-19 MiniTP build is the right line.** How it was run,
+and how to run it again:
+- **Power-cycle `RFID_EN` first**, so the script starts with the module in the bootloader. If the
+  module is in APP, `SwitchToBOOTLayer` first sends `AA40 AB 01` ("prepare upgrade", undocumented).
+  From BOOT that command is skipped. At the `…尾号80` prompt, press Enter.
+- **Run it through `tools/pinned_run.py`**, which runs the vendor script unmodified but replaces
+  `ModuleAPI.Create` with a version that refuses any address other than `/dev/ttyAMA0` and never
+  falls back to the all-port scan (§5):
+  `pinctrl set 22 op dl; sleep 2; pinctrl set 22 op dh; sleep 0.5`, then
+  `printf '/dev/ttyAMA0:115200\n\n' | python3 tools/pinned_run.py probe/read_app_flash.py`.
+  It ends with an `EOFError` at the address prompt, which is simply stdin running out.
+- **The dump is not committed**, because `.gitignore` excludes `firmware/*/probe/*.bin`. It doesn't
+  need to be: it is byte-identical to the committed rollback image, so that image *is* this module's
+  backup.
+- **The read cannot be cut short by the image, checked.** `read_app_flash.py` stops at the first
+  all-`FF` 128-byte block. The 03-30 image contains none.
+
 - `IDENTICAL` means proceed. If the dump is longer than the image, note the extra length. That is
   leftover flash from an earlier build, not a mismatch.
 - A difference inside the image means **stop**.
@@ -184,7 +204,11 @@ cd .. && python3 probe/fw_probe.py /dev/ttyAMA0 --to-app     # the read leaves i
 ### 3.4 Flash the MCU application
 ```bash
 cd mcu && PYTHONPATH=../lib python3 upgrade_mcu.py
+#   production, from the kit root, inside tmux, module still in BOOT from 3.3:
+#   python3 tools/pinned_run.py mcu/upgrade_mcu.py
 ```
+Checked 2026-09-11: through the wrapper, `get_main_file_info()` resolves to `mcu/`, and the only
+`.bin` there is the 08-19 image.
 **Whether the §2 family warning appears depends on which layer the module is in when the script
 starts.** **READ** in `upgrade_mcu.py` (`NeedMiniTPFirmware`) and checked against the production
 baseline:
