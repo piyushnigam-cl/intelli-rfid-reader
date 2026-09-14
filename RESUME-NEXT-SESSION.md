@@ -1,9 +1,58 @@
 # Resume here — CM4 session, next sitting
 
-**Sections are newest first. 2026-09-11 (firmware + RG_IN) is on top. The 2026-09-09 one's two operator steps are DONE (checked 2026-09-14:
+**Sections are newest first. 2026-09-14 (short housekeeping session) is on top, then 2026-09-11 (firmware + RG_IN). The 2026-09-09 one's two operator steps are DONE (checked 2026-09-14:
 the jar in `/opt` is from 09-09 21:31 and the site config has `rzc-always-run: true` at 100 %). Below it, the 2026-09-07 rewrite —
 the session that FIXED the deafness, upgraded the SDK and made the armed EAN authoritative — which
 itself supersedes the "the reader is deaf, it is hardware" head that stood here earlier that day.**
+
+---
+
+## 2026-09-14 — housekeeping; two commits NOT YET DEPLOYED, and the first cartons on the new firmware read weak
+
+**Session closed ~21:00 by the operator ("we will resume tomorrow").** Everything is committed and
+pushed in all repos.
+
+### What changed
+- **reader-test** `3ea0ec1`: packaged `antenna-count` 4 → **1**. Its `target/` jar predates this;
+  rebuild before the next acceptance run.
+- **tunnel** `9e6485b`: the `SHUTDOWN REQUESTED` log line said "O6 blinks"; it is **O7** since the
+  09-05 rewiring. Log text only.
+- **Site config** (operator): `settle-ms` 1500 → **800**, saved 20:40:39.
+- Docs: the 09-09 operator steps confirmed done (jar in `/opt` is 09-09 21:31, `rzc-always-run: true`
+  at 100 %).
+
+### State the unit was left in
+- Board rebooted ~20:36; service `active`, `READING`, fw `20.26.08.19`, `RG_IN`, ANT2/J25.
+- **The running JVM is still the 09-09 jar and still on `settle-ms: 1500`** — it started before the
+  config edit. Neither the O7 log fix nor the 800 window is live.
+- Reverse nudge still on (1 pulse at 2000 ms for 1000 ms). 7 old entries in `callbacks-dead.jsonl`.
+
+### The first two cartons of the day — read these before trusting the new firmware on cartons
+| seq | IST | stop | tags | matched / expected | lastNewTagMs | durationMs | best RSSI | worst |
+|---|---|---|---|---|---|---|---|---|
+| 1198 | 20:55:51 | SETTLED | 23 | **0** / 40 | 1523 | 4501 | −48 | −60 |
+| 1199 | 20:57:02 | SETTLED | 25 | 25 / 40 | 1561 | 4271 | −48 | −60 |
+
+Both `complete: false`. Not yet explained, and not analysed:
+- **Best RSSI −48 dBm**, against −25 on 09-07 (38/38, J25) and −32 on 09-11's hand-spread tags. That
+  is ~16–23 dB down. Check the ANT2 select (`pinctrl get 8,9` → 8 lo, 9 hi), the J25 cable, and the
+  tag/carton geometry before blaming the firmware.
+- **1198 matched 0 of 23** with the same EPC prefix (`30361FCA9439…`) that matched 25 of 25 in 1199
+  — so probably armed for a different EAN at that moment. Check the arm log.
+- **durationMs − lastNewTagMs ≈ 2.7–3.0 s, not the 1.5 s window.** Something besides settle held
+  both reads open; check `min-duration` and the reverse nudge (pulse ends at 3000 ms).
+
+### Next, tomorrow, in order
+1. **Deploy**: `cd ~/rfid/intelli-rfid-reader/apps/intelli-rfid-tunnel && deploy/redeploy.sh`
+   (picks up `9e6485b` and `settle-ms: 800`).
+2. **Explain the weak RSSI / short cartons above** — this is now ahead of the like-for-like carton
+   comparison (09-11 item 2), which it blocks.
+3. Then the 09-11 list below: radiated power under the Indian limit, bare-J25 VSWR sweep + module
+   temperature, send Silion the report.
+4. Open question from 09-14: should the tunnel's packaged `antenna-count: 2` also become 1? (Site
+   config already says 1.)
+5. Optional, from reading the shutdown code: make shutdown step 3 a no-op when no write is
+   outstanding, so its ERROR on every idle shutdown stops being noise.
 
 ---
 
