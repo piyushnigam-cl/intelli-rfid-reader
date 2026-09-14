@@ -113,8 +113,9 @@ shadow one another.
 **VSWR 1.377** and 28 tags; the write step was not requested. The same run on J20 fails, at VSWR
 3.0095 with 0 tags. That result overturns the "VSWR sweep is useless" note (see Vendor SDK facts).
 **The 107 fallback is unchanged.** The reader-test jar had to be rebuilt first: the 08-31 build
-bundled the v260721 SDK jar. It also ships `antenna-count: 4`, wrong for this one-port module, so it
-was launched with `--rfid.reader.antenna-count=1`.
+bundled the v260721 SDK jar. It also shipped `antenna-count: 4`, wrong for this one-port module, so it
+was launched with `--rfid.reader.antenna-count=1`. **Fixed 2026-09-14**: reader-test ships `1`
+(`3ea0ec1`). The tunnel's packaged file still says `2`, and only its site config's `1` corrects it.
 
 **Still open:** radiated power under the Indian limit, which `RG_IN` now makes a live question; a
 like-for-like carton read against 09-07's 38/38; and what a *bare* J25 reads on the VSWR sweep.

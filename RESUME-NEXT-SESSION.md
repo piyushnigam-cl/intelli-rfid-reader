@@ -1,7 +1,7 @@
 # Resume here — CM4 session, next sitting
 
-**Sections are newest first. 2026-09-11 (firmware + RG_IN) is on top. The 2026-09-09 one is a PAUSE, not a close: two operator steps are
-outstanding and the RZC change is committed but not deployed. Below it, the 2026-09-07 rewrite —
+**Sections are newest first. 2026-09-11 (firmware + RG_IN) is on top. The 2026-09-09 one's two operator steps are DONE (checked 2026-09-14:
+the jar in `/opt` is from 09-09 21:31 and the site config has `rzc-always-run: true` at 100 %). Below it, the 2026-09-07 rewrite —
 the session that FIXED the deafness, upgraded the SDK and made the armed EAN authoritative — which
 itself supersedes the "the reader is deaf, it is hardware" head that stood here earlier that day.**
 
@@ -38,9 +38,15 @@ service is running and reading on `RG_IN`: `READING`, fw `20.26.08.19`, 0 read e
    reads 3.0095 (6 dB) in the same minute, so the 09-07 "useless" note was J20's fault; `CLAUDE.md`
    is corrected. Still to do: sweep a **bare** J25 (unscrew its antenna) to learn what "no antenna"
    reads, and record the module temperature under load.
-   **reader-test bug to fix:** its `application.yml` ships `antenna-count: 4`, wrong for this
-   one-port module. It was run with `--rfid.reader.antenna-count=1`. Its 08-31 jar also bundled the
-   old v260721 SDK, so it is rebuilt now, but only in `target/`.
+   ~~**reader-test bug to fix:** its `application.yml` ships `antenna-count: 4`~~ **fixed
+   2026-09-14** (`3ea0ec1`, ships `1`). Its jar in `target/` predates that commit, so rebuild before
+   the next acceptance run. The tunnel's packaged `application.yml` still says `antenna-count: 2`;
+   the site config's `1` is what corrects it on this unit.
+
+**2026-09-14:** the operator set the site config's `settle-ms` back to **800** (it had been 1500
+since at least 09-09). The board was rebooted at 20:36 and the service came up `READING` on `RG_IN`.
+The reverse nudge is still on (1 pulse, 2000 ms after entry, 1000 ms wide). There are 7 old entries
+in `callbacks-dead.jsonl`, none in the live queue.
 4. **Send Silion the report**: `docs/Silion-SIM7500-Firmware-20260819-Report.md` (also published as
    a private page: https://claude.ai/code/artifact/15f233d2-7647-45bb-8678-8f5b0b29865d). It asks
    seven numbered questions. The one that matters is **Q2**: with an INDIA auth region the module now
@@ -52,7 +58,7 @@ service is running and reading on `RG_IN`: `READING`, fw `20.26.08.19`, 0 read e
 
 ---
 
-## ⏸ 2026-09-09 — TWO OPERATOR STEPS ARE OUTSTANDING. The RZC change is committed, not live.
+## ✅ 2026-09-09 — the RZC change. The two operator steps below were DONE the same evening (verified 2026-09-14).
 
 **Session paused mid-task ("will continue in a bit"), not closed.** Everything is committed and
 pushed in both repos that changed (`63246a2` docs, `bd6b724` tunnel). **Nothing is deployed.**
