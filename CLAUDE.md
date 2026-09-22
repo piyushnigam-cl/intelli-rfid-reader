@@ -205,11 +205,12 @@ now has nowhere to go.
 
 **Decided by the operator 2026-09-05, and the two halves are different kinds of thing.**
 
-- **The ExC is a level, not a phase.** O5 is `running && !exitOccupied` at every instant, computed
-  in one place by `ConveyorController.applyExc()`. It stops the moment IN4 asserts, whatever else is
-  happening. That is the whole of the fall-off protection, and it is deliberately outside the carton
-  state machine — **an interlock with modes is an interlock with a mode in which it does not
-  interlock.**
+- **IN4 stops the ExC unconditionally.** O5 is `running && !exitOccupied && !cartonInZone`,
+  computed in one place by `ConveyorController.applyExc()`. The IN4 term stands on its own: the belt
+  stops the moment IN4 asserts, whatever phase the carton machine is in. That is the whole of the
+  fall-off protection — **an interlock with modes is an interlock with a mode in which it does not
+  interlock.** The `cartonInZone` term is new on 2026-09-22 (below) and takes nothing away from it:
+  two negative terms, and neither can do anything but stop the belt.
 - **A blocked exit never interrupts a read.** If IN4 asserts mid-carton the read runs to completion.
   Only when the read *closes* against a still-occupied edge does the whole line stop, holding the
   carton in the read zone; it resumes on its own the moment the edge clears. No operator action but
@@ -218,6 +219,25 @@ now has nowhere to go.
 **The result is published either way.** A held discharge delays the carton, never the callback — the
 read has closed and the verdict is known. That is the mirror of `CartonRelease`'s rule that a slow
 WMS must not stall the conveyor, and both directions matter.
+
+### One carton at a time — the EnC and the ExC stop together again
+
+**Operator decision, 2026-09-22.** The Entry and Exit conveyors run only while the read zone is
+empty: **both drop on the IN1 entry trigger and both come back when the read is released**, on any
+outcome. `ConveyorController.cartonInZone` is the second negative term in `applyExc()`; the entry
+path sets it and `discharge()` clears it.
+
+**This deliberately gives back the de-serialisation the 2026-09-05 rewiring bought**, so cycle time
+is read **plus** discharge again rather than the larger of the two. A carton part-way down the ExC
+when the next one triggers pauses there and finishes its discharge when the read releases — so a box
+can now come to rest in the middle of the Exit Conveyor, which it could not before. **The
+difference from the pre-09-05 machine is that this is one boolean and not a copper constraint:** the
+ExC still has O5 to itself, so restoring the other behaviour is deleting one term.
+
+**The interlock is untouched and still outranks it.** IN4 stops the ExC on its own at any instant,
+and a read closing against an occupied edge still stops everything and holds the carton in the zone.
+`releasingAReadNeverStartsTheExcIntoAnOccupiedEdge` pins the ordering that matters — the carton
+phase may only ever *stop* that belt.
 
 **A blocked line waits indefinitely, and that is specified rather than overlooked.** There is no
 timeout, because a timeout could only resolve to discharging into an occupied edge.
@@ -332,12 +352,14 @@ Four things follow, and three of them are not obvious:
   and armed. That is the correct failsafe — a dead reader stops the line, it does not run it — but
   someone will power the panel up, see a dead conveyor and think the drive is broken. Say so in the
   operator instruction.
-- **EnC and ExC shared one channel until 2026-09-05, which serialised the line.** The previous
-  carton could not discharge while the current one was being read, so cycle time was read +
-  discharge rather than max(read, discharge) — a throughput ceiling bought with the channel budget.
-  **The copper no longer imposes it**, since the ExC has O5 of its own; `setBelts()` still commands
-  the two together, so the ceiling is now a software choice and removing it is free. RS-485 remains
-  the way to address all three cards independently, but this is no longer the argument for it.
+- **EnC and ExC shared one channel until 2026-09-05, which serialised the line — and since
+  2026-09-22 they are serialised again on purpose.** The previous carton cannot discharge while the
+  current one is being read, so cycle time is read + discharge rather than max(read, discharge).
+  From 09-05 to 09-22 the software took the throughput the rewiring offered; the operator has since
+  asked for one package in the tunnel at a time. **The copper does not impose it either way** — the
+  ExC has O5 of its own, so this is one term in `applyExc()` and reversible without touching the
+  panel. RS-485 remains the way to address all three cards independently, but this is not the
+  argument for it.
 - **Stopping EnC the instant EnS fires drags the carton.** EnS is at the *entry* of the read zone, so
   at that moment the leading edge is on RZC and the trailing edge is still on EnC. Either delay the
   EnC stop by the transfer time, or place EnS far enough downstream that the carton is fully

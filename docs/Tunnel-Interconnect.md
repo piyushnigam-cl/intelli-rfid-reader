@@ -5,6 +5,11 @@ every hardware-dependent figure is inference from datasheets, not observation �
 rule in `CLAUDE.md`. Figures marked **UNVERIFIED** need a vendor answer or a bench measurement before
 anyone cuts a cable.
 
+Version 0.8 · 2026-09-22 — **The EnC and the ExC run only while the read zone is empty.** Both stop
+on the entry trigger and both start when the read closes (operator decision). No wiring change: O1
+and O5 stay separate copper, and IN4 still stops the ExC on its own at any instant. What it gives up
+is the de-serialisation 0.7 bought — see §7.2, where the two open questions are now answered.
+
 Version 0.7 · 2026-09-05 — **REWIRED ON SITE. Every output from O5 down has moved, the Exit
 Conveyor has a channel of its own, and IN4 is now a sensor.** O1 is the EnC alone, O5 is `ExC_RUN`,
 both lamps moved up (O6 green, O7 red), and IN4 is the Discharge Sensor at the far edge of the ExC.
@@ -228,27 +233,26 @@ moment the read finishes on **any** outcome (SETTLED, COUNT_REACHED, PACKAGE_EXI
 | Carton clear (IN2), or idle | **HIGH** | **HIGH** | released | low |
 | Boot, reader dead, or 24 V removed | **LOW** — everything stopped | **LOW** | low | low |
 
-> **The two belts are wired apart and still commanded together, and the document says so because the
-> panel and the software now disagree in a way a reader of either alone would not spot.** O1 and O5
-> are separate copper from 0.7, but `ConveyorController` writes both from one `setBelts()` seam, so
-> **the observable behaviour is exactly what 0.6 described**. The table above is what the software
-> holds today, not what the wiring makes possible.
+> **The two belts are wired apart and commanded together, and since 0.8 that is a decision rather
+> than a holding position.** O1 and O5 are separate copper from 0.7. Between 0.7 and 0.8 the
+> software used that: the ExC went on running through a read so the previous carton could reach the
+> discharge edge. **The operator asked on 2026-09-22 for one carton at a time**, so both belts now
+> drop on the entry trigger and both come back at read close, and the table above is again exactly
+> what the software holds.
 >
-> **Two decisions are open before they are split, and neither is guessed at here:**
+> **The first question below is answered; the second is not, and is unchanged.**
 >
-> 1. **Does a blocked exit propagate upstream?** IN4 asserted means a carton is sitting at the
->    discharge edge and the ExC must stop. Whether the RZC and the EnC should stop with it —
->    back-pressure — or keep feeding into a tunnel whose exit is plugged, is a line-behaviour
->    decision, not an implementation detail. Stopping everything is safe and costs throughput;
->    stopping only the ExC risks a second carton arriving behind the first.
+> 1. **Does a blocked exit propagate upstream? ANSWERED, 2026-09-05, and 0.8 does not disturb it.**
+>    IN4 stops the ExC on its own at any instant, whatever phase the carton machine is in. A read is
+>    never interrupted; only when a read *closes* against a still-occupied edge does the whole line
+>    stop, holding the carton in the read zone until the edge clears. In `ConveyorController` this
+>    is `applyExc()` — `running && !exitOccupied && !cartonInZone`, where the two negative terms can
+>    only ever stop the belt and neither can start it.
 > 2. **Should the EnC stay stopped until the IN2 exit edge**, rather than coming back HIGH at read
 >    close? Restarting at read close is what 0.6 did because it had to — one channel, one decision.
 >    With its own channel the EnC could hold until the carton has physically cleared the read zone,
->    which is a different and more conservative feed policy.
->
-> Until both are settled, `setBelts()` writing O1 and O5 together is the holding position, and it is
-> deliberately a single method so that splitting them is one edit rather than a hunt through eight
-> call sites.
+>    which is a different and more conservative feed policy. **Still open** (operator, 2026-09-05:
+>    "fine for now").
 
 Four consequences, and three are not obvious:
 
@@ -260,12 +264,14 @@ Four consequences, and three are not obvious:
   and armed. Correct failsafe — a dead reader stops the line rather than running it — but someone
   will power the panel up, see a dead conveyor and call it a drive fault. Put it in the operator
   instruction.
-- **The line is no longer serialised, and that is the throughput half of the rewiring.** Until 0.7
-  the EnC and ExC shared O1, so the previous carton could not discharge while the current one was
-  read and cycle time was read **plus** discharge. Two channels make it the larger of the two
-  instead — **once the software stops commanding them together**, which it does not yet, so the
-  gain is available and not yet taken. RS-485 (§12) is no longer needed to escape this; it was the
-  way out when the constraint was in copper, and the copper has changed.
+- **The line is serialised again in 0.8, and this time by choice.** Until 0.7 the EnC and ExC
+  shared O1, so the previous carton could not discharge while the current one was read and cycle
+  time was read **plus** discharge. The rewiring made the larger-of-the-two available, and the
+  software took it — and 0.8 gives it back, because the operator wants one package in the tunnel at
+  a time. **The difference that matters is that it is now one boolean and not a copper constraint:**
+  a carton part-way down the ExC when the next triggers pauses there and finishes when the read
+  releases, and restoring the 0.7 behaviour is deleting one term in `applyExc()`. RS-485 (§12) is
+  still not needed for this.
 - **Stopping EnC the instant EnS fires drags the carton.** EnS is at the *entry* of the read zone, so
   at that moment the carton's leading edge is on RZC and its trailing edge is still on EnC — half on
   a stopped belt, half on a moving one. Either delay the EnC stop by the transfer time, or place EnS
