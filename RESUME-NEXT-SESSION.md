@@ -1,9 +1,79 @@
 # Resume here — CM4 session, next sitting
 
-**Sections are newest first. 2026-09-14 (short housekeeping session) is on top, then 2026-09-11 (firmware + RG_IN). The 2026-09-09 one's two operator steps are DONE (checked 2026-09-14:
-the jar in `/opt` is from 09-09 21:31 and the site config has `rzc-always-run: true` at 100 %). Below it, the 2026-09-07 rewrite —
+**Sections are newest first. 2026-09-22 (one carton at a time — WRITTEN 2026-09-23, because that
+session was cut off by a disconnect before its close-out ran) is on top, then 2026-09-14
+(housekeeping) and 2026-09-11 (firmware + RG_IN). The 2026-09-09 one's two operator steps are DONE
+(checked 2026-09-14: the jar in `/opt` is from 09-09 21:31 and the site config has
+`rzc-always-run: true` at 100 %). Below it, the 2026-09-07 rewrite —
 the session that FIXED the deafness, upgraded the SDK and made the armed EAN authoritative — which
 itself supersedes the "the reader is deaf, it is hardware" head that stood here earlier that day.**
+
+---
+
+## 2026-09-22 — one carton at a time; NOT DEPLOYED, and IN2 did not fire once all day
+
+**The session ended in a disconnect, not a close-out.** The code and the documentation were
+committed and pushed before it dropped; this section, the memory entry and the deploy were not.
+Reconstructed 2026-09-23 from the repos, the log and the spool.
+
+### What changed — all committed and pushed
+- **tunnel `acdb2d5`**: **one carton at a time.** `ConveyorController.cartonInZone` is a second
+  negative term in `applyExc()`, set by `cartonEntered()` and cleared by `discharge()`, so the EnC
+  **and** the ExC both drop on the IN1 entry trigger and both come back when the read is released,
+  on any outcome. 281 tests pass, including the inverted `theExcKeepsRunningWhileACartonIsRead` and
+  `releasingAReadNeverStartsTheExcIntoAnOccupiedEdge`. **It gives back the de-serialisation the
+  09-05 rewiring bought** — cycle time is read + discharge again — deliberately, on the operator's
+  decision, and reversing it is deleting one term because O5 is still the ExC's own copper.
+  The IN4 interlock is untouched and still outranks it.
+- **root `2141288`**: `CLAUDE.md` gains the "One carton at a time" section;
+  `docs/Tunnel-Interconnect.md` goes to **0.8**.
+- **memory** (17:25): `board-address-is-a-dhcp-lease.md` — address the board by `intellisbc.local`.
+
+### State the unit was left in
+- Service `active`; the running JVM is **PID 1025, started 2026-09-22 16:56**, from
+  `/opt/intelli/intelli-rfid-tunnel/intelli-rfid-tunnel.jar` — which is still the **09-09 21:31**
+  build. Verified by class content: the `/opt` jar has no `cartonInZone`; `target/` (built 21:06)
+  has it.
+- **So `acdb2d5` AND the 09-14 `9e6485b` O7 log fix are both still undeployed.** One
+  `deploy/redeploy.sh` takes both.
+- **`settle-ms: 800` IS live** — this corrects the 09-14 section above, which said it was not. Every
+  one of the day's cartons has `lastNewTagMs` at 805–870 ms.
+- Reverse nudge still on (1 pulse at 2000 ms for 1000 ms). fw `20.26.08.19`, `RG_IN`, ANT2/J25
+  (`pinctrl get 8,9` → 8 lo, 9 hi, confirmed 09-23).
+
+### The seven cartons of 09-22 — all SETTLED, none complete
+| time (Z) | tags | matched / exp | marginal | lastNewTagMs | durationMs | best…worst RSSI | reads/tag |
+|---|---|---|---|---|---|---|---|
+| 12:02:21 | 19 | **0** / 40 | 11 | 834 | 2159 | −37…−60 | 1.4 |
+| 12:03:42 | 24 | 24 / 40 | 2 | 826 | 3358 | −36…−58 | 2.4 |
+| 12:22:17 | 24 | 24 / 40 | 3 | 840 | 3220 | −35…−60 | 2.2 |
+| 12:22:33 | 29 | 29 / 40 | 5 | 828 | 3382 | −37…−61 | 2.2 |
+| 12:59:16 | 18 | 18 / 40 | 6 | 867 | 2327 | −38…−59 | 1.7 |
+| 14:47:26 | 20 | 20 / 40 | 2 | 870 | 3437 | −38…−61 | 2.5 |
+| 14:49:11 | 38 | 38 / **18** | 8 | 805 | 6393 | −35…−60 | 3.2 |
+
+Three things to carry forward, none of them explained:
+- **`IN2 NEVER FIRED ONCE.`** Every carton logs `no exit edge 10000 ms after the read closed …
+  check the exit sensor`. That was tolerable while `rzc-always-run` meant nothing could be
+  stranded — **it is not tolerable now**, because `cartonInZone` is cleared at read release and
+  `reopen-block-ms` keys off IN2 to lift. This is ahead of everything else.
+- **Best RSSI is −35…−38 dBm**, against −25 on 09-07 on this same J25 branch. Still ~10 dB down and
+  still the 09-14 open question. Cartons are reading 18–38 of 40.
+- **12:02 matched 0 of 19 tags**, the same shape as 09-14's seq 1198 — probably armed for a
+  different EAN at that moment. Check the arm log against the spool.
+
+### Next, in order
+1. **Deploy**: `cd ~/rfid/intelli-rfid-reader/apps/intelli-rfid-tunnel && deploy/redeploy.sh`
+   (picks up `acdb2d5` one-carton and `9e6485b` O7 log).
+2. **The dead exit sensor.** IN2 gates belt release now. Drive line 24 (`pinctrl set 24 op dl` then
+   `op dh`, then back to `ip pd`) to prove the edge path, then look at the SICK W26 and its TM
+   channel. The internal-pull trick does not work on this carrier.
+3. **The weak RSSI / short cartons** — blocked on nothing, and it blocks the like-for-like carton
+   comparison against 09-07's 38/38.
+4. Then the 09-11 list: radiated power under the Indian limit, bare-J25 VSWR sweep + module
+   temperature, send Silion the report.
+5. Open from 09-14: should the tunnel's packaged `antenna-count: 2` become 1? (Site config says 1.)
+6. Optional: make shutdown step 3 a no-op when no write is outstanding.
 
 ---
 
@@ -25,6 +95,9 @@ pushed in all repos.
 - Board rebooted ~20:36; service `active`, `READING`, fw `20.26.08.19`, `RG_IN`, ANT2/J25.
 - **The running JVM is still the 09-09 jar and still on `settle-ms: 1500`** — it started before the
   config edit. Neither the O7 log fix nor the 800 window is live.
+  **CORRECTED 2026-09-23: the 800 window IS live** — the JVM was restarted after that edit (the one
+  running on 09-22 started 16:56 that day) and every 09-22 carton settles at 805–870 ms. The jar
+  half of the claim still stands: `/opt` is the 09-09 build.
 - Reverse nudge still on (1 pulse at 2000 ms for 1000 ms). 7 old entries in `callbacks-dead.jsonl`.
 
 ### The first two cartons of the day — read these before trusting the new firmware on cartons
