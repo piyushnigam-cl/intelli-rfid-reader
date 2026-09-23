@@ -1691,6 +1691,20 @@ load-bearing: `/opt` is root-owned and the app is unprivileged, so a root-owned 
 logback cannot open the file and the app **silently** logs only to journald, with nothing looking
 wrong because journald keeps working. Check `ls -l /opt/intelli/logs/` after a deploy.
 
+## Cloning this unit onto a new board
+
+`export/setup-new-cm4.sh` (2026-09-23) turns a fresh Trixie CM4 on a v2.x carrier into a copy of
+this unit, from `export/intelli-cm4-kit-<date>.tar.gz`. The tarball is git-ignored, so rebuild it
+from this board when needed. **Untested on a real second board as of 2026-09-23.** Three rules it
+encodes, and a hand setup must keep them too:
+
+- **The region follows the module, not the old site config.** Use `RG_IN` only after `fw_probe.py`
+  shows fw `20260819` **and** auth `INDIA`. Otherwise use `RG_EU3`, because a fresh SIM7500 refuses
+  `RG_IN`.
+- **reader-id and hostname are per unit.** Two `intellisbc` hosts clash on mDNS.
+- **Credentials and the VPN certificate do not travel in the kit.** A VPN client certificate is
+  per board.
+
 ## Gotchas
 
 - **`triggered-carrier` and `rzc-always-run` are different machines, and the names invite exactly

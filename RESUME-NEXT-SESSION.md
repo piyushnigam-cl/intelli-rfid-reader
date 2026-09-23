@@ -1,6 +1,7 @@
 # Resume here — CM4 session, next sitting
 
-**Sections are newest first. 2026-09-23 (deployed, and the RZC stops per carton again) is on top,
+**Sections are newest first. 2026-09-23 evening (the export kit for a second CM4) is on top, then
+2026-09-23 (deployed, and the RZC stops per carton again) is on top,
 then 2026-09-22 (one carton at a time — written on 09-23, because that session was cut off by a
 disconnect before its close-out ran), then 2026-09-14 (housekeeping) and 2026-09-11
 (firmware + RG_IN). The 2026-09-09 one's two operator steps are DONE
@@ -8,6 +9,62 @@ disconnect before its close-out ran), then 2026-09-14 (housekeeping) and 2026-09
 `rzc-always-run: true` at 100 %). Below it, the 2026-09-07 rewrite —
 the session that FIXED the deafness, upgraded the SDK and made the armed EAN authoritative — which
 itself supersedes the "the reader is deaf, it is hardware" head that stood here earlier that day.**
+
+---
+
+## 2026-09-23 (evening): the export kit for a second CM4. If you are troubleshooting a new board, start here
+
+**Nothing changed on this unit.** The session built a kit to clone this board onto a new CM4 and
+v2.x carrier. **It has not been run on a new board yet**; it was only syntax-checked. Expect the
+first real run to find something.
+
+### What exists
+- `export/setup-new-cm4.sh`: committed. It runs twice as `intelli-sbc`, with a reboot between.
+  - **Pass 1:** packages and the dialout/gpio groups, the IntelliRFID block in `config.txt`
+    (enable_uart, disable-bt, uart3) with the serial console off, then the hostname. It also
+    installs the workspace, `~/api`, `~/.m2`, Claude memory, `/opt/intelli`, `/var/lib/intelli`,
+    the site config, the unit, the lamp hook and sudoers.
+  - **Pass 2:** checks GPIO14 is TXD0 and runs `fw_probe.py --to-app` (read-only). It then runs
+    `ProbeBasic` on ANT1 and ANT2, sets the site region, and enables and starts the tunnel.
+  - It saves its answers in `~/.intelli-setup.conf` and logs each run to `~/intelli-setup-*.log`.
+    Probe outputs go to `~/probe-fw-*.txt` and `~/probe-basic-ant{1,2}-*.txt`. **Ask for these
+    first when troubleshooting.**
+- `export/intelli-cm4-kit-2026-09-23.tar.gz` (148 MB, **git-ignored, not pushed**):
+  - the workspace with all 6 repos' `.git` (target/ excluded);
+  - `firmware-sim7500-20260819/` at the top level (checksums verified), with the flash handoff and
+    report docs copied in;
+  - `home/api` (the v260827 SDK plus compiled probes), the deployed jar and `.so` from `/opt/intelli`
+    (tunnel `acdb2d5`), the site config, unit, hook and sudoers, `~/.m2`, Claude memory, and a
+    `system/snapshot/` of this board for diffing.
+- **No secrets in the kit.** The permission classifier refused to bundle `.git-credentials`, the VPN
+  `client.conf` and the plaintext keys file. The operator was given a one-liner to build
+  `intelli-cm4-secrets-2026-09-23.tar.gz` by hand. The script picks it up if present but **only
+  installs `.git-credentials`**; VPN needs a per-board certificate.
+
+### What the script decides, and why
+- **Region:** it writes `RG_EU3` first and switches to `RG_IN` only when `fw_probe` reports fw
+  `20260819` **and** auth `INDIA`. A fresh module (sw `20.26.03.30`) refuses `RG_IN`, and
+  `applyConfig()` would then fail on every connect. The script never flashes and never writes the
+  auth region; it prints the commands. The order it gives is auth write, then flash, the same as
+  this unit (09-07, then 09-11).
+- **Values it asks for:** hostname (default `intellisbc2`, because of the mDNS clash; laptop apps
+  still point at `intellisbc.local`), `reader-id` (default 2) and ANT (default 2).
+- **ANT2 is this board's J20 fault, not a property of the design.** The new board may be fine on J20.
+- **Carried over unchanged:** the same API key hashes, so the WMS, admin and wms-test keys work on
+  both boards.
+- **Left out on purpose:** spool, sequence counter, logs and the legacy
+  `intelli-heartbeat-off.service` (still enabled on THIS unit; it drives BCM 12, now the green
+  lamp, low at shutdown. Harmless, but a candidate for removal).
+
+### Likely first failures on a new board
+1. **Pass 2 exits with "not in dialout".** The login predates the usermod; log out and back in.
+2. **`fw_probe` gets no answer.** Pins 8/9/22/10 are not raised, or `disable-bt` did not apply: a
+   trailing comment in `config.txt`, or an existing `[cm4]` section swallowing the lines. The
+   script appends an `[all]` header for this reason.
+3. **The tunnel is not UP and the log shows a region failure.** The module is not on fw 20260819 +
+   INDIA and the site config somehow says `RG_IN`.
+4. **ProbeBasic reads 0 on both ports.** Put tags in front of the antenna. Without the explicit
+   region set the module would sit on `RG_NA`; ProbeBasic does set it.
 
 ---
 
