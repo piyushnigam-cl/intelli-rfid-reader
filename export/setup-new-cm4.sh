@@ -298,10 +298,13 @@ echo "  waiting for /actuator/health ..."
 H=""
 for i in $(seq 1 45); do
     H=$(curl -s --max-time 2 localhost:8081/actuator/health || true)
-    echo "$H" | grep -q '"status"' && break; sleep 2
+    # The TOP-LEVEL status, not any "UP": diskSpace and ping are UP long before the reader connects,
+    # so matching '"UP"' anywhere reported a tunnel still OUT_OF_SERVICE as up (2026-09-23).
+    HS=$(echo "$H" | grep -o '^{"status":"[A-Z_]*"' | cut -d'"' -f4)
+    [ "$HS" = UP ] && break; sleep 2
 done
 echo "  $H" | cut -c1-400
-echo "$H" | grep -q '"UP"' && ok "tunnel is UP" || todo "The tunnel is not UP yet: journalctl -u intelli-rfid-tunnel -n 100 --no-pager"
+[ "$HS" = UP ] && ok "tunnel is UP" || todo "The tunnel is not UP yet: journalctl -u intelli-rfid-tunnel -n 100 --no-pager"
 ls -l /opt/intelli/logs/ | tail -n +2 | head -3
 
 # ================================================================================================

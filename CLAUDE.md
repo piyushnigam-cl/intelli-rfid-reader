@@ -1695,8 +1695,7 @@ wrong because journald keeps working. Check `ls -l /opt/intelli/logs/` after a d
 
 `export/setup-new-cm4.sh` (2026-09-23) turns a fresh Trixie CM4 on a v2.x carrier into a copy of
 this unit, from `export/intelli-cm4-kit-<date>.tar.gz`. The tarball is git-ignored, so rebuild it
-from this board when needed. **Untested on a real second board as of 2026-09-23.** Three rules it
-encodes, and a hand setup must keep them too:
+from this board when needed. Three rules it encodes, and a hand setup must keep them too:
 
 - **The region follows the module, not the old site config.** Use `RG_IN` only after `fw_probe.py`
   shows fw `20260819` **and** auth `INDIA`. Otherwise use `RG_EU3`, because a fresh SIM7500 refuses
@@ -1704,6 +1703,31 @@ encodes, and a hand setup must keep them too:
 - **reader-id and hostname are per unit.** Two `intellisbc` hosts clash on mDNS.
 - **Credentials and the VPN certificate do not travel in the kit.** A VPN client certificate is
   per board.
+
+**First real run, 2026-09-23: the second board is `intellisbc2`** (reader-id 2, SIM7500 serial
+`30262503F8`, sw `20.26.03.30`, auth `RG_PRC` as found; the same as `30262503F5` before 09-07). Both
+passes ran clean, then the module was brought to this unit's state the same evening. **It behaved
+exactly as `30262503F5` did, so the procedure is now proven on two modules:**
+
+| step | result on `30262503F8` |
+|---|---|
+| `ProbeAuthWrite` | `RG_PRC` -> `RG_IN`, hw `31.00.00.80` -> `31.00.0E.80` after an `RFID_EN` cycle |
+| app dump | 237,908 bytes, **byte-identical** to the 03-30 MiniTP image (sha256 `c51918d3…`) |
+| MCU flash | **31.9 s** (79 s on `…F5`), `CHECK_Firmware` OK, no family warning (started in BOOT) |
+| after re-power | fw `20260819`, auth still `0x0E INDIA`, baud 115200, autoboot flag still off |
+| region scan | the same 26 accepted, `RG_IN` hops `865100 865700 866300 866900` |
+| tunnel | `region: RG_IN`, `applyConfig()` clean, UP and reading on `20.26.08.19` |
+
+Two things learned. **sudo works without a tty on `intellisbc2`**, unlike on this unit, so Claude can
+run the whole procedure there. **Feed `upgrade_mcu.py` the address and exactly one newline**
+(`printf '/dev/ttyAMA0:115200\n\n'`): the upgrade confirmation takes it, and if the family warning
+appears unexpectedly it takes the newline instead, so the confirmation hits EOF and the script
+exits before writing. Run it in a detached `tmux` so a dropped session cannot cut the write.
+
+**Open on `intellisbc2`:** J20/ANT1 read **0 tags** where J25/ANT2 read 39 (best −38 dBm), and it is
+not recorded whether an antenna was fitted to J20. Do not conclude it shares this unit's J20 fault
+until both ports are tested with an antenna each. Its site config came across with the reverse
+nudge and the bench test surface ON. Raw outputs: `~/fw-2026-09-23/` on that board.
 
 ## Gotchas
 

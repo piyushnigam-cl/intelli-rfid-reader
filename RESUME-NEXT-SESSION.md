@@ -1,6 +1,7 @@
 # Resume here — CM4 session, next sitting
 
-**Sections are newest first. 2026-09-23 evening (the export kit for a second CM4) is on top, then
+**Sections are newest first. 2026-09-23 late (the second board, flashed and running) is on top, then
+2026-09-23 evening (the export kit for a second CM4), then
 2026-09-23 (deployed, and the RZC stops per carton again) is on top,
 then 2026-09-22 (one carton at a time — written on 09-23, because that session was cut off by a
 disconnect before its close-out ran), then 2026-09-14 (housekeeping) and 2026-09-11
@@ -9,6 +10,24 @@ disconnect before its close-out ran), then 2026-09-14 (housekeeping) and 2026-09
 `rzc-always-run: true` at 100 %). Below it, the 2026-09-07 rewrite —
 the session that FIXED the deafness, upgraded the SDK and made the armed EAN authoritative — which
 itself supersedes the "the reader is deaf, it is hardware" head that stood here earlier that day.**
+
+---
+
+## 2026-09-23 (late): the kit WORKED — `intellisbc2` is up on fw 20260819 + RG_IN
+
+Run on the new board (reader-id 2, module `30262503F8`). Both passes clean; then auth region
+`RG_PRC` -> `RG_IN`, dump byte-identical to 03-30, MCU flash to `20260819` (31.9 s), 26 regions
+accepted, site config `RG_IN`, tunnel UP. Details and the table are in CLAUDE.md, "Cloning this
+unit onto a new board". CodeCommit credentials are installed on `intellisbc2`; no VPN yet.
+
+**Next on `intellisbc2`, in order:**
+1. Antenna on BOTH ports, then `ANT=1` / `ANT=2 ~/api/run/run.sh ProbeBasic` and the VSWR sweep
+   per port. J20 read 0 tags at setup, J25 read 39; unknown whether J20 had an antenna.
+2. Decide the carried-over site config: reverse nudge ON, bench test surface ON, `session: 1`.
+3. Laptop apps at `intellisbc2.local`; a VPN certificate for `intellisbc2`; a callback token.
+
+Script fix committed: step 12 had matched `"UP"` anywhere in the health JSON and reported a tunnel
+still `OUT_OF_SERVICE` as up.
 
 ---
 
