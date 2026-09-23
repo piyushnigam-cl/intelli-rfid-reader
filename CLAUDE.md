@@ -486,22 +486,32 @@ by directory and check each one *has* a repo, rather than iterating over the rep
 
 ## The apps
 
-Two of them run **on the reader**; two run **on the Windows laptop** and talk to a reader over the
-LAN. The port is the giveaway and the distinction matters, because a laptop app has no reader, no
-vendor jar and no core.
+Three of them are reader apps: they need the module, the vendor jar and core. Two are **client
+apps**: they talk to a reader over HTTP only, with no module, vendor jar or core, and that is the
+distinction that matters. **Where they run is a separate question.** `intelli-wms-test` has run
+**on the CM4 beside the tunnel since 2026-09-23** (operator: the new standard), and the laptop
+only opens it in a browser. `intelli-rfid-admin` still runs on the laptop.
 
 | App | Port | Runs on | Purpose |
 |---|---|---|---|
 | `intelli-rfid-reader-test` | 8080 | reader | A new reader arrives: is it good? Reads a few tags, writes a few tags, reports pass/fail |
 | `intelli-rfid-tunnel` | 8081 | reader | Warehouse entry/exit tunnel. A box of ~40 tagged articles passes through; a third-party app asks what was in it. Also commissions warehouse tags |
 | `intelli-rfid-wayside` | 8082 | reader | Trackside railway reader. A train passes; produce the consist |
-| `intelli-wms-test` | 8083 | laptop | A WMS, reduced to arming Super Fast Mode and showing the carton that comes back |
+| `intelli-wms-test` | 8083 | **reader's CM4**, browsed from the laptop | A WMS, reduced to arming Super Fast Mode and showing the carton that comes back |
 | `intelli-rfid-admin` | 8090 | laptop | The whole surface: v1 contract, internal endpoints, commissioning, key issuance, bench harness, call log, contract checker |
 
 `intelli-rfid-core` is the shared library underneath the three reader apps. **The two laptop apps
 deliberately do not depend on it** — shared DTOs would serialise and deserialise with the reader's
 own code, so a wire-format regression would cancel itself out on both sides and be invisible to the
 one test built to catch it. Both parse the reader's JSON field by field on purpose.
+
+**Running `intelli-wms-test` on the CM4 does not change that rule**: it still has no dependency on
+core. Two things do change. **Start it with `--wms.reader.base-url=http://$(hostname).local:8081`.**
+The packaged `intellisbc.local` would make `intellisbc2`'s copy arm the *other* board. `localhost`
+would break the callback-address guess, which derives from the route to the reader. And **the
+operator starts it, in `tmux`**, because Claude cannot hold a JVM across tool calls. So two JVMs in
+`pgrep -ax java` is normal. It never opens the serial port, and a second JVM is harmless to the
+tunnel. The run instructions are in the app's `README.md`.
 
 **The tunnel app is retail/warehouse. Only the wayside app is rail.** Do not conflate them.
 
@@ -532,10 +542,12 @@ Two rules it enforces on screen, both of which exist to stop it flattering the r
   reason and count are independent; a page computing *found ≥ expected* itself would quietly
   disagree with the reader on the one number the customer cares about.
 
-`callback.url` blank means the app offers its own site-local IPv4 and labels it a guess — right on a
-laptop sharing the reader's LAN, wrong behind NAT. **Never `localhost`**: the reader would POST to
-itself, every carton would read perfectly, every result would die in a connection refused inside the
-*reader's* log, and the page would sit empty looking exactly like a reader that had stopped working.
+`callback.url` blank means the app offers its own site-local IPv4 and labels it a guess. On the
+CM4, the standard since 2026-09-23, that is the board's own LAN address and always right, because
+the tunnel posting to its own host cannot fail to route. **`localhost` is correct only when the app
+is on the reader.** From anywhere else the reader would POST to itself. Every carton would read
+perfectly, every result would die in a connection refused inside the *reader's* log, and the page
+would sit empty, looking exactly like a reader that had stopped working.
 
 ### Two API surfaces on the tunnel, and only one of them is the contract
 

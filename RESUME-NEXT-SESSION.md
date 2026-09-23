@@ -119,7 +119,8 @@ no `Carrier off:` line in any of our logs and that says nothing about whether it
 - Pins at close: O1 (26) **hi**, O5 (21) **hi**, O2 (20) **lo**, O3/O4/O6/O7 lo, all four inputs
   clear. That is `line running, RZC stopped`, which is correct for the new flag.
 - **`intelli-wms-test` is running ON THIS BOARD** (PID 573064, `target/intelli-wms-test-0.1.0.jar`),
-  not on the laptop as the docs assume. Worth knowing before wondering what the second JVM is.
+  which is the standard since 2026-09-23 (the laptop only browses to it). Worth knowing before
+  wondering what the second JVM is.
 - **A vim swap file `/etc/intelli/intelli-rfid-tunnel/.application.yml.swp` is still there** (13:48).
   Either an editor is still open on the site config or one died — clear it before the next edit.
 
