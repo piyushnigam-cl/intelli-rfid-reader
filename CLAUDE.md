@@ -266,6 +266,14 @@ this system does not use it** — do not write code that assumes otherwise.
 
 ### The RZC runs continuously in Super Fast Mode — O2 is held HIGH
 
+> **REVERSED ON THE UNIT 2026-09-23: the site config now says `rzc-always-run: false`**, so O2 rises
+> on the entry trigger and falls again, and the arm line reads `RZC stopped`. The packaged default
+> was always `false`; this puts the unit back on it. **The consequence to watch is the discharge
+> backstop, because IN2 is dead on this unit:** under always-run a missing exit edge only WARNs,
+> while under `false` the same timer calls `setRzc(STOP)` — `no exit edge 10000 ms after the read
+> closed; stopping the RZC anyway`, which is now in the log after every carton. Fix IN2 or put
+> always-run back. The 09-09 reasoning below is unchanged and is why the flag exists.
+
 **Operator decision, 2026-09-09.** `tunnel.field.conveyor.rzc-always-run: true`: the Reading Zone
 Conveyor joins the EnC and the ExC as a belt that simply turns while the tunnel is armed, instead of
 starting on the EnS entry edge and stopping on the IN2 exit edge. Shipped in the packaged
@@ -1685,6 +1693,23 @@ wrong because journald keeps working. Check `ls -l /opt/intelli/logs/` after a d
 
 ## Gotchas
 
+- **`triggered-carrier` and `rzc-always-run` are different machines, and the names invite exactly
+  one confusion: that turning the carrier trigger on should make O2 stop.** It cannot. Asked
+  2026-09-23. `tunnel.v1.triggered-carrier` is the **RF carrier** — `V1Service.dropCarrier()` calls
+  `reader.session().stopReading()` so the antenna is energised only while a carton is in the zone;
+  it touches no field channel at all. **O2 is the Reading Zone Conveyor's Run A**, held high by
+  `tunnel.field.conveyor.rzc-always-run`. Two further traps in the same answer. `triggeredCarrier()`
+  is `properties.isTriggeredCarrier() && gpio.isWatching()`, so with no edge monitor the carrier
+  deliberately stays up whatever the flag says. And **`dropCarrier` logs at DEBUG only**, so a log
+  with no `Carrier off:` line is evidence of the log level and not of the behaviour — raise
+  `com.intelli.rfid.tunnel.v1.V1Service` to DEBUG through actuator before concluding anything.
+- **Conveyor output levels outlive the process, and nothing drives them at start-up or shutdown — so
+  a pin read on a stopped or just-restarted app is a leftover, not a decision.** `VerdictLamps`
+  clears O6/O7 at start-up and says so; O1–O5 have no equivalent, and the shutdown hook does not
+  touch them either. Measured 2026-09-23: with the app up but unarmed, O1 and O2 read high and O5
+  low — the state a previous run's last write happened to leave, which read as a live decision and
+  is not one. `ConveyorController` uses `forceRzc`/`forceEnc`/`forceExc` at arm and disarm precisely
+  because of this, since the cache cannot know what the pins were left at.
 - **`systemctl stop` leaves the unit in `failed` state, and it is cosmetic.** The JVM exits 143 on
   SIGTERM and the unit declares no `SuccessExitStatus=143`, so a perfectly clean stop reports
   `failed` and `systemctl is-active` says `failed` rather than `inactive`. `Restart=on-failure` does

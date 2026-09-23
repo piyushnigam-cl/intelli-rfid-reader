@@ -1,8 +1,9 @@
 # Resume here — CM4 session, next sitting
 
-**Sections are newest first. 2026-09-22 (one carton at a time — WRITTEN 2026-09-23, because that
-session was cut off by a disconnect before its close-out ran) is on top, then 2026-09-14
-(housekeeping) and 2026-09-11 (firmware + RG_IN). The 2026-09-09 one's two operator steps are DONE
+**Sections are newest first. 2026-09-23 (deployed, and the RZC stops per carton again) is on top,
+then 2026-09-22 (one carton at a time — written on 09-23, because that session was cut off by a
+disconnect before its close-out ran), then 2026-09-14 (housekeeping) and 2026-09-11
+(firmware + RG_IN). The 2026-09-09 one's two operator steps are DONE
 (checked 2026-09-14: the jar in `/opt` is from 09-09 21:31 and the site config has
 `rzc-always-run: true` at 100 %). Below it, the 2026-09-07 rewrite —
 the session that FIXED the deafness, upgraded the SDK and made the armed EAN authoritative — which
@@ -10,11 +11,70 @@ itself supersedes the "the reader is deaf, it is hardware" head that stood here 
 
 ---
 
+## 2026-09-23 — DEPLOYED; one carton at a time is live, and the RZC stops per carton again
+
+**Short session. The operator deployed, changed `rzc-always-run` to `false`, and ran 22 cartons.**
+It opened by reconstructing the 09-22 close-out that a disconnect had cut short — see the section
+below, which was written today.
+
+### What changed
+- **Deployed at 12:53** (operator): `/opt/intelli/intelli-rfid-tunnel/intelli-rfid-tunnel.jar` is
+  now a 12:53 build carrying `cartonInZone`. **`acdb2d5` (one carton at a time) and `9e6485b` (the
+  O7 log line) are both live**, and the new behaviour is in the log:
+  `Conveyor: carton in the read zone - RZC at 100 %, EnC and ExC stopped`.
+- **Site config 13:43 (operator): `rzc-always-run: true` → `false`.** O2 now rises on the entry
+  trigger and falls again; the arm line reads `RZC stopped`. `read-speed-percent` stays 100, so the
+  gear when it does run is unchanged.
+- **Docs**: `CLAUDE.md` gains the reversal note on the RZC section and two gotchas — the
+  `triggered-carrier` / `rzc-always-run` distinction, and the fact that conveyor output levels
+  outlive the process.
+
+### What was asked and answered
+**"OUT2 is always high even when I have set triggered = true."** They are unrelated.
+`tunnel.v1.triggered-carrier` is the **RF carrier** — `V1Service.dropCarrier()` calls
+`stopReading()` and touches no field channel. O2 is the RZC's Run A, held high by
+`rzc-always-run`. Also worth knowing: `triggeredCarrier()` is
+`isTriggeredCarrier() && gpio.isWatching()`, and `dropCarrier` logs at **DEBUG only** — so there is
+no `Carrier off:` line in any of our logs and that says nothing about whether it is working.
+
+### State the unit was left in
+- Service `active`, PID **588407**, jar of 12:53, fw `20.26.08.19`, `RG_IN`, ANT2/J25, armed
+  SUPERFAST for `8909477586814`, expected 40, callback to `192.168.0.177:8083`.
+- Pins at close: O1 (26) **hi**, O5 (21) **hi**, O2 (20) **lo**, O3/O4/O6/O7 lo, all four inputs
+  clear. That is `line running, RZC stopped`, which is correct for the new flag.
+- **`intelli-wms-test` is running ON THIS BOARD** (PID 573064, `target/intelli-wms-test-0.1.0.jar`),
+  not on the laptop as the docs assume. Worth knowing before wondering what the second JVM is.
+- **A vim swap file `/etc/intelli/intelli-rfid-tunnel/.application.yml.swp` is still there** (13:48).
+  Either an editor is still open on the site config or one died — clear it before the next edit.
+
+### The 22 cartons of 09-23 — all SETTLED
+Mostly a small 5-tag population: **5 of 5 and `complete: true` on 9 of the first 11**, two at 4 of 5.
+The one 40-expected carton read **24 tags at 13:51 IST**. RSSI −41…−62, best of the day −35,
+`lastNewTagMs` 806–890 against the 800 ms window, reads/tag 1.0–1.9.
+
+### Still open, in order
+1. **IN2 has not fired once, on either day.** Every carton logs `no exit edge 10000 ms after the
+   read closed`, and **since `rzc-always-run: false` that backstop now says `stopping the RZC
+   anyway` rather than merely warning** — the roller stops under a carton that IN2 never saw leave.
+   Drive line 24 (`pinctrl set 24 op dl` then `op dh`, then back to `ip pd`) to prove the edge path,
+   then look at the SICK W26 and its TM channel.
+2. **Reads per tag is 1.0–1.9** on a 5-tag carton, thinner than the 2–3 recorded on 09-07. With
+   `rzc-always-run: false` the carton is no longer being pulled through at 100 % the whole time, so
+   this is worth re-reading before concluding anything about the RF.
+3. **The weak RSSI** — best −35 today against −25 on 09-07 on this same J25 branch. Unexplained
+   since 09-14.
+4. Then the 09-11 list: radiated power under the Indian limit, bare-J25 VSWR sweep + module
+   temperature, send Silion the report.
+5. Open from 09-14: should the tunnel's packaged `antenna-count: 2` become 1?
+
+---
+
 ## 2026-09-22 — one carton at a time; NOT DEPLOYED, and IN2 did not fire once all day
 
 **The session ended in a disconnect, not a close-out.** The code and the documentation were
 committed and pushed before it dropped; this section, the memory entry and the deploy were not.
-Reconstructed 2026-09-23 from the repos, the log and the spool.
+Reconstructed 2026-09-23 from the repos, the log and the spool. **The deploy has since happened —
+12:53 on 09-23 — so "NOT DEPLOYED" in the heading is history; see the 09-23 section above.**
 
 ### What changed — all committed and pushed
 - **tunnel `acdb2d5`**: **one carton at a time.** `ConveyorController.cartonInZone` is a second
