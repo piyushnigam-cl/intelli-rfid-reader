@@ -1,6 +1,7 @@
 # Resume here — CM4 session, next sitting
 
-**Sections are newest first. 2026-09-23 late (the second board, flashed and running) is on top, then
+**Sections are newest first. 2026-09-24 (antenna LEDs) is on top, then 2026-09-23 late (the second
+board, flashed and running), then
 2026-09-23 evening (the export kit for a second CM4), then
 2026-09-23 (deployed, and the RZC stops per carton again) is on top,
 then 2026-09-22 (one carton at a time — written on 09-23, because that session was cut off by a
@@ -10,6 +11,35 @@ disconnect before its close-out ran), then 2026-09-14 (housekeeping) and 2026-09
 `rzc-always-run: true` at 100 %). Below it, the 2026-09-07 rewrite —
 the session that FIXED the deafness, upgraded the SDK and made the armed EAN authoritative — which
 itself supersedes the "the reader is deaf, it is hardware" head that stood here earlier that day.**
+
+---
+
+## 2026-09-24: antenna LEDs on GPIO17 / GPIO27. Deployed and confirmed working by the operator
+
+The tunnel now drives the board's antenna LEDs (tunnel `f89eaff`, package `tunnel/antenna/`):
+- GPIO17 → R54 → D18 is port 1 (J20).
+- GPIO27 → R55 → D19 is port 2 (J25).
+
+**What "lit" means, as the operator chose it:** the port is the one the SP4T (GPIO8/9) feeds, **and** a
+VSWR sweep of it at reader connect read ≤ `tunnel.antenna-leds.max-vswr` (2.0). It **blinks at 4 Hz**
+while tags arrive. The other port's LED is always dark, because the app never moves the switch. See
+CLAUDE.md, Hardware.
+
+**State of this unit:**
+- The jar in `/opt` is from 09-24 15:06, the service is active, and the site config is unchanged.
+- The packaged defaults apply: `enabled: true`, `max-vswr: 2.0`.
+- The new unit file is installed. `ExecStopPost` drops 17 and 27.
+- **The first live sweep read J25 = 1.4326 (15 dB return loss).** On 09-11 it read 1.377 (16 dB).
+  That is one quantisation step, within noise, but note it if it keeps drifting.
+
+**Next, in order:**
+1. Sweep a **bare** J25, with the service stopped, the pins raised and `ANT=2`, and the antenna
+   removed. That tells us whether `max-vswr: 2.0` really separates "no antenna" from "antenna".
+   Until then, a dark D19 means only "not ≥ 10 dB return loss".
+2. The `intellisbc2` list below still stands. That board gets the LEDs on its next deploy; check
+   that its carrier has D18/D19 fitted.
+3. `export/SHA256SUMS` is untracked in the root repo on purpose. It belongs to the git-ignored kit
+   tarball.
 
 ---
 
