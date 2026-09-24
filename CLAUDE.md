@@ -481,7 +481,8 @@ intelli-rfid-reader/            repo: intelli-rfid-reader — DOCS ONLY, ignores
     ├── intelli-rfid-tunnel/        warehouse portal — repo
     ├── intelli-rfid-admin/         laptop admin interface — repo: intelli-rfid-admin
     ├── intelli-wms-test/           WMS simulator — repo: intelli-wms-test
-    └── intelli-rfid-wayside/       trackside railway — repo (NOT checked out on this CM4)
+    └── intelli-wayside-reader/     trackside railway, Charkop — repo (from 2026-09-24; replaces the
+                                    never-pushed laptop draft intelli-rfid-wayside)
 ```
 
 `git init` belongs inside each app directory. **Never create a repo spanning `apps/`** — the root
@@ -507,7 +508,7 @@ only opens it in a browser. `intelli-rfid-admin` still runs on the laptop.
 |---|---|---|---|
 | `intelli-rfid-reader-test` | 8080 | reader | A new reader arrives: is it good? Reads a few tags, writes a few tags, reports pass/fail |
 | `intelli-rfid-tunnel` | 8081 | reader | Warehouse entry/exit tunnel. A box of ~40 tagged articles passes through; a third-party app asks what was in it. Also commissions warehouse tags |
-| `intelli-rfid-wayside` | 8082 | reader | Trackside railway reader. A train passes; produce the consist |
+| `intelli-wayside-reader` | 8082 | reader | Trackside railway reader at Charkop. One antenna, two tags per train (one each end), wheel sensors via the SAMD21 on UART3, one cloud POST per train. **Design: `docs/Wayside-Reader-Design.md`.** Supersedes `intelli-rfid-wayside`, a laptop draft that never reached CodeCommit and took direction from two antennas |
 | `intelli-wms-test` | 8083 | **reader's CM4**, browsed from the laptop | A WMS, reduced to arming Super Fast Mode and showing the carton that comes back |
 | `intelli-rfid-admin` | 8090 | laptop | The whole surface: v1 contract, internal endpoints, commissioning, key issuance, bench harness, call log, contract checker |
 
