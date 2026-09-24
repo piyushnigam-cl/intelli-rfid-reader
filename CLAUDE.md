@@ -32,6 +32,17 @@ section below. Nothing in the application drives GPIO8/9 — the systemd unit se
 `ExecStartPre` and they never move, so there is no multiplexing and the second antenna is dead
 weight until someone writes it.
 
+**Antenna LEDs, from 2026-09-24: GPIO17 → R54 1k → D18 is port 1 (J20), GPIO27 → R55 1k → D19
+is port 2 (J25), high = lit.** The tunnel drives them (`tunnel/antenna/AntennaLeds`). **Lit means
+the port is the one the SP4T feeds, and a VSWR sweep of it at reader connect read ≤
+`tunnel.antenna-leds.max-vswr` (2.0).** The LED blinks at 4 Hz while tags are arriving. The operator
+chose this definition because the module cannot sense an antenna. Only the live port can be swept
+without moving the switch, **so the other LED is always dark, whatever is screwed onto it.** The
+threshold is 2.0 and not the reader's 3.0 `vswrLimit`, because 3.0 sits 0.0095 below the 6 dB
+reading of the bad J20 branch. **Unmeasured:** what a bare J25 sweeps to. Check it before trusting a
+dark LED to mean "no antenna" rather than "bad feeder". The unit's `ExecStopPost` drops both pins,
+since a `pinctrl` level outlives a dead JVM.
+
 **On the production v2.x carrier the module is off and held in reset at boot, and neither the app
 nor Linux does anything about it.** `RFID_EN` = GPIO22 (HIGH = on) and `RFID_NRST` = GPIO10
 (LOW = reset) both come up as inputs with the BCM2711's pull-down. Measured 2026-08-29: with GPIO10
