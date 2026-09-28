@@ -14,6 +14,31 @@ itself supersedes the "the reader is deaf, it is hardware" head that stood here 
 
 ---
 
+## 2026-09-28 (later, on `intellisbc2`): Radxa CM3 on the RFID-v2 carrier. Ethernet test in progress
+
+The operator is swapping `intellisbc2`'s CM4 for a **Radxa CM3** (`radxa-cm3-io`, DHCP
+**192.168.0.194**, user `intelli-sbc`; the password is with the operator and not in the repo). It
+links fine on a Waveshare carrier. On this board it boots, but the Ethernet link never comes up
+(journal boot -1, 14:31, confirmed by the operator). Details and the decision table are in
+`docs/Hardware-IntelliRFIDv2.md` §16.
+
+**State left:** on the CM3, `ethtool` is installed and `eth-probe.service` is enabled, with
+`/etc/eth-probe/limit-100` ON. It is verified through a reboot on the Waveshare: the limit is
+applied at about 20 s and the link comes up at 100 Mb/s. `intellisbc2` is shut down for the swap. Its
+CM4 goes back in afterwards.
+
+**Next, in order:**
+1. With the CM3 on the RFID board, same cable and switch port, powered 2–3 minutes: does
+   192.168.0.194 answer?
+2. CM3 back on the Waveshare: `grep boot= /var/log/eth-probe.log | tail -40`, the RFID-board boot's
+   lines. Read `link=`, `speed=` and `partner=` against §16.
+3. Afterwards, on the CM3: `sudo rm /etc/eth-probe/limit-100` to restore gigabit, and
+   `sudo systemctl disable --now eth-probe` to stop the logging.
+4. The 2026-09-28 kit-refresh steps below are still open. The root repo commit `85f53e5` exists,
+   but `bash -n` and `rebuild-kit.sh` have not been run.
+
+---
+
 ## 2026-09-28: kit refresh for a THIRD board — `intellisbc3`, reader-id 3, a tunnel reader
 
 **Nothing changed on this unit.** Bash was unavailable for the whole session (the permission check

@@ -589,3 +589,28 @@ the part worth keeping, so they are restated here as standalone findings.
    off its own 24 V) but nothing implements it, and there is no PLC. Restart after a shutdown is a
    full power cycle with an engineer at the panel. (§10)
 7. **Java GPIO binding** — pi4j v2 over libgpiod, proven on this kernel, with bias control. (§12)
+
+---
+
+## 16. A Radxa CM3 in the CM4 socket: boots, no Ethernet link (2026-09-28, UNRESOLVED)
+
+A Radxa CM3 (RK3566, on-module **RTL8211F** PHY, Radxa Debian 12, dtb
+`rk3566-radxa-cm3-rpi-cm4-io`) runs with a 1 Gb/s link on a Waveshare CM4 carrier. On this board
+(tried on `intellisbc2`'s carrier) its persistent journal shows **a full boot to the desktop, the
+PHY found on MDIO and set up, and no `Link is Up` in 19 minutes**. So this is not U-Boot, drivers or
+DHCP. The PHY never got a copper link through our MDI traces, the HR911130A magjack, the cable or
+the switch. The CM4's BCM54210PE links through the same path, at 100 Mb/s against a 10/100-only
+switch port, which says nothing about the gigabit pairs.
+
+Two suspects, and one test separates them. **(1) Missing gigabit pairs:** Broadcom PHYs drop to
+100 Mb/s on their own, and an RTL8211F can keep retrying 1000BASE-T forever. **(2) Magjack
+centre-tap wiring** that suits one PHY and not the other. The CM3 now runs `eth-probe.service`, which
+limits autoneg to 10/100 while `/etc/eth-probe/limit-100` exists and logs link state every 10 s to
+`/var/log/eth-probe.log`, fsynced, including what the switch advertised. A 100 Mb/s link on this
+board means (1). No link with the partner's modes visible means (2). An empty `partner=[]` means
+nothing gets through at all.
+
+A CM3 would also need an app port: `pinctrl`, `ttyAMA0`, the `disable-bt`/`uart3` overlays and
+BCM numbering are all Pi-only, and the CM3's 1.5 Mbaud debug console sits on GPIO14/15, which is
+the SIM7500 UART here.
+
