@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # setup-new-cm4.sh - bring a fresh CM4 on an IntelliRFID v2.x carrier up to the state of the
-# production unit it was exported from (2026-09-23).
+# production unit it was exported from (kit rebuilt 2026-09-28; first used for intellisbc2 on 09-23).
 #
 # Run it TWICE, as the user intelli-sbc, from the folder holding the kit tarball:
 #
@@ -71,10 +71,10 @@ sudo -v || die "sudo is needed for packages, /boot, /opt and /etc"
 # Settings chosen on the first pass are remembered for the second.
 [ -f "$STATE" ] && . "$STATE"
 if [ -z "$NEW_HOSTNAME" ]; then
-    NEW_HOSTNAME="${SAVED_HOSTNAME:-$(ask "Hostname for this board (the old one is 'intellisbc'; two boards with the same name clash on mDNS)" intellisbc2)}"
+    NEW_HOSTNAME="${SAVED_HOSTNAME:-$(ask "Hostname for this board (taken: 'intellisbc', 'intellisbc2'; two boards with the same name clash on mDNS)" intellisbc3)}"
 fi
 if [ -z "$READER_ID" ]; then
-    READER_ID="${SAVED_READER_ID:-$(ask "rfid.gs1.reader-id for this board (the old unit is 1; must be unique per unit)" 2)}"
+    READER_ID="${SAVED_READER_ID:-$(ask "rfid.gs1.reader-id for this board (taken: 1 intellisbc, 2 intellisbc2; must be unique per unit)" 3)}"
 fi
 if [ -z "$ANT" ]; then
     ANT="${SAVED_ANT:-$(ask "Antenna port the service selects: 1 = J20, 2 = J25 (the old unit runs 2 because ITS J20 is faulty)" 2)}"
@@ -159,7 +159,7 @@ if [ -d "$WS/.git" ]; then ok "workspace already at $WS (left untouched)"
 else
     mkdir -p "$HOME_DIR/rfid"
     rsync -a "$KIT/workspace/intelli-rfid-reader" "$HOME_DIR/rfid/"
-    ok "workspace -> $WS (root repo + 5 app repos, with history)"
+    ok "workspace -> $WS (root repo + every app repo under apps/, with history)"
 fi
 if [ -d "$HOME_DIR/api/run" ]; then ok "~/api already present"
 else rsync -a "$KIT/home/api" "$HOME_DIR/"; chmod +x "$HOME_DIR/api/run/run.sh"; ok "vendor SDK v260827 + probes -> ~/api"; fi
@@ -180,7 +180,7 @@ sudo install -d -m 755 -o "$USER_NAME" /opt/intelli/logs
 sudo install -d -m 755 -o "$USER_NAME" -g "$USER_NAME" /var/lib/intelli /var/lib/intelli/tunnel /var/lib/intelli/tunnel/spool
 if [ -f /opt/intelli/intelli-rfid-tunnel/intelli-rfid-tunnel.jar ]; then ok "jar already installed (redeploy.sh owns it from now on)"
 else sudo install -m 644 "$KIT/opt/intelli/intelli-rfid-tunnel/intelli-rfid-tunnel.jar" /opt/intelli/intelli-rfid-tunnel/
-     ok "prebuilt tunnel jar (commit acdb2d5) -> /opt/intelli"; fi
+     ok "prebuilt tunnel jar ($(cat "$KIT/opt/intelli/intelli-rfid-tunnel/JAR-COMMIT" 2>/dev/null || echo 'see kit')) -> /opt/intelli"; fi
 sudo install -m 755 "$KIT/opt/intelli/lib/libModuleAPIJni.so" /opt/intelli/lib/
 ok "libModuleAPIJni.so (v260827, aarch64) -> /opt/intelli/lib"
 
@@ -327,12 +327,16 @@ say "Auth region -> RG_IN (it reads '$AUTH' now; record that, it is the only way
      ANT=$ANT ~/api/run/run.sh ProbeAuthRead        # expect RG_IN; hw string 3rd octet becomes 0E"
 fi
 if [ $NEED_FLASH = 1 ]; then
-say "Flash firmware $FW_DATE -> 20260819 (the kit the old unit was flashed from), inside tmux:
+say "Flash firmware $FW_DATE -> 20260819 (the kit the old unit was flashed from), inside a DETACHED tmux
+   so a dropped ssh session cannot cut the write (tmux new -s flash; Ctrl-b d to detach, tmux a -t flash to return):
      tmux new -s flash
      cd $FWP && sha256sum -c SHA256SUMS
      python3 probe/fw_probe.py /dev/ttyAMA0:115200 | tee probe-before.txt          # leave it in BOOT
      python3 tools/pinned_run.py probe/read_app_flash.py   # BACKUP this module's app; address: /dev/ttyAMA0:115200 (never blank)
-     python3 tools/pinned_run.py mcu/upgrade_mcu.py        # ~80 s, checksum verified; address: /dev/ttyAMA0:115200
+     printf '/dev/ttyAMA0:115200\\n\\n' | python3 tools/pinned_run.py mcu/upgrade_mcu.py | tee flash.txt
+     #   30-80 s (31.9 s on intellisbc2, 79 s on intellisbc), checksum verified. Address and EXACTLY one
+     #   newline: the newline answers the upgrade confirmation. If a 'wrong family' warning appears
+     #   instead, it eats the newline and the script exits at EOF WITHOUT writing - start from BOOT and re-run.
      # Impinj E710 only if fw_probe did NOT say 'SKIP impinj/upgrade_impinj.py':
      #   cd impinj && PYTHONPATH=../lib python3 upgrade_impinj.py
      pinctrl set 22 op dl; sleep 2; pinctrl set 22 op dh; sleep 0.3
@@ -347,6 +351,14 @@ say "Antenna check, per port - the old board's J20 branch was 24 dB down, this b
      ANT=1 ~/api/run/run.sh ProbeBasic ; ANT=2 ~/api/run/run.sh ProbeBasic
    and the VSWR sweep on the running app, per port: GET /api/diagnostics/antennas (old unit: J25 1.377 good, J20 3.0095 bad).
    If J20 is healthy here, re-run with --ant 1 (the unit's default is ANT2 only because of the old board's fault)."
+
+say "Antenna LEDs: D18 (GPIO17, J20) and D19 (GPIO27, J25). Lit = the selected port swept <= 2.0 VSWR at
+   reader connect; blinks at 4 Hz while tags arrive; the other port's LED is always dark. Check this carrier
+   has D18/D19 fitted before trusting a dark LED."
+
+say "Review the carried-over site config ($SITE_CFG) for THIS line - it is the old unit's, as it stood:
+   the reverse nudge (tunnel.field.conveyor.reverse), the bench test surface, session: 1, and
+   rzc-always-run: false (with no working IN2 exit sensor that stops the RZC after every carton)."
 
 say "API keys: this board carries the SAME key hashes as the old one, so the WMS, admin and wms-test
    keys work on both. If the two readers must be distinguishable, issue new keys and put their sha256 in

@@ -1748,6 +1748,11 @@ run the whole procedure there. **Feed `upgrade_mcu.py` the address and exactly o
 appears unexpectedly it takes the newline instead, so the confirmation hits EOF and the script
 exits before writing. Run it in a detached `tmux` so a dropped session cannot cut the write.
 
+**The kit goes stale as this unit moves on, so rebuild it before every new board** with
+`export/rebuild-kit.sh` (2026-09-28). The 09-23 kit had no antenna-LED jar or unit lines and no
+wayside repo. **The third board is `intellisbc3`, reader-id 3, a tunnel reader** (2026-09-28, not
+yet built).
+
 **Open on `intellisbc2`:** J20/ANT1 read **0 tags** where J25/ANT2 read 39 (best −38 dBm), and it is
 not recorded whether an antenna was fitted to J20. Do not conclude it shares this unit's J20 fault
 until both ports are tested with an antenna each. Its site config came across with the reverse

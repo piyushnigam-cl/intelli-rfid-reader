@@ -14,6 +14,32 @@ itself supersedes the "the reader is deaf, it is hardware" head that stood here 
 
 ---
 
+## 2026-09-28: kit refresh for a THIRD board — `intellisbc3`, reader-id 3, a tunnel reader
+
+**Nothing changed on this unit.** Bash was unavailable for the whole session (the permission check
+returned no verdict on every call), so everything below was done with file edits only: **nothing
+was run, syntax-checked or committed.**
+
+- The 09-23 kit was stale: its jar predates the antenna LEDs (`f89eaff`, 09-24), its unit file lacks
+  `ExecStopPost` for GPIO17/27, it has no `intelli-wayside-reader` repo, and its memory is old.
+- `export/setup-new-cm4.sh` edited: defaults `intellisbc3` / `3` (lists taken names and ids); jar
+  commit read from the kit's `JAR-COMMIT` instead of hardcoded `acdb2d5`; the flash step now uses a
+  detached tmux and `printf '/dev/ttyAMA0:115200\n\n' |`, with 30–80 s timing; two new end-of-run
+  items (D18/D19 fitted, review the carried-over site config: reverse nudge, bench surface,
+  `rzc-always-run: false` with dead IN2).
+- `export/rebuild-kit.sh` new: starts from the newest old tarball (keeps firmware, sudoers,
+  snapshot) and replaces workspace (all `apps/*/`), `~/api`, `~/.m2`, memory, the `/opt` jar and
+  `.so`, site config, unit and lamp hook. Writes `intelli-cm4-kit-<date>.tar.gz` and `SHA256SUMS`.
+
+**Next, in order:**
+1. `cd export && bash -n setup-new-cm4.sh && bash -n rebuild-kit.sh` — neither edit is checked.
+2. **Commit and push the root repo** (both scripts; `SHA256SUMS` stays untracked). Not done.
+3. `bash rebuild-kit.sh` (operator, or Claude if Bash works) — check its WARN lines.
+4. On the new board: `bash setup-new-cm4.sh --hostname intellisbc3 --reader-id 3`, then record
+   module serial / fw / auth in `CLAUDE.md` "Cloning this unit onto a new board", as for intellisbc2.
+
+---
+
 ## 2026-09-24: antenna LEDs on GPIO17 / GPIO27. Deployed and confirmed working by the operator
 
 The tunnel now drives the board's antenna LEDs (tunnel `f89eaff`, package `tunnel/antenna/`):
