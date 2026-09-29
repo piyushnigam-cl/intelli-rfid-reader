@@ -87,7 +87,12 @@ whichever of J26 IN1/IN2 fires first starts the train and names its direction (I
 other ends it. **`/tags.html`** reads EPC + TID and writes an EPC by TID; it needs a COMMISSION key
 (the `site-operator` key there holds it). **The tag tool must run in Gen2 session 0**: in the unit's S1,
 half the TID reads straight after a scan failed `MT_CMD_NO_TAG_ERR`, because an S1-inventoried tag
-ignores target-A access for 0.5-5 s. It swaps to S0 and restores S1, verified both ways. Each pass is POSTed to
+ignores target-A access for 0.5-5 s. It swaps to S0 and restores S1, verified both ways. **Never
+target a write with a 4-byte TID**: that is the class/maker/model header every tag of the chip model
+shares, so as a Select filter it writes whichever such tag answers first. A marginal full-TID read had
+fallen back to it and the page offered a write; the API now refuses a TID under 8 bytes. The page's
+Encoding column reads the PC toggle bit, then factory default (EPC starts with the TID prefix), then the
+GS1 header; the Charkop bench tags' `0x8A` header is not GS1, so their encoding is private. Each pass is POSTed to
 **`https://mmmocl.intellirail.cloud/rest/wpmsRfidJsonFromClient`**, with no auth; the **first pass was
 delivered, 200, at 17:45 that day**. **Without `/rest/` that server answers every POST with 302 to its
 site root**, which reads like an auth problem and is only a wrong path. The CloudSender logs a 3xx and
