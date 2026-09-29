@@ -432,7 +432,15 @@ detecting against a guess. Every other value above is a working default.
 | **4** | Threshold tuning from raw captures, wheel link against real hardware, a mock cloud endpoint | Sensors |
 | **5** | Charkop: geometry, `head-spacing-m`, direction proof, `axle-gap-ms` from real trains, radiated power check | Site |
 
-Phases 1 and 2 are all Java and can start now. Phase 3 is the long pole, because nobody has written
+**Phases 1 and 2 are DONE (2026-09-29)**, in `apps/intelli-wayside-reader` (CodeCommit
+`intelli-wayside-reader`): 29 tests, plus an end-to-end run on `intellisbc` against the simulated
+SAMD21 and a mock cloud. They have not yet run against the module or real sensors. Deviations from
+the text above: every local `/api/v1` path is ADMIN (core's default-deny; a READ scope needs a core
+rule), `wheel/capture` is not built (it needs firmware), `system-pair-max-ms` and
+`system-spacing-m` were added to the config, and the HELLO payload does not echo the thresholds
+back yet, so sec.4.4's read-back is still to be added to the protocol.
+
+Phases 1 and 2 are all Java and could start at once. Phase 3 is the long pole, because nobody has written
 firmware for this chip yet.
 
 ---
