@@ -75,7 +75,11 @@ v1 (flashed 2026-09-29); `intellisbc`'s has never been probed.** v1 does wheel s
 touches PB10/PB11 (`CM4_EN_DRV`), so it cannot hold the CM4 off. Its UART is **PA12 TX / PA15 RX**
 (SERCOM2), wired to CM4 GPIO5/GPIO4, which is `/dev/ttyAMA3`. SWD from the CM4 (GPIO2/3/11) works
 without root. **`intellisbc2` stopped being a tunnel the same day**: the operator stopped and disabled
-`intelli-rfid-tunnel` there, and it is the wayside development board from then on. To erase the
+`intelli-rfid-tunnel` there, and it is the wayside development board from then on. **It runs
+`intelli-wayside-reader` as the enabled service on :8082** (site config
+`/etc/intelli/intelli-wayside-reader/application.yml`: this board's `site-operator` key, reader-id
+`intellisbc2-dev`, bench detection thresholds, no cloud URL). To make it a tunnel again, disable the
+wayside unit and re-enable the tunnel: the two units conflict, and only one may be enabled. To erase the
 SAMD21: `openocd -f tools/openocd-cm4.cfg -c "init; reset halt; at91samd chip-erase; shutdown"`.
 
 **CHECK `hostname` BEFORE WRITING ANY MEASUREMENT DOWN.** On 2026-09-29 a whole session's findings
