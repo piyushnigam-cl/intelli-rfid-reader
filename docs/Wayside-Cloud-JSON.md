@@ -136,6 +136,9 @@ reading the next train.
 | `sequence` | integer | Per reader, +1 per pass, never reset. For gap detection (§3) |
 | `startedAt` | time | The pass opened: the first wheel, or the start input |
 | `endedAt` | time | The pass closed, including the time held open for the rear tag |
+| `Site` | string or null | The site, e.g. `Charkop`. Configured per reader. Capitalised as the receiving system names it |
+| `ToolId` | string or null | The reader's tool id, e.g. `C420460060`. Configured per reader |
+| `TrainType` | string or null | The rolling stock type, e.g. `MRS1`. Configured per reader |
 | `stopReason` | enum | What closed the pass (below). **It says nothing about completeness** |
 | `clockSynced` | boolean | Whether the reader's clock had synchronised with NTP when it sent this. The reader has no battery-backed clock, so after a power cut its time can be minutes or days off until NTP catches up. **When `false`, do not trust the times** |
 | `train` | object | §4.5 |
