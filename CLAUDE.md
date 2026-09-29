@@ -1761,8 +1761,9 @@ exactly as `30262503F5` did, so the procedure is now proven on two modules:**
 | region scan | the same 26 accepted, `RG_IN` hops `865100 865700 866300 866900` |
 | tunnel | `region: RG_IN`, `applyConfig()` clean, UP and reading on `20.26.08.19` |
 
-Two things learned. **sudo works without a tty on `intellisbc2`**, unlike on this unit, so Claude can
-run the whole procedure there. **Feed `upgrade_mcu.py` the address and exactly one newline**
+Two things learned. **sudo without a tty works on `intellisbc2` only while the operator's own recent
+`sudo` is still cached** (CORRECTED 2026-09-29, when it asked for a password); otherwise hand the
+privileged steps over, as on `intellisbc`. **Feed `upgrade_mcu.py` the address and exactly one newline**
 (`printf '/dev/ttyAMA0:115200\n\n'`): the upgrade confirmation takes it, and if the family warning
 appears unexpectedly it takes the newline instead, so the confirmation hits EOF and the script
 exits before writing. Run it in a detached `tmux` so a dropped session cannot cut the write.
