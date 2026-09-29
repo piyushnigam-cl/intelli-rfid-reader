@@ -447,11 +447,11 @@ rule), `wheel/capture` is not built (it needs firmware), `system-pair-max-ms` an
 `system-spacing-m` were added to the config, and the HELLO payload does not echo the thresholds
 back yet, so sec.4.4's read-back is still to be added to the protocol.
 
-**Phase 3 STARTED 2026-09-29**: `apps/intelli-wayside-reader-mcu` (CodeCommit `intelli-wayside-reader-mcu`). The
-protocol is byte-identical to the Java, the detector is host-tested, and the register code is
-checked against the DFP headers. It has **not been built for ARM or run on the chip**: the CM4
-lacks `gcc-arm-none-eabi` and `openocd`, and nobody knows which SAMD21 pins carry the UART
-(`tools/find-uart-pins.py` settles that over SWD).
+**Phase 3 STARTED 2026-09-29**: `apps/intelli-wayside-reader-mcu` (CodeCommit
+`intelli-wayside-reader-mcu`). **The same day it was flashed on `intellisbc` and runs.** It sends
+HELLO, 1 Hz heartbeats and OPEN faults on all four loops (none connected). The UART is on PA12/PA15
+(SERCOM2), and the clock runs −3000 ppm. It has not yet seen a wheel or a live RSR110 loop, and it
+has not yet talked to the Java app.
 
 Phases 1 and 2 are all Java and could start at once. Phase 3 is the long pole, because nobody has written
 firmware for this chip yet.

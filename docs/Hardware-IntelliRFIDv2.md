@@ -451,6 +451,19 @@ An **ATSAMD21G18A** runs off the 24 V rail **independently of the CM4** and supe
 - Comms to the CM4 on **UART3 (GPIO4/5)**, needing `dtoverlay=uart3`.
 - It also owns the two Frauscher wheel sensors — irrelevant to the tunnel, relevant to wayside.
 
+**MEASURED 2026-09-29 on `intellisbc`:**
+
+- **UART: SAMD21 PA12 = TX → CM4 GPIO5, and PA15 = RX ← CM4 GPIO4.** That is SERCOM2 pad 0 / pad 3
+  on function C, or SERCOM4 on function D. It was found over SWD by
+  `intelli-wayside-reader-mcu/tools/find-uart-pins.py` and is not written on any drawing we have.
+- **SWD from the CM4 works unprivileged**, using OpenOCD `bcm2835gpio` on GPIO2 (RESET), 3 (SWCLK)
+  and 11 (SWDIO) through `/dev/gpiomem`.
+- **The chip as delivered is blank.** DID `0x10010305` (SAMD21G18A rev D), BOOTPROT = 7. The core
+  locks up at reset with a double fault and never drives the UART. So the "SAMD21 supervisor" did
+  not exist in firmware on this board until wayside-reader-mcu v1 was flashed the same day. v1 does
+  wheel sensing only and never touches PB10/PB11.
+- **Its OSC32K-referenced clock runs −3000 ppm** against the NTP-synced CM4.
+
 ⚠️ **"A CM4 that has been `shutdown` will not restart by itself. The SAMD21 is the recovery path."**
 That matters for our pin-11 sequence, which ends in `poweroff`: if the 24 V does *not* actually drop,
 nothing restarts the CM4 except the SAMD21. Two things to settle:
