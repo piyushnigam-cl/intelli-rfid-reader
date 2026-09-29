@@ -1,5 +1,7 @@
 # Wayside reader → cloud: the pass JSON
 
+**Shared with the cloud team as a Claude doc:** https://claude.ai/code/artifact/7f25525c-a7c0-4d0e-a76f-3676a3e44741. Keep the two in step.
+
 **For the team that owns `mmmocl.intellirail.cloud`.** Version 1, 2026-09-29. Written from the
 code (`intelli-wayside-reader`, `PassResult.java` and `CloudSender.java`). The example below is a
 real pass recorded on the development reader that day.
