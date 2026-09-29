@@ -56,8 +56,11 @@ reading the next train.
 
 ### 4.1 Example: a real pass, 2026-09-29, start and end from the digital inputs
 
+(`schemaVersion` was added the same evening. The record as captured did not have it yet.)
+
 ```json
 {
+  "schemaVersion": 1,
   "id": "573907cd-c8e4-44e5-9101-5812b4afbcc9",
   "readerId": "intellisbc2-dev",
   "sequence": 1,
@@ -116,6 +119,7 @@ reading the next train.
   this reader, `null` means "declined to guess", which is different from "not sent".
 - **Times are ISO-8601 in UTC, with a `Z` suffix.** The fraction has **0 to 9 digits**, and it
   varies: `startedAt` usually has nanoseconds and `firstSeen` milliseconds. Parse any precision.
+- **Ignore fields you do not recognise.** New ones may be added without raising `schemaVersion`.
 - Enumerations are upper-case strings. **A value not listed here may appear in a later version.**
   Treat an unknown one as "unknown", not as an error.
 
@@ -123,6 +127,7 @@ reading the next train.
 
 | Field | Type | Meaning |
 |---|---|---|
+| `schemaVersion` | integer | **Always the first field. `1` for everything in this document.** Check it before reading anything else. It goes up only on a change you could trip over: a field removed, renamed or re-typed, or an enum value changing meaning. Adding a field or an enum value does **not** raise it, so tolerate both (§4.2) |
 | `id` | string (UUID) | Unique per pass. **The deduplication key.** The same on every retry |
 | `readerId` | string | Which reader. Configured per unit, e.g. `charkop-01` at site. `intellisbc2-dev` is the development board |
 | `sequence` | integer | Per reader, +1 per pass, never reset. For gap detection (§3) |
