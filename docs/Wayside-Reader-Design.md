@@ -435,7 +435,7 @@ detecting against a guess. Every other value above is a working default.
 |---|---|---|
 | **1** | Scaffold the app (`git init` first, CodeCommit remote). Core integration, systemd unit, deploy scripts copied from the tunnel. RFID-only pass (degraded mode), `CloudSender` with spool, local API | This board and tags only |
 | **2** | Protocol codec and `TickClock`, `SimulatedWheelSource`, `AxleBuilder`, `PassTracker`, with unit tests for direction and `MIXED`, axle-count mismatch, timeout, link-down fallback, tick wrap | None |
-| **3** | SAMD21 firmware (**its own repo, `intelli-samd21-fw`**), flashed from the CM4 over SWD. First target: `HELLO`/`HEARTBEAT`, then real ADC levels on the four channels with the sensors on the bench | The board, plus a sensor or a current source |
+| **3** | SAMD21 firmware (**its own repo, `intelli-wayside-reader-mcu`**), flashed from the CM4 over SWD. First target: `HELLO`/`HEARTBEAT`, then real ADC levels on the four channels with the sensors on the bench | The board, plus a sensor or a current source |
 | **4** | Threshold tuning from raw captures, wheel link against real hardware, a mock cloud endpoint | Sensors |
 | **5** | Charkop: geometry, `head-spacing-m`, direction proof, `axle-gap-ms` from real trains, radiated power check | Site |
 
@@ -447,7 +447,7 @@ rule), `wheel/capture` is not built (it needs firmware), `system-pair-max-ms` an
 `system-spacing-m` were added to the config, and the HELLO payload does not echo the thresholds
 back yet, so sec.4.4's read-back is still to be added to the protocol.
 
-**Phase 3 STARTED 2026-09-29**: `apps/intelli-samd21-fw` (CodeCommit `intelli-samd21-fw`). The
+**Phase 3 STARTED 2026-09-29**: `apps/intelli-wayside-reader-mcu` (CodeCommit `intelli-wayside-reader-mcu`). The
 protocol is byte-identical to the Java, the detector is host-tested, and the register code is
 checked against the DFP headers. It has **not been built for ARM or run on the chip**: the CM4
 lacks `gcc-arm-none-eabi` and `openocd`, and nobody knows which SAMD21 pins carry the UART

@@ -483,7 +483,7 @@ intelli-rfid-reader/            repo: intelli-rfid-reader — DOCS ONLY, ignores
     ├── intelli-wms-test/           WMS simulator — repo: intelli-wms-test
     ├── intelli-wayside-reader/     trackside railway, Charkop — repo (from 2026-09-24; replaces the
     │                               never-pushed laptop draft intelli-rfid-wayside)
-    └── intelli-samd21-fw/          C firmware for the board's SAMD21 (wheel sensing for wayside) —
+    └── intelli-wayside-reader-mcu/ C firmware for the board's SAMD21 (wheel sensing for wayside) —
                                     repo (from 2026-09-29). Not Maven; `make test` / `make check`
 ```
 
