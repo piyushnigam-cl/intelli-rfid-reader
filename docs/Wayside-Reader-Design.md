@@ -51,7 +51,10 @@ gives two sensor systems, an open analogue interface, a **constant 5 mA with "a 
 when damped**, 0–450 km/h, 300–2100 mm wheels and an 8–33 V supply. **It does not give the size or
 the direction of the change, the fault currents, or the spacing between the two systems.** So the
 firmware detects on `|I − baseline|`, and `covered-ua`/`uncovered-ua` are deviations, not levels.
-Frauscher's technical documentation, or a capture, has to supply the rest.
+Frauscher's technical documentation, or a capture, has to supply the rest. **Operator,
+2026-09-29: the current DIPS below 3 mA when a wheel damps it** (from the default 5 mA). That is
+the first statement of its direction, given as the spec for a bench emulator; confirm it against
+Frauscher's documentation. The detector works either way.
 
 **Four channels means two double sensors.** A Frauscher counting head (the RSR180 family) contains
 two systems a few centimetres apart along the rail. The order in which they are covered gives

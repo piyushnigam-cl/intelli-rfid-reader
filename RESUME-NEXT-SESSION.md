@@ -1,6 +1,6 @@
 # Resume here — CM4 session, next sitting
 
-**Sections are newest first. 2026-09-24 (antenna LEDs) is on top, then 2026-09-23 late (the second
+**Sections are newest first. 2026-09-29 (the wayside reader, on intellisbc2) is on top, then 2026-09-28 (Radxa CM3), then 2026-09-24 (antenna LEDs), then 2026-09-23 late (the second
 board, flashed and running), then
 2026-09-23 evening (the export kit for a second CM4), then
 2026-09-23 (deployed, and the RZC stops per carton again) is on top,
@@ -11,6 +11,73 @@ disconnect before its close-out ran), then 2026-09-14 (housekeeping) and 2026-09
 `rzc-always-run: true` at 100 %). Below it, the 2026-09-07 rewrite —
 the session that FIXED the deafness, upgraded the SDK and made the armed EAN authoritative — which
 itself supersedes the "the reader is deaf, it is hardware" head that stood here earlier that day.**
+
+---
+
+## 2026-09-29 (on `intellisbc2`, all day): the wayside reader runs end to end. NEXT: emulate the wheel sensors
+
+**The whole session was on `intellisbc2`.** Its first findings were mis-recorded as `intellisbc` and
+then corrected. **Run `hostname` before writing anything down.**
+
+**What exists now** (every repo pushed; details in `CLAUDE.md` under the SAMD21 and intellisbc2
+paragraphs):
+- **`apps/intelli-wayside-reader`** (CodeCommit `intelli-wayside-reader`) is the enabled service on
+  :8082. The tunnel is **disabled** on this board, and intelli-sbc has **passwordless sudo** here.
+  - Passes are bounded by J26 **IN1/IN2**: the first to fire starts the train and gives the
+    direction (IN1 = UP), and the other ends it.
+  - It POSTs each train to `https://mmmocl.intellirail.cloud/rest/wpmsRfidJsonFromClient`; every
+    delivery is 200. **`train.id` = TrainSetNumber** (`TSnn`) from `train-sets.csv` (the operator's
+    table, 63 rows). `Site`/`ToolId`/`TrainType` = Charkop / C420460060 / MRS1 come from the site
+    config. `schemaVersion` = 1.
+  - **`/tags.html`** reads EPC + TID + encoding and writes an EPC by TID. The `tag-writer` key has
+    COMMISSION only; its plaintext was left in `~/tag-writer.key` for the operator to store and
+    delete.
+- **Car tags are 12 hex digits**: `8A8 | line | set | type | position | side`. Tags programmed so far
+  carry 12 leftover factory digits because the PC length was never shortened; rewriting from the tag
+  page trims them. The earlier "side before serial / serial 0002" reading was WRONG and is corrected
+  everywhere. `docs/Screenshot-Notes.md` has Table-3 and the lookup, with the correction.
+- **`apps/intelli-wayside-reader-mcu`** (CodeCommit `intelli-wayside-reader-mcu`): the SAMD21 is
+  flashed and running v1 (UART PA12/PA15 = SERCOM2; the clock is −3000 ppm). The Java app talks to it
+  (HELLO, SET_DETECT ACKed, 0 lost frames). All four loops read OPEN because nothing is on J22/J23.
+  In GPIO trigger mode the wheel link runs for diagnostics only.
+- The shared cloud doc: https://claude.ai/code/artifact/7f25525c-a7c0-4d0e-a76f-3676a3e44741
+  (private until shared). The repo copy is `docs/Wayside-Cloud-JSON.md`; keep the two in step.
+
+**State left:** the wayside service is running and armed on IN1/IN2, with `decode: CAR_TAG` and the
+cloud URL set. The tags on the bench span TS60 and TS07 (both ends each), which is why the last
+passes had `train.id: null`.
+
+**NEXT (operator, 2026-09-29): emulate a Frauscher wheel sensor on J22/J23.** 5 mA by default, and
+**a push button dips it below 3 mA** (a wheel). **This is the first statement of which way the
+RSR110's current moves when damped: DOWN.** Confirm it against Frauscher's documentation when it
+arrives. The firmware already detects either direction, as |I − baseline|; a 2 mA dip clears its
+default covered 1500 / uncovered 750 µA.
+
+Before building anything, get from the schematic (both still unknown):
+1. **The J22/J23 pinout and loop topology.** Does the board supply the sensor voltage (8–33 V) and
+   measure the current it draws, i.e. is the sensor a 2-wire current sink? The emulator must match.
+2. **The front-end shunt / gain.** The firmware assumes 100 Ω (`BOARD_UA_PER_LSB_X1000` in `board.h`,
+   heartbeat flag bit 3 set until verified). The emulator is also the way to calibrate it: set a
+   known current, read the heartbeat `mean uA`.
+
+Candidate emulators, to choose between (none built yet):
+- **LM334 / LM234 adjustable current source** as a 2-wire sink across the loop terminals. I = 67.7 mV
+  / Rset at 25 °C: **13.7 Ω → 4.9 mA**; a button that switches in a series resistor for Rset ≈ 27 Ω
+  gives **2.5 mA**. It is range 1 µA–10 mA, needs ≥ ~1 V across it, and holds the current whatever the
+  loop voltage. Simplest, and the best candidate if the loop is a 2-wire sink.
+- **LM317 as a current regulator** (I = 1.25 V / R: 250 Ω → 5 mA, 470 Ω → 2.7 mA). But its
+  minimum operating current (about 3.5–10 mA depending on the part) makes the 2.7 mA state unreliable.
+  Not recommended for the dip.
+- **A handheld 4–20 mA loop calibrator** (source/simulate mode): no electronics, and its display gives
+  a known reference for calibrating the shunt. It needs a separate button or a manual step for the
+  dip.
+- **Two resistors from a fixed supply** only if the loop is a plain resistor-to-shunt input. The
+  current then depends on the supply and the unknown shunt, so this is weakest for calibration.
+
+Then, with the emulator on channel 0: `tools/listen.py` (stop the service first; it owns ttyAMA3) or
+`/api/v1/wheel/levels`. Expect ~5000 µA and fault NONE, then an EDGE, a PULSE and a CLEARED edge per
+button press. After that, switch `wayside.trigger.source` to `WHEELS` with two emulated heads to test
+axles, direction and speed. A second button pair, timed, is a whole axle.
 
 ---
 
