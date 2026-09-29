@@ -75,11 +75,19 @@ v1 (flashed 2026-09-29); `intellisbc`'s has never been probed.** v1 does wheel s
 touches PB10/PB11 (`CM4_EN_DRV`), so it cannot hold the CM4 off. Its UART is **PA12 TX / PA15 RX**
 (SERCOM2), wired to CM4 GPIO5/GPIO4, which is `/dev/ttyAMA3`. SWD from the CM4 (GPIO2/3/11) works
 without root. **`intellisbc2` stopped being a tunnel the same day**: the operator stopped and disabled
-`intelli-rfid-tunnel` there, and it is the wayside development board from then on. **It runs
+`intelli-rfid-tunnel` there, and it is the wayside development board from then on. **`intelli-sbc`
+has passwordless sudo there** (`/etc/sudoers.d/90-intelli-sbc-nopasswd`, operator 2026-09-29, a bench
+choice), so Claude runs deploys itself; `intellisbc` still needs them handed over. **It runs
 `intelli-wayside-reader` as the enabled service on :8082** (site config
 `/etc/intelli/intelli-wayside-reader/application.yml`: this board's `site-operator` key, reader-id
 `intellisbc2-dev`, bench detection thresholds, no cloud URL). To make it a tunnel again, disable the
-wayside unit and re-enable the tunnel: the two units conflict, and only one may be enabled. To erase the
+wayside unit and re-enable the tunnel: the two units conflict, and only one may be enabled.
+**Since 17:38 that day it runs `wayside.trigger.source: GPIO`**: J26 IN1 starts a train and IN2 ends
+it, standing in for the Frauscher sensors. Each pass is POSTed to
+`https://mmmocl.intellirail.cloud/wpmsRfidJsonFromClient`. **That endpoint answers every POST with
+302 to its site root**: with or without a trailing slash, for `{}` as for a real pass, setting a
+`JSESSIONID`. So it needs auth or a different path from its owner, and the JSON is not the problem.
+The CloudSender logs a 3xx and does not retry it. To erase the
 SAMD21: `openocd -f tools/openocd-cm4.cfg -c "init; reset halt; at91samd chip-erase; shutdown"`.
 
 **CHECK `hostname` BEFORE WRITING ANY MEASUREMENT DOWN.** On 2026-09-29 a whole session's findings
