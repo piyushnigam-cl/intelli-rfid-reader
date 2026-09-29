@@ -84,8 +84,9 @@ choice), so Claude runs deploys itself; `intellisbc` still needs them handed ove
 wayside unit and re-enable the tunnel: the two units conflict, and only one may be enabled.
 **Since 17:38 that day it runs `wayside.trigger.source: GPIO`**, standing in for the Frauscher sensors:
 whichever of J26 IN1/IN2 fires first starts the train and names its direction (IN1 = `UP`), and the
-other ends it. **`/tags.html`** reads EPC + TID and writes an EPC by TID; it needs a COMMISSION key
-(the `site-operator` key there holds it). **The tag tool must run in Gen2 session 0**: in the unit's S1,
+other ends it. **`/tags.html`** reads EPC + TID and writes an EPC by TID; it needs a COMMISSION key:
+`site-operator` holds it, and a dedicated **`tag-writer`** key (COMMISSION only, issued 2026-09-29) exists
+for the page. Only hashes live in the site config; plaintext keys are held by the operator. **The tag tool must run in Gen2 session 0**: in the unit's S1,
 half the TID reads straight after a scan failed `MT_CMD_NO_TAG_ERR`, because an S1-inventoried tag
 ignores target-A access for 0.5-5 s. It swaps to S0 and restores S1, verified both ways. **Never
 target a write with a 4-byte TID**: that is the class/maker/model header every tag of the chip model
