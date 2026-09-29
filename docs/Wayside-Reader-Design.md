@@ -451,7 +451,10 @@ back yet, so sec.4.4's read-back is still to be added to the protocol.
 `intelli-wayside-reader-mcu`). **The same day it was flashed on `intellisbc2` and runs.** It sends
 HELLO, 1 Hz heartbeats and OPEN faults on all four loops (none connected). The UART is on PA12/PA15
 (SERCOM2), and the clock runs −3000 ppm. It has not yet seen a wheel or a live RSR110 loop, and it
-has not yet talked to the Java app.
+**talks to the Java app**: link UP, thresholds ACKed, 0 frames lost, and the
+four OPEN faults visible in `/api/v1/wheel/levels` and `/actuator/health`. **Protocol clarification
+from that test:** a `CHANNEL_FAULT` is sent on change *and* after every HELLO that answers
+`GET_INFO`, because a host that connects late must still learn about a loop that broke earlier.
 
 Phases 1 and 2 are all Java and could start at once. Phase 3 is the long pole, because nobody has written
 firmware for this chip yet.
