@@ -46,6 +46,13 @@ does not:**
 | CM4 ↔ SAMD21 | **UART3, GPIO4/5 → `/dev/ttyAMA3`**, CTS/RTS on GPIO6/7 | Known. Needs `dtoverlay=uart3`, which the production bring-up already sets |
 | SAMD21 programming | SWD from CM4 GPIO: 2 = RESET, 3 = SWCLK, 11 = SWDIO | Known. The CM4 can flash it with OpenOCD's `bcm2835gpio` driver, so no probe is needed on site |
 
+**The sensor is the Frauscher RSR110d (operator, 2026-09-29).** Its public datasheet (2020-09)
+gives two sensor systems, an open analogue interface, a **constant 5 mA with "a change in current"
+when damped**, 0–450 km/h, 300–2100 mm wheels and an 8–33 V supply. **It does not give the size or
+the direction of the change, the fault currents, or the spacing between the two systems.** So the
+firmware detects on `|I − baseline|`, and `covered-ua`/`uncovered-ua` are deviations, not levels.
+Frauscher's technical documentation, or a capture, has to supply the rest.
+
 **Four channels means two double sensors.** A Frauscher counting head (the RSR180 family) contains
 two systems a few centimetres apart along the rail. The order in which they are covered gives
 direction from a single head. The time between them gives a coarse speed. Two heads, mounted a known
@@ -440,6 +447,12 @@ rule), `wheel/capture` is not built (it needs firmware), `system-pair-max-ms` an
 `system-spacing-m` were added to the config, and the HELLO payload does not echo the thresholds
 back yet, so sec.4.4's read-back is still to be added to the protocol.
 
+**Phase 3 STARTED 2026-09-29**: `apps/intelli-samd21-fw` (CodeCommit `intelli-samd21-fw`). The
+protocol is byte-identical to the Java, the detector is host-tested, and the register code is
+checked against the DFP headers. It has **not been built for ARM or run on the chip**: the CM4
+lacks `gcc-arm-none-eabi` and `openocd`, and nobody knows which SAMD21 pins carry the UART
+(`tools/find-uart-pins.py` settles that over SWD).
+
 Phases 1 and 2 are all Java and could start at once. Phase 3 is the long pole, because nobody has written
 firmware for this chip yet.
 
@@ -462,8 +475,8 @@ firmware for this chip yet.
    fixes `d_A`/`d_B` and the antenna mounting.
 
 **The wheel sensors**
-6. The exact Frauscher model, and its datasheet: supply, current bands for free, occupied and fault,
-   and the system spacing within a head.
+6. ~~The exact Frauscher model~~ **RSR110d** (2026-09-29). Still open: the damped current (size
+   and direction), the fault bands, and the system spacing. None of these is in the public datasheet.
 7. The planned distance between the two heads, and the distance from each head to the antenna.
 
 **The cloud**

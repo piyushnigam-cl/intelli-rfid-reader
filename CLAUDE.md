@@ -481,8 +481,10 @@ intelli-rfid-reader/            repo: intelli-rfid-reader — DOCS ONLY, ignores
     ├── intelli-rfid-tunnel/        warehouse portal — repo
     ├── intelli-rfid-admin/         laptop admin interface — repo: intelli-rfid-admin
     ├── intelli-wms-test/           WMS simulator — repo: intelli-wms-test
-    └── intelli-wayside-reader/     trackside railway, Charkop — repo (from 2026-09-24; replaces the
-                                    never-pushed laptop draft intelli-rfid-wayside)
+    ├── intelli-wayside-reader/     trackside railway, Charkop — repo (from 2026-09-24; replaces the
+    │                               never-pushed laptop draft intelli-rfid-wayside)
+    └── intelli-samd21-fw/          C firmware for the board's SAMD21 (wheel sensing for wayside) —
+                                    repo (from 2026-09-29). Not Maven; `make test` / `make check`
 ```
 
 `git init` belongs inside each app directory. **Never create a repo spanning `apps/`** — the root
