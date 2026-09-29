@@ -141,7 +141,11 @@ given: `8A80 2003 8A6D` → **TS60**.
 and `02`, the next three characters of that EPC are `003`, which is TS03. TS60 is line 02 with
 ID-2 **038**. That is the last three digits of Table-3's 4-digit TRAIN SET NO field, which is
 characters 6 to 9 (1-based) of the EPC (`0038`), so ID-2 = characters 7 to 9. The decoder follows
-the example, reading the 4-digit field as a number. **Awaiting the operator's confirmation.**
+the example, reading the 4-digit field as a number. **CONFIRMED by the operator at 19:46: "ID2 is
+the next four characters; if it gets an additional zero in the beginning then ignore that."** So
+`0038` → 38 → TS60. Their two checks: `8A80 2001 8A6D` → line 02, ID-2 018 → **TS24**;
+`8A80 2003 1A6D` → line 02, ID-2 031 → **TS53** (both DMC-2, side D). A 4-digit field that does not
+start with 0 gives an ID-2 above 999, which the table does not have, so no TS.
 
 **TrainSetNumber is `train.id` in the JSON** (operator, 19:33 the same evening).
 

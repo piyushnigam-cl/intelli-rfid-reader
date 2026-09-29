@@ -197,12 +197,12 @@ What a pass looks like with wheel sensors (from the simulator; the sensors are n
 
 | Field | Type | Meaning |
 |---|---|---|
-| `id` | string or null | The train as `<line>-<set>`, e.g. `02-0008`, decoded from its car tags (Table-3, `docs/Screenshot-Notes.md`). `null` when no tag decodes, or when the tags read belong to more than one train |
+| `id` | string or null | **The TrainSetNumber**, e.g. `TS60`: `TS` + the TS NO looked up by line and ID-2 (the 4-digit train set field, a leading zero dropped) in the operator's table (`docs/Screenshot-Notes.md`). `null` when no tag resolves, or when the tags read belong to more than one train |
 | `line` | string or null | Line number from the tags, e.g. `02` |
-| `trainSet` | string or null | Train set number from the tags, e.g. `0008` |
+| `ignoredTags` | integer | Tags read but left out of `tags` because their EPC does not start `8A8`: not train tags |
 | `decoded` | boolean | `true` when `id` could be decoded |
 | `tagsExpected` | integer | 2: one tag at each end (DMC-1 and DMC-2) |
-| `tagsFound` | integer | Distinct tags read. **Can exceed 2** (another train's tag, a factory-blank tag) |
+| `tagsFound` | integer | Distinct train tags (EPC starting `8A8`) read. Can exceed 2 when another train's tag is in the field |
 | `complete` | boolean | `true` only when every decoded tag names **the same train** and **both ends** were read (at least `tagsExpected` distinct car positions). The same DMC read twice is still one end |
 
 **`complete` and `stopReason` are independent.** A train that cleared normally with one tag unread
@@ -215,7 +215,7 @@ is `CLEARED` and `complete: false`. Neither field softens the other.
 | `epc` | string | The tag's EPC, upper-case hex, no separators. Usually 24 characters (96 bits); other lengths are possible |
 | `tid` | string or null | The factory chip serial, when the reader collects it. **Off today, so always `null`** |
 | `decoded` | boolean | Whether this EPC decodes as a train-set car tag |
-| `trainId` | string or null | That tag's train, `<line>-<set>` |
+| `trainId` | string or null | That tag's TrainSetNumber, e.g. `TS60` |
 | `car` | object or null | The decoded car: `line`, `trainSet`, `carType` (`DMC`, `TC`, `MC`), `position` (1-6), `positionName` (`DMC-1`, `TC-1`, `MC-1`, `MC-2`, `TC-2`, `DMC-2`), `side` (`DOWN`/`UP`), `serial`. `null` when not a valid car tag |
 | `firstSeen`, `lastSeen` | time | The first and last reads of this tag during the pass |
 | `reads` | integer | How many times it was read. More reads means more confidence |

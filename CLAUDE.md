@@ -95,8 +95,10 @@ Encoding column reads the PC toggle bit, then factory default (EPC starts with t
 GS1 header. **The train-set tag format is Table-3** (`docs/Screenshot-Notes.md`, 2026-09-29):
 `8A8 | line 2 | set 4 | car type | position | side | serial 4 | 8 more hex`, sizes in hex digits.
 **On every real tag, CAR SIDE precedes CAR SERIAL, the reverse of the table's rows**; in table order
-the serial reads `D000`. `wayside.train.decode: CAR_TAG` (live on intellisbc2) gives `train.id` =
-`<line>-<set>`, and `complete` = both DMCs read. The bench tags span two trains (02-0008/0013 and
+the serial reads `D000`. `wayside.train.decode: CAR_TAG` (live on intellisbc2) gives **`train.id` =
+the TrainSetNumber `TSnn`**, looked up by line + ID-2 in `train-sets.csv` (the operator's 63-row table;
+ID-2 = the 4-digit set field, leading zero dropped: `8A8 02 0038` → TS60, confirmed). Tags not starting
+`8A8` are left out and counted in `train.ignoredTags`. `complete` = both DMCs read. The bench tags span two trains (02-0008/0013 and
 07-0003), so a pass with both present correctly reports `train.id: null`. Each pass is POSTed to
 **`https://mmmocl.intellirail.cloud/rest/wpmsRfidJsonFromClient`**, with no auth; the **first pass was
 delivered, 200, at 17:45 that day**. **Without `/rest/` that server answers every POST with 302 to its
