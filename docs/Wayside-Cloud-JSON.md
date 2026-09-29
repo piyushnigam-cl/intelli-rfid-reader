@@ -216,7 +216,7 @@ is `CLEARED` and `complete: false`. Neither field softens the other.
 | `tid` | string or null | The factory chip serial, when the reader collects it. **Off today, so always `null`** |
 | `decoded` | boolean | Whether this EPC decodes as a train-set car tag |
 | `trainId` | string or null | That tag's TrainSetNumber, e.g. `TS60` |
-| `car` | object or null | The decoded car: `line`, `trainSet`, `carType` (`DMC`, `TC`, `MC`), `position` (1-6), `positionName` (`DMC-1`, `TC-1`, `MC-1`, `MC-2`, `TC-2`, `DMC-2`), `side` (`DOWN`/`UP`), `serial`. `null` when not a valid car tag |
+| `car` | object or null | The decoded car, from the EPC's first 12 hex digits: `line`, `trainSet` (the raw 4-digit field), `carType` (`DMC`, `TC`, `MC`), `position` (1-6), `positionName` (`DMC-1`, `TC-1`, `MC-1`, `MC-2`, `TC-2`, `DMC-2`), `side` (`DOWN`/`UP`), and `serial`, **always `null`**: Table-3's CAR SERIAL NO is not written on the tags. `null` when not a valid car tag |
 | `firstSeen`, `lastSeen` | time | The first and last reads of this tag during the pass |
 | `reads` | integer | How many times it was read. More reads means more confidence |
 | `bestRssiDbm` | number | The strongest signal, in dBm, typically −30 to −70. Useful for rejecting a tag on an adjacent track |
@@ -254,9 +254,9 @@ axles are included. A backlog after an outage replays one pass at a time, never 
    map to it. A mapping is quicker to agree than a redesign.
 4. **What you answer on success.** Any 2xx works. A body is fine but ignored.
 5. **Deduplication on `id`**: please confirm you will do it (§3).
-6. **The tag format.** We decode Table-3 (`8A8`, line, set, car type, position, side, serial). On
-   every tag we have, CAR SIDE comes **before** CAR SERIAL, the reverse of the table's row order,
-   and the last 8 hex digits (not in the table) equal the end of the chip's TID. Please confirm
-   both.
+6. **The tag format.** The train data is 12 hex digits (`8A8`, line, set, car type, position,
+   side); Table-3's CAR SERIAL NO is not on the tags. Tags programmed so far also carry 12 leftover
+   factory digits after them, so `epc` is 24 digits until they are rewritten. Only the first 12
+   carry meaning.
 
 Contact: Piyush Nigam.

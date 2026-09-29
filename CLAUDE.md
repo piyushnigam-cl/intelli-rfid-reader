@@ -93,10 +93,12 @@ target a write with a 4-byte TID**: that is the class/maker/model header every t
 shares, so as a Select filter it writes whichever such tag answers first. A marginal full-TID read had
 fallen back to it and the page offered a write; the API now refuses a TID under 8 bytes. The page's
 Encoding column reads the PC toggle bit, then factory default (EPC starts with the TID prefix), then the
-GS1 header. **The train-set tag format is Table-3** (`docs/Screenshot-Notes.md`, 2026-09-29):
-`8A8 | line 2 | set 4 | car type | position | side | serial 4 | 8 more hex`, sizes in hex digits.
-**On every real tag, CAR SIDE precedes CAR SERIAL, the reverse of the table's rows**; in table order
-the serial reads `D000`. `wayside.train.decode: CAR_TAG` (live on intellisbc2) gives **`train.id` =
+GS1 header. **The train-set tag format is Table-3** (`docs/Screenshot-Notes.md`, 2026-09-29), and on
+the tags it is **12 hex digits: `8A8 | line 2 | set 4 | car type | position | side`**. CAR SERIAL NO is
+not written. **The bench tags read 24 digits because the tag programmer never shortened the PC length
+(`3424` = 6 words); the extra 12 are the chip's factory EPC (`…00021F0C` + TID tail).** An earlier
+reading of that leftover as "side before serial, serial 0002" was WRONG and is corrected. The tag
+page's Write (`WriteTagEpcEx`) sets the PC length, so rewriting the 12 digits trims a tag. `wayside.train.decode: CAR_TAG` (live on intellisbc2) gives **`train.id` =
 the TrainSetNumber `TSnn`**, looked up by line + ID-2 in `train-sets.csv` (the operator's 63-row table;
 ID-2 = the 4-digit set field, leading zero dropped: `8A8 02 0038` → TS60, confirmed). Tags not starting
 `8A8` are left out and counted in `train.ignoredTags`. `complete` = both DMCs read. The bench tags span two trains (02-0008/0013 and

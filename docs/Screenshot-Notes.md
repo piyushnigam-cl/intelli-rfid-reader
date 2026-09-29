@@ -27,7 +27,16 @@ names no source document; ask which one it comes from.
 
 *Table-3: RFID tag data format*
 
-**Checked against the five tags on the intellisbc2 bench the same evening:**
+> **CORRECTED 2026-09-29, 20:10. The check below misread the tags, and its findings 1 to 3 are
+> wrong.** The operator gave one tag's real EPC as `8A8020013A1D`: 12 digits. The reader reads 24,
+> because the tag's PC word (`3424`) declares 6 words, and the extra 12 digits are the chip's factory
+> EPC (`E2C06892 0000 0002 1F0C xxxx`, built from its TID). The programming tool wrote the first 3
+> words and never shortened the PC length. So the real layout is **`8A8 | line | set | type |
+> position | side`, 12 digits, with side last as in the table, and CAR SERIAL NO not on the tags at
+> all.** The "serial `0002`" and the "last 8 digits = the TID" below are both factory leftover. The
+> table stands; the tags omit its serial. Kept below as the record of the mistake.
+
+**Checked against the five tags on the intellisbc2 bench the same evening** (misread, see above):
 
 | EPC | Line | Set | Type | Pos | Side | Serial | Last 8 hex |
 |---|---|---|---|---|---|---|---|
@@ -151,3 +160,26 @@ start with 0 gives an ID-2 above 999, which the table does not have, so no TS.
 
 The bench tags under that rule: `8A8020013A1D…` → line 02, ID-2 013 → **TS19**;
 `8A8020008A1D…` / `…A6D…` → 02, 008 → **TS14**; `8A8070003A…` → 07, 003 → **TS07**.
+
+---
+
+## 2026-09-29 20:10: correction, the bench tags carry 12 digits of train data
+
+Not a screenshot: the operator reported that tag `8A8020013A1D00021F0C5233` "actually" has EPC
+`8A8020013A1D`. That is right, and it overturns the first check of Table-3 above.
+
+| | |
+|---|---|
+| Written by the tag programmer | `8A8020013A1D`: 12 hex = 3 words |
+| PC word on the tag | `3424`: length field `00110` = **6 words** (never shortened) |
+| Read by any reader | `8A8020013A1D` + **`00021F0C5233`** |
+| This chip's factory EPC | `E2C06892 0000` + **`00021F0C5233`** (from its TID `E2C06892200009021F0C5233`) |
+
+So the train data is `8A8 | 02 | 0013 | A | 1 | D` = line 02, set 0013 (TS19), DMC-1, DOWN side.
+**CAR SERIAL NO (Table-3 SL 6) is not written on these tags.** It is not a GS1/SGTIN issue: the
+format is private, and the reader returns what the PC word declares.
+
+**The fix is on the tags, not the reader.** The wayside tag page's Write uses `WriteTagEpcEx`, which
+sets the PC length to what is written. Writing the 12 digits back trims the leftover. The page flags
+untrimmed tags with "Plus 12 leftover digits". The decoder now reads exactly 12 digits and reports
+`serial` as null, so the TrainSetNumbers already sent (TS19 etc.) were correct and still are.
