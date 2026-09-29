@@ -197,11 +197,13 @@ What a pass looks like with wheel sensors (from the simulator; the sensors are n
 
 | Field | Type | Meaning |
 |---|---|---|
-| `id` | string or null | The train identity decoded from its tags. **`null` until the tag encoding is agreed (§7)** |
+| `id` | string or null | The train as `<line>-<set>`, e.g. `02-0008`, decoded from its car tags (Table-3, `docs/Screenshot-Notes.md`). `null` when no tag decodes, or when the tags read belong to more than one train |
+| `line` | string or null | Line number from the tags, e.g. `02` |
+| `trainSet` | string or null | Train set number from the tags, e.g. `0008` |
 | `decoded` | boolean | `true` when `id` could be decoded |
-| `tagsExpected` | integer | 2: one tag at each end |
-| `tagsFound` | integer | Distinct tags read. **Can exceed 2** (a tag on a passing wagon, a tag on the next track) |
-| `complete` | boolean | `true` only when at least `tagsExpected` tags were read and **all of them decode to the same train**. Always `false` while the encoding is unknown |
+| `tagsExpected` | integer | 2: one tag at each end (DMC-1 and DMC-2) |
+| `tagsFound` | integer | Distinct tags read. **Can exceed 2** (another train's tag, a factory-blank tag) |
+| `complete` | boolean | `true` only when every decoded tag names **the same train** and **both ends** were read (at least `tagsExpected` distinct car positions). The same DMC read twice is still one end |
 
 **`complete` and `stopReason` are independent.** A train that cleared normally with one tag unread
 is `CLEARED` and `complete: false`. Neither field softens the other.
@@ -212,8 +214,9 @@ is `CLEARED` and `complete: false`. Neither field softens the other.
 |---|---|---|
 | `epc` | string | The tag's EPC, upper-case hex, no separators. Usually 24 characters (96 bits); other lengths are possible |
 | `tid` | string or null | The factory chip serial, when the reader collects it. **Off today, so always `null`** |
-| `decoded` | boolean | Whether this EPC decodes to a train id |
-| `trainId` | string or null | That id |
+| `decoded` | boolean | Whether this EPC decodes as a train-set car tag |
+| `trainId` | string or null | That tag's train, `<line>-<set>` |
+| `car` | object or null | The decoded car: `line`, `trainSet`, `carType` (`DMC`, `TC`, `MC`), `position` (1-6), `positionName` (`DMC-1`, `TC-1`, `MC-1`, `MC-2`, `TC-2`, `DMC-2`), `side` (`DOWN`/`UP`), `serial`. `null` when not a valid car tag |
 | `firstSeen`, `lastSeen` | time | The first and last reads of this tag during the pass |
 | `reads` | integer | How many times it was read. More reads means more confidence |
 | `bestRssiDbm` | number | The strongest signal, in dBm, typically −30 to −70. Useful for rejecting a tag on an adjacent track |
@@ -251,7 +254,9 @@ axles are included. A backlog after an outage replays one pass at a time, never 
    map to it. A mapping is quicker to agree than a redesign.
 4. **What you answer on success.** Any 2xx works. A body is fine but ignored.
 5. **Deduplication on `id`**: please confirm you will do it (§3).
-6. **The tag encoding**, if you know it: how a train id, and ideally which end, is written into the
-   EPC. Until then `train.id` stays `null` and `complete` stays `false`.
+6. **The tag format.** We decode Table-3 (`8A8`, line, set, car type, position, side, serial). On
+   every tag we have, CAR SIDE comes **before** CAR SERIAL, the reverse of the table's row order,
+   and the last 8 hex digits (not in the table) equal the end of the chip's TID. Please confirm
+   both.
 
 Contact: Piyush Nigam.
