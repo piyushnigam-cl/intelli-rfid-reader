@@ -451,7 +451,7 @@ An **ATSAMD21G18A** runs off the 24 V rail **independently of the CM4** and supe
 - Comms to the CM4 on **UART3 (GPIO4/5)**, needing `dtoverlay=uart3`.
 - It also owns the two Frauscher wheel sensors — irrelevant to the tunnel, relevant to wayside.
 
-**MEASURED 2026-09-29 on `intellisbc`:**
+**MEASURED 2026-09-29 on `intellisbc2` (the second board; `intellisbc` has not been probed and its SAMD21 is presumably still blank):**
 
 - **UART: SAMD21 PA12 = TX → CM4 GPIO5, and PA15 = RX ← CM4 GPIO4.** That is SERCOM2 pad 0 / pad 3
   on function C, or SERCOM4 on function D. It was found over SWD by

@@ -70,13 +70,18 @@ after EN was dropped and raised, the module came up on `RG_NA` with the full 50-
 which is the wrong band for our tags and reads as total deafness. `ProbeBasic` sets and reads back
 region, power and session for exactly this reason; the vendor's `test_inventory10` does not.
 
-**The board's SAMD21 (U21) shipped BLANK and, on `intellisbc`, now runs `intelli-wayside-reader-mcu`
-v1 (flashed 2026-09-29).** That firmware does wheel sensing only and never touches PB10/PB11
-(`CM4_EN_DRV`), so it cannot hold the CM4 off. Its UART is **PA12 TX / PA15 RX** (SERCOM2), wired
-to CM4 GPIO5/GPIO4, which is `/dev/ttyAMA3`. SWD from the CM4 (GPIO2/3/11) works without root. So
-the tunnel board now has a chip talking on UART3 that nothing listens to, and that is harmless.
-Erase it with `openocd -f tools/openocd-cm4.cfg -c "init; reset halt; at91samd chip-erase; shutdown"`
-if a tunnel unit must not carry it.
+**The board's SAMD21 (U21) ships BLANK. On `intellisbc2` it now runs `intelli-wayside-reader-mcu`
+v1 (flashed 2026-09-29); `intellisbc`'s has never been probed.** v1 does wheel sensing only and never
+touches PB10/PB11 (`CM4_EN_DRV`), so it cannot hold the CM4 off. Its UART is **PA12 TX / PA15 RX**
+(SERCOM2), wired to CM4 GPIO5/GPIO4, which is `/dev/ttyAMA3`. SWD from the CM4 (GPIO2/3/11) works
+without root. **`intellisbc2` stopped being a tunnel the same day**: the operator stopped and disabled
+`intelli-rfid-tunnel` there, and it is the wayside development board from then on. To erase the
+SAMD21: `openocd -f tools/openocd-cm4.cfg -c "init; reset halt; at91samd chip-erase; shutdown"`.
+
+**CHECK `hostname` BEFORE WRITING ANY MEASUREMENT DOWN.** On 2026-09-29 a whole session's findings
+(the SAMD21 flash, its UART pins, the wayside simulator run) were first recorded as `intellisbc`
+while the session was actually on `intellisbc2`, and three commit messages still say so. The two
+boards share one workspace layout and one prompt shape, and nothing else tells them apart.
 
 The apps run **on the reader itself**, not on a PC talking to a remote reader.
 

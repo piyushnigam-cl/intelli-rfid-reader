@@ -448,7 +448,7 @@ rule), `wheel/capture` is not built (it needs firmware), `system-pair-max-ms` an
 back yet, so sec.4.4's read-back is still to be added to the protocol.
 
 **Phase 3 STARTED 2026-09-29**: `apps/intelli-wayside-reader-mcu` (CodeCommit
-`intelli-wayside-reader-mcu`). **The same day it was flashed on `intellisbc` and runs.** It sends
+`intelli-wayside-reader-mcu`). **The same day it was flashed on `intellisbc2` and runs.** It sends
 HELLO, 1 Hz heartbeats and OPEN faults on all four loops (none connected). The UART is on PA12/PA15
 (SERCOM2), and the clock runs −3000 ppm. It has not yet seen a wheel or a live RSR110 loop, and it
 has not yet talked to the Java app.
