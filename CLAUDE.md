@@ -84,10 +84,10 @@ choice), so Claude runs deploys itself; `intellisbc` still needs them handed ove
 wayside unit and re-enable the tunnel: the two units conflict, and only one may be enabled.
 **Since 17:38 that day it runs `wayside.trigger.source: GPIO`**: J26 IN1 starts a train and IN2 ends
 it, standing in for the Frauscher sensors. Each pass is POSTed to
-`https://mmmocl.intellirail.cloud/wpmsRfidJsonFromClient`. **That endpoint answers every POST with
-302 to its site root**: with or without a trailing slash, for `{}` as for a real pass, setting a
-`JSESSIONID`. So it needs auth or a different path from its owner, and the JSON is not the problem.
-The CloudSender logs a 3xx and does not retry it. To erase the
+**`https://mmmocl.intellirail.cloud/rest/wpmsRfidJsonFromClient`**, with no auth; the **first pass was
+delivered, 200, at 17:45 that day**. **Without `/rest/` that server answers every POST with 302 to its
+site root**, which reads like an auth problem and is only a wrong path. The CloudSender logs a 3xx and
+does not retry it. The format sent is `docs/Wayside-Cloud-JSON.md`, which is still our proposal. To erase the
 SAMD21: `openocd -f tools/openocd-cm4.cfg -c "init; reset halt; at91samd chip-erase; shutdown"`.
 
 **CHECK `hostname` BEFORE WRITING ANY MEASUREMENT DOWN.** On 2026-09-29 a whole session's findings
