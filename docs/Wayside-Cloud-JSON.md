@@ -20,8 +20,9 @@ train carries two RFID tags, one at each end. The reader reports:
 
 - **Identity:** the tags it read.
 - **Wheel data:** axle count, direction and speed from two wheel sensors, **once they are
-  fitted**. Until then the train's start and end come from two digital inputs, and every wheel
-  field is `null` (§4.4).
+  fitted**. Until then, two digital inputs stand in: whichever fires first starts the train and
+  gives its `direction` (IN1 first = `UP`, IN2 first = `DOWN`), and the other one ends it. Axles
+  and speed are `null` (§4.4).
 
 ## 2. The request
 
@@ -165,7 +166,7 @@ reading the next train.
 
 | Value | Meaning |
 |---|---|
-| `GPIO` | **Today.** Start and end came from two digital inputs, standing in for the wheel sensors. No wheel data exists, so `direction`, `axleCount`, `speedKmh` and `axles` are `null` |
+| `GPIO` | **Today.** Start, end and direction came from two digital inputs standing in for the wheel sensors: `direction` is `UP` if IN1 fired first and `DOWN` if IN2 did. `axleCount`, `speedKmh` and `axles` are `null` |
 | `OK` | Wheel sensors worked throughout |
 | `LOST` | The wheel-sensor link dropped during the pass. Wheel data covers only part of the train |
 | `DOWN` | No wheel sensing at all: this pass is `TAG_GAP`, and the wheel fields are `null` |
