@@ -41,7 +41,9 @@ without moving the switch, **so the other LED is always dark, whatever is screwe
 threshold is 2.0 and not the reader's 3.0 `vswrLimit`, because 3.0 sits 0.0095 below the 6 dB
 reading of the bad J20 branch. **Unmeasured:** what a bare J25 sweeps to. Check it before trusting a
 dark LED to mean "no antenna" rather than "bad feeder". The unit's `ExecStopPost` drops both pins,
-since a `pinctrl` level outlives a dead JVM.
+since a `pinctrl` level outlives a dead JVM. **Deployed on `intellisbc` 2026-10-04**: J25 swept
+**1.3289766 (17 dB return loss)**, one 1 dB step better than 09-11's 1.377, and GPIO27 lit. The
+sweep costs ~270 ms of paused inventory at connect.
 
 **On the production v2.x carrier the module is off and held in reset at boot, and neither the app
 nor Linux does anything about it.** `RFID_EN` = GPIO22 (HIGH = on) and `RFID_NRST` = GPIO10
@@ -399,6 +401,15 @@ closing, the IN2 edge, disarm, fault, bench hold — because it is folded into `
 so a falling edge already running when the cancel arrives has nothing left to cancel and would
 schedule the next rise regardless — a carton discharging with O4 going high behind it.
 
+**The consequence on the live config: the nudge is usually cancelled before it fires, or cut short.**
+The unit runs `reverse: 1`, `[2000]`, `[1000]` (one pulse, 2000 ms after IN1, for 1000 ms), but
+with `settle-ms: 800` a read closes **1.65–2.8 s** after IN1, and the close cancels it. Read off the
+09-23 log: two cartons closed before 2.0 s and got no pulse; two got ~350 ms and ~800 ms. So the
+reversal is anywhere from 0 to 1000 ms depending on how fast each carton settles. When it does fire,
+it is a direct reversal of a loaded roller lasting hundreds of milliseconds, not the few-millimetre
+jog the feature was built for. **Put the pulse inside the shortest read** (`reverse-after-ms` a few
+hundred ms, `reverse-for-ms` tens) **or set `reverse: 0`.** Unchanged as of 2026-10-04.
+
 ### O1 is a state machine, not a level
 
 **O1 is HIGH by default — EnC and ExC run whenever a carton is not being read.** It drops LOW when
@@ -570,6 +581,24 @@ would break the callback-address guess, which derives from the route to the read
 operator starts it, in `tmux`**, because Claude cannot hold a JVM across tool calls. So two JVMs in
 `pgrep -ax java` is normal. It never opens the serial port, and a second JVM is harmless to the
 tunnel. The run instructions are in the app's `README.md`.
+
+**Since 2026-10-04 it can also run as a systemd service, and on `intellisbc` it does**
+(`intelli-wms-test.service`, enabled, from `/opt/intelli/intelli-wms-test/`). `deploy/install.sh`
+installs it. **Starting at boot is opt-in**: only `--enable` turns it on, plain install keeps the
+current setting, and `--disable` turns it off. **The unit pins BOTH addresses to loopback:**
+`--wms.reader.base-url=http://127.0.0.1:8081` and `--wms.callback.url=http://127.0.0.1:8083/callback`.
+That contradicts the tmux rule above, and on purpose. Loopback breaks only the callback *guess*, and
+a pinned callback leaves nothing to guess. On one host the page can arm only its own board, which is
+what `$(hostname).local` was protecting, and `.local` cannot be relied on at boot (next paragraph).
+The installer refuses while anything else holds :8083, so stop a tmux copy first.
+
+**mDNS renamed this board `intellisbc-3.local` on 2026-10-03, and `intellisbc.local` stopped
+resolving — even on the board itself.** At 11:04 that day avahi met `intellisbc` and `intellisbc-2`
+already claimed on the LAN, took the next free suffix, and does not switch back when the other device
+leaves. The suspect is another board or a cloned image still carrying the hostname `intellisbc`.
+**Every laptop URL and committed `base-url` that says `intellisbc.local` is broken until that device
+is renamed** and `sudo systemctl restart avahi-daemon` reclaims the name. Check
+`journalctl -u avahi-daemon | grep conflict` before blaming the network.
 
 **The tunnel app is retail/warehouse. Only the wayside app is rail.** Do not conflate them.
 
@@ -1761,6 +1790,28 @@ load-bearing: `/opt` is root-owned and the app is unprivileged, so a root-owned 
 logback cannot open the file and the app **silently** logs only to journald, with nothing looking
 wrong because journald keeps working. Check `ls -l /opt/intelli/logs/` after a deploy.
 
+## Remote access — the OpenVPN client is a systemd unit (2026-10-04)
+
+**`openvpn-client@intelli.service` with a `Restart=always` drop-in, replacing root's `@reboot` cron
+of `~/vpn/start-vpn.sh`**, which started one unsupervised client. If that client ever exited, the
+board stayed unreachable until the next reboot. The installer and drop-in are in `~/vpn/systemd/`,
+and the old crontab is saved in `/root/crontab.before-vpn-service`. **The live config is
+`/etc/openvpn/client/intelli.conf` (root, 600)**, because the stock unit has `ProtectHome=true`.
+**Editing `~/vpn/client.conf` changes nothing**: copy it over and restart the unit.
+
+- **`Type=notify` does not mean connected.** OpenVPN signals READY at "Pre-connection initialization
+  successful", so `systemctl is-active` says `active` with no `tun0`. The status text
+  `Initialization Sequence Completed` is what says the tunnel is up.
+- **The server pushes a full tunnel** (`redirect-gateway def1` plus IPv6). All of the board's
+  internet traffic, including CodeCommit pushes, goes via 13.200.127.53. With `persist-tun`, a dead
+  tunnel blackholes the internet until it reconnects. `pull-filter ignore "redirect-gateway"` would
+  limit it to remote access, if nothing depends on that egress.
+- **The ~00:01 drops every night are the LAN losing its route** (`Network is unreachable` to the
+  server), not a VPN fault. They heal in 30–90 s. The tunnel address is a stable `10.8.0.40`.
+- **Logs are in `journalctl -u openvpn-client@intelli`, and journald is volatile on this board**
+  (see below). `~/vpn/openvpn.log` stopped growing at the switch.
+- **Still open:** a deliberate kill to prove the restart, and the first reboot without the cron entry.
+
 ## Cloning this unit onto a new board
 
 `export/setup-new-cm4.sh` (2026-09-23) turns a fresh Trixie CM4 on a v2.x carrier into a copy of
@@ -1824,6 +1875,11 @@ nudge and the bench test surface ON. Raw outputs: `~/fw-2026-09-23/` on that boa
   low — the state a previous run's last write happened to leave, which read as a live decision and
   is not one. `ConveyorController` uses `forceRzc`/`forceEnc`/`forceExc` at arm and disarm precisely
   because of this, since the cache cannot know what the pins were left at.
+- **An arm does not survive a tunnel restart, so every deploy leaves the line stopped.** Nothing
+  persists the armed SKU. After `redeploy.sh` the outputs stay low and the belts stand still until
+  the WMS (or `intelli-wms-test`) arms again. That is the failsafe working, and it reads as a
+  conveyor that died with the deploy. Seen 2026-10-04: the app was up, `mode: IDLE`, and O1–O5 were
+  undriven.
 - **`systemctl stop` leaves the unit in `failed` state, and it is cosmetic.** The JVM exits 143 on
   SIGTERM and the unit declares no `SuccessExitStatus=143`, so a perfectly clean stop reports
   `failed` and `systemctl is-active` says `failed` rather than `inactive`. `Restart=on-failure` does

@@ -1,6 +1,6 @@
 # Resume here — CM4 session, next sitting
 
-**Sections are newest first. 2026-09-29 (the wayside reader, on intellisbc2) is on top, then 2026-09-28 (Radxa CM3), then 2026-09-24 (antenna LEDs), then 2026-09-23 late (the second
+**Sections are newest first. 2026-10-04 (sync, antenna LEDs deployed, VPN and wms-test as services, on intellisbc) is on top, then 2026-09-29 (the wayside reader, on intellisbc2), then 2026-09-28 (Radxa CM3), then 2026-09-24 (antenna LEDs), then 2026-09-23 late (the second
 board, flashed and running), then
 2026-09-23 evening (the export kit for a second CM4), then
 2026-09-23 (deployed, and the RZC stops per carton again) is on top,
@@ -11,6 +11,54 @@ disconnect before its close-out ran), then 2026-09-14 (housekeeping) and 2026-09
 `rzc-always-run: true` at 100 %). Below it, the 2026-09-07 rewrite —
 the session that FIXED the deafness, upgraded the SDK and made the armed EAN authoritative — which
 itself supersedes the "the reader is deaf, it is hardware" head that stood here earlier that day.**
+
+---
+
+## 2026-10-04 (on `intellisbc`): repos synced, antenna LEDs live, VPN and wms-test now systemd services
+
+**What changed**
+- **All six checkouts on this board are in sync with CodeCommit.** Root, reader-test, tunnel and
+  wms-test were behind (30, 1, 1 and 1 commits) and were fast-forwarded. `export/SHA256SUMS`
+  (checksum verified against the 09-23 kit tarball) was committed. Rebuilding the kit means
+  regenerating it.
+- **The tunnel is redeployed with the antenna LEDs (`f89eaff`).** 298 tests green. J25 swept
+  **1.3289766 (17 dB)** and GPIO27 is lit; J20's LED is dark by design.
+- **VPN:** moved from root's `@reboot` cron to `openvpn-client@intelli.service`, which restarts
+  itself (see the CLAUDE.md "Remote access" section). `client.conf` is mode 600, and `vpn.sh` (a
+  camera-product leftover that could `pkill openvpn`) and an editor swap file are deleted.
+  **The live config is `/etc/openvpn/client/intelli.conf`.**
+- **`intelli-wms-test` runs as a service** (`deploy/install.sh --enable`, pushed as a commit in that
+  repo), enabled at boot, on loopback for both reader and callback. The operator confirmed it
+  works. Page: `http://intellisbc-3.local:8083/` or `http://192.168.0.180:8083/` (see below).
+- **The bench test surface stays ON** by operator decision. Switch it off at handover, together
+  with splitting the `site-operator` ADMIN+INVENTORY key.
+
+**Found, not fixed**
+- **mDNS renamed this board `intellisbc-3.local` on 2026-10-03 11:04** after a LAN name conflict on
+  `intellisbc` and `intellisbc-2`. `intellisbc.local` resolves to nothing, so the admin app and
+  laptop bookmarks are broken. Find the LAN device carrying hostname `intellisbc` (a cloned board or
+  image?), rename it, then `sudo systemctl restart avahi-daemon` here.
+- **The reverse nudge rarely runs as configured.** The read closes at 1.65–2.8 s and cancels the
+  pulse set for 2000 ms. Details are in CLAUDE.md under the reverse nudge.
+- **IN2 still dead.** Every carton waits out the 10 s discharge backstop and the 10 s reopen block,
+  about one carton per 12 s at best.
+- **`~/vpn/client.conf` became root-owned at 14:24:11**, 5 s before the VPN installer ran, by
+  something other than the installer. The operator was asked; no answer recorded. If it was not
+  deliberate: `sudo chown intelli-sbc: ~/vpn/client.conf`.
+
+**State left:** tunnel, VPN and wms-test all active and enabled. The tunnel is **unarmed** (the
+redeploy cleared the arm), so the line is stopped until something arms it. Site config unchanged
+(`rzc-always-run: false`, `reverse: 1 [2000] [1000]`, `settle-ms: 800`, `test.enabled: true`).
+
+**Next, in order**
+1. Fix the mDNS name clash (above), then check `getent hosts intellisbc.local` on the board.
+2. VPN: prove the restart (`sudo pkill -x openvpn` from the LAN; back in ~16 s, `NRestarts=1`). Then
+   reboot once and confirm the VPN and wms-test both come up with no cron entry. Delete
+   `~/vpn/start-vpn.sh` after that.
+3. Decide the reverse nudge: move it inside the read (e.g. `[300]` / `[20]`) or set `reverse: 0`.
+4. IN2: find out why ExS never fires. It is costing ~10 s per carton.
+5. Optional VPN hardening still on the table: make journald persistent, `connect-retry 5 15`, and
+   `pull-filter ignore "redirect-gateway"` if the full tunnel is not needed.
 
 ---
 
