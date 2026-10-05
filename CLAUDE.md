@@ -310,9 +310,16 @@ precisely the state that must not be discharged into. `ExitOccupancyMonitor.star
 before it schedules anything. It is therefore also **independent of `tunnel.v1.gpio.active-low`**,
 since `FieldIo.read()` already speaks field sense.
 
-**The EnC still restarts at read close** rather than at the IN2 exit edge (operator, 2026-09-05:
-"fine for now"). With the belts split that is now a choice rather than a constraint, and moving it to
-the exit edge is a one-line change if a carton is ever fed in on top of one still in the zone.
+**From 2026-10-05 the EnC restarts on the IN2 exit edge, not at read close** (operator;
+`tunnel.field.conveyor.enc-waits-for-exit`, default `true`). The ExC still starts at the close to
+receive the carton, and a read closed *by* IN2 restarts the EnC at once. A dead IN2 leaves the EnC
+stopped until `discharge-max-ms` (10 s) restarts it, so on a unit whose exit sensor is dead, every
+carton now costs that wait. It was asked for while chasing duplicate results: on 10-05 the
+duplicates opened on IN1 edges arriving 0.1–1.5 s **after** IN2, in bursts that start when the EnC
+restarts. **On this unit the edges are raw rising, so IN2 fires when the box CLEARS the exit beam**
+(no `--active-low`). If the EnC restart is what makes IN1 fire, moving it to IN2 moves those edges
+to just after the reopen guard lifts. Check the duplicate rate after deploying. Also from 10-05:
+`rzc-stop-delay-ms` (2000 on this unit) keeps the RZC running after IN2.
 
 **IN3 shutdown, and the restart that follows it.** A 5 s press starts the shutdown sequence; O7's
 lamp says when the counter is closed and it is safe to remove 24 V. **Restart is a full power cycle
