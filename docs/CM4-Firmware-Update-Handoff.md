@@ -400,3 +400,20 @@ SIM7500 firmware update, 2026-09-11, production, serial 30262503F5:
 - tunnel: connects and reads on the new firmware; site config switched to region: RG_IN at 20:46,
           applyConfig() read-back clean, reads only on 865.1/865.7/866.3/866.9 MHz
 ```
+
+### Filed 2026-10-07 — `intellisbc`, third module
+
+```
+SIM7500 firmware update, 2026-10-07, production (intellisbc), serial 30262503F6:
+- before: fw 20260330, hw field 31.00.00.80 (auth octet 00 CHINA), bootloader 22.02.18.00,
+          layer BOOTLOADER at power-up. Found when the tunnel faulted on RG_IN (FAULT_INVALID_REGION);
+          the module had been swapped for 30262503F5 between 10-05 and 10-07.
+- auth write: ProbeAuthWrite RG_IN + RFID_EN cycle -> hw 31.00.0E.80, auth 0E INDIA
+- flash dump vs 03-30 image: IDENTICAL, 237908 bytes, sha256 c51918d3...a7306cbc5, CHECK_Firmware OK
+- vendor family warning shown: no (script started in BOOT)
+- MCU: OK in 32.5 s (1948 packets, CHECK_Firmware OK, first APP entry 652 ms)   Impinj: not checked
+- after: fw 20260819, hw field 31.00.0E.80 (auth unchanged: y)
+- regions accepted: the same 26 as 30262503F5/F8   RG_IN: YES   boot region: RG_NA
+- inventory under RG_IN, J25, 27 dBm: 34 tags, best -44 dBm, 865.1 MHz
+- tunnel: Reader open fw=20.26.08.19, RG_IN read-back clean, J25 VSWR 1.3289766 (17 dB), LED lit/blinking
+```

@@ -13,7 +13,7 @@ hardware behaviour that are not derivable from the code.
 | Antennas | **The SIM7500 has ONE mono-static port.** The two connectors are fed from it by the board's **PE42442A SP4T**, switched by **GPIO8 (V1) / GPIO9 (V2)** — see below |
 | Serial port | **Confirmed `/dev/ttyAMA0`** on the CM4 bench rig (2026-08-27) **and on the production v2.x carrier** (2026-08-29, with `disable-bt` + `uart3`; UART3 takes `ttyAMA3`). A USB bridge gives `/dev/ttyUSB0` |
 | Region | **`RG_IN` since 2026-09-11** (865–867 MHz Indian band, hops 865.1/865.7/866.3/866.9 MHz). It became possible only after the module firmware update below; on sw `20.26.03.30` it was refused even with the auth region unlocked. **If the firmware is ever rolled back, the site config must go back to `RG_EU3` in the same step** |
-| Module version | Production module: hw **`31.00.0E.80`** since the 2026-09-07 auth-region write (**not** the `31.00.00.80` quoted everywhere else; the third octet is the region marker), and sw **`20.26.08.19`** since the 2026-09-11 firmware flash (was `20.26.03.30`) |
+| Module version | **`intellisbc` has run module `30262503F6` since 2026-10-07**; until 10-05 it was `30262503F5`. `…F6` arrived unannounced on factory state (sw `20.26.03.30`, hw `31.00.00.80`, auth `RG_PRC`), so the tunnel faulted with `FAULT_INVALID_REGION` on `RG_IN` from the 10-07 boot. It was brought to the same state as `…F5` that evening: hw **`31.00.0E.80`** (India auth region; the third octet is the region marker, so **not** the `31.00.00.80` quoted elsewhere) and sw **`20.26.08.19`**. See "A third module" under Module firmware |
 
 **The module cannot see the antenna switch, and that shapes every antenna test you will ever run
 here.** `MODULE_ONE_ANT`, `antportnumbers=1`, and `antenna-count: 1` is the correct config. The two
@@ -160,6 +160,29 @@ clean, reads only on the four in-band channels (EU3's out-of-band 867.5 MHz is g
 same 40-tag layout 30 tags at best −32 dBm against 28 at −32 dBm on `RG_EU3` a minute earlier. Raw
 outputs are in the kit: `probe-before/after-production-2026-09-11.txt`,
 `authread-after-…`, `region-scan-after-…`.
+
+**A third module, 2026-10-07: `intellisbc` now carries `30262503F6`, and the procedure is proven on
+three modules.** Between the 10-05 19:20 start (fw `20.26.08.19`, reading) and the 10-07 13:20 boot,
+the module behind `/dev/ttyAMA0` changed. Nothing in the log or the repo records why. The tunnel then
+answered every arm with `409 reader_not_connected (state=FAULTED)`, and its log repeated `Failed to
+set region RG_IN [MT_CMD_FAILED_ERR] detail=0x10b FAULT_INVALID_REGION`. **That error on a unit that
+used to run `RG_IN` means a module on factory firmware. Read the serial with `fw_probe.py` before
+suspecting anything else.** The vendor SDK stub that core gained on 10-07 was ruled out first: the
+fat jar, `~/.m2` and the SDK file share one sha256 (`60fad38a…`), and the stub cannot produce a
+module error code. Same steps and results as on `…F5` and `…F8`:
+
+| step | `30262503F6`, 2026-10-07 |
+|---|---|
+| as found | fw `20260330`, hw `31.00.00.80` (auth `0x00` CHINA), bootloader `22.02.18.00`, in BOOT at power-up |
+| `ProbeAuthWrite` + `RFID_EN` cycle | hw `31.00.0E.80`, auth `0x0E INDIA` |
+| app dump | 237,908 bytes, **byte-identical** to the 03-30 image (sha256 `c51918d3…`), `CHECK_Firmware` OK |
+| MCU flash | **32.5 s**, `CHECK_Firmware` OK, first APP entry 652 ms, no family warning (started in BOOT) |
+| region scan | the same 26 accepted; boot region `RG_NA`; 34 tags on J25 at 27 dBm, best −44 dBm |
+| tunnel | `Reader open: fw=20.26.08.19`, `RG_IN` clean, J25 VSWR **1.3289766**, GPIO27 blinking |
+
+J25's figure matches 10-04's to seven digits, so its cable and antenna are probably unchanged and only
+the module was swapped. **Not established.** If the carrier changed too, J20's 24 dB fault and the
+ANT2 choice belong to the old board, and both ports need re-measuring with an antenna on each.
 
 **A stacked tag bundle reads like a broken reader. Do not use one to judge the firmware.** 40 tags in
 a hand-held stack gave 9 steady answers at −51 to −65 dBm. The same tags "spread a bit" gave 28–30
