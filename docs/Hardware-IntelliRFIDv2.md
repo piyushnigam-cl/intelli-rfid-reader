@@ -627,3 +627,32 @@ A CM3 would also need an app port: `pinctrl`, `ttyAMA0`, the `disable-bt`/`uart3
 BCM numbering are all Pi-only, and the CM3's 1.5 Mbaud debug console sits on GPIO14/15, which is
 the SIM7500 UART here.
 
+
+### 16.1 The CM4 on the same carrier: gigabit flaps, 100 Mb/s holds (MEASURED 2026-10-07, `intellisbc2`)
+
+The CM4's own BCM54210PE shows the same fault, so it is not a CM3 problem. From the boot at
+19:16:55 (monotonic seconds from the journal):
+
+| t | event |
+|---|---|
+| 23.3 s | systemd startup finished |
+| 23.97 s | first `Link is Up - 1Gbps/Full`, down again ~1 s later |
+| 24–557 s | **98 up/down cycles at 1 Gb/s**, each up ~1 s and down ~3 s. Every DHCP transaction was cancelled on the carrier drop (`no lease`) |
+| **558.5 s** | `Link is Up - 100Mbps/Full`, and it held |
+| **561.8 s** | DHCP lease 192.168.0.181, NetworkManager `activated` |
+
+**So Ethernet took ~9 min 20 s to come up after boot.** Afterwards `ethtool eth0` showed both
+ends advertising only 10/100 (autoneg on). This boot's journal has no `ethtool` call and no
+eth-probe flag. The likeliest cause is the PHY's own downshift after repeated failed 1000BASE-T
+attempts, and possibly the switch's too, but that is not confirmed.
+
+**What it settles about §16.** The partner negotiated 1 Gb/s 98 times, so this switch port is not
+10/100-only. The note above that it was may have been a different port or switch. 1000BASE-T
+training succeeds and then cannot hold, while 100BASE-TX (pairs 1-2/3-6 only) is stable. That
+points at suspect **(1)**: a fault on the gigabit-only pairs 4-5/7-8 (traces, magjack, or their
+centre taps). The CM3's RTL8211F has no downshift, which would explain why it never links at all.
+
+**Still to do:** the same boot with a known-good cable on a different switch port. If it still
+needs to drop to 100 Mb/s, the fault is on the board. Until it is fixed, a carrier like this one
+should advertise 10/100 only (`ethtool -s eth0 advertise 0x00f`, or the NetworkManager
+`802-3-ethernet.speed 100` / `duplex full` with autoneg) so it links in seconds rather than minutes.
