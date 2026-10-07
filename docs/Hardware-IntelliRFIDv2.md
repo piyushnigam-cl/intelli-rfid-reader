@@ -656,3 +656,11 @@ centre taps). The CM3's RTL8211F has no downshift, which would explain why it ne
 needs to drop to 100 Mb/s, the fault is on the board. Until it is fixed, a carrier like this one
 should advertise 10/100 only (`ethtool -s eth0 advertise 0x00f`, or the NetworkManager
 `802-3-ethernet.speed 100` / `duplex full` with autoneg) so it links in seconds rather than minutes.
+
+**Applied on `intellisbc2` 2026-10-07:** `/etc/systemd/network/10-eth0-no-gigabit.link`
+(`[Match] Driver=bcmgenet`, `[Link] AutoNegotiation=yes`,
+`Advertise=10baset-half 10baset-full 100baset-half 100baset-full`). udevd applies it at boot,
+independently of NetworkManager. `udevadm test-builtin net_setup_link` confirms eth0 picks it up,
+and the name stays `eth0` because the file sets no `NamePolicy`. Applied live as well, and the
+link renegotiated to 100 Mb/s in ~3 s. **Delete the file once the gigabit pairs are fixed**, or
+the board will stay on 100 Mb/s for no reason. Not yet verified across a reboot.
