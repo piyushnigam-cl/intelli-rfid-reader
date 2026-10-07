@@ -666,6 +666,14 @@ is on the reader.** From anywhere else the reader would POST to itself. Every ca
 perfectly, every result would die in a connection refused inside the *reader's* log, and the page
 would sit empty, looking exactly like a reader that had stopped working.
 
+**Multi-EAN arming on the page (2026-10-07, `0e8c643`).** One row per SKU. A single row goes out in
+the documented `ean` + `expectedCount` form, so the page still arms a tunnel built before `skus`;
+several go out as `skus`, never both. **Its display filters have a known flaw:** the "already seen"
+memory (`wms.display.unexpected-memory-ms`) hides an UNEXPECTED tag that an earlier carton carried.
+So re-running the same box against a wrong-SKU arming empties the table. Measured 10-07: carton 1356
+showed 0 of 34 rows, armed for `8909476831144` while every tag was `8909477586814`. The hint line
+counts the hidden rows, but check `/ui/carton/raw` before believing an empty table.
+
 ### Two API surfaces on the tunnel, and only one of them is the contract
 
 | Surface | What it is |

@@ -1,6 +1,6 @@
 # Resume here — CM4 session, next sitting
 
-**Sections are newest first. 2026-10-04 (sync, antenna LEDs deployed, VPN and wms-test as services, on intellisbc) is on top, then 2026-09-29 (the wayside reader, on intellisbc2), then 2026-09-28 (Radxa CM3), then 2026-09-24 (antenna LEDs), then 2026-09-23 late (the second
+**Sections are newest first. 2026-10-07 (module swapped to `…F6` and reflashed; multi-EAN arming on the wms-test page, on intellisbc) is on top, then 2026-10-04 (sync, antenna LEDs deployed, VPN and wms-test as services, on intellisbc), then 2026-09-29 (the wayside reader, on intellisbc2), then 2026-09-28 (Radxa CM3), then 2026-09-24 (antenna LEDs), then 2026-09-23 late (the second
 board, flashed and running), then
 2026-09-23 evening (the export kit for a second CM4), then
 2026-09-23 (deployed, and the RZC stops per carton again) is on top,
@@ -11,6 +11,39 @@ disconnect before its close-out ran), then 2026-09-14 (housekeeping) and 2026-09
 `rzc-always-run: true` at 100 %). Below it, the 2026-09-07 rewrite —
 the session that FIXED the deafness, upgraded the SDK and made the armed EAN authoritative — which
 itself supersedes the "the reader is deaf, it is hardware" head that stood here earlier that day.**
+
+---
+
+## 2026-10-07 (on `intellisbc`): a swapped module reflashed to RG_IN, multi-EAN arming on the wms-test page
+
+**What changed**
+- **The reader module was swapped, unannounced, between 10-05 19:20 and 10-07 13:20.** It went from
+  `30262503F5` to **`30262503F6`**, on factory state (fw `20.26.03.30`, auth CHINA). The tunnel faulted on every
+  connect with `FAULT_INVALID_REGION` on `RG_IN`, and arming answered 409 `reader_not_connected`. The
+  core vendor-SDK stub (pulled the same day) was checked and ruled out: the jars share one sha256.
+- **`…F6` was brought to `RG_IN` the same evening** (auth write, dump IDENTICAL, 32.5 s MCU flash,
+  26 regions). The tunnel reads: `fw=20.26.08.19`, J25 VSWR 1.3289766, LED blinking. Details are in
+  CLAUDE.md ("A third module") and the handoff doc's 10-07 report.
+- **Pulled:** root (3), core (2: the vendor-SDK stub for cloud sessions), and tunnel (1: `e8ced95`,
+  arm with several EANs, `skus`). The operator redeployed the tunnel at 21:38, so multi-SKU arming is live.
+- **`intelli-wms-test` `0e8c643`** (operator committed, installed 22:29): the 10-05 display filters
+  plus multi-EAN arming. One row per SKU; a single row still goes out as `ean` + `expectedCount`, and
+  several as `skus`. The carton view has a per-SKU table, and matched rows carry their EAN.
+
+**State left in**
+- Tunnel active, reading, **disarmed** (re-arm from the page). wms-test service active.
+- The last four cartons (seq 1353–1356) were armed for `8909476831144`, but the 34 tags in the box are
+  **`8909477586814`**. So each read found 0 of 18, and every tag landed in `unexpected`.
+
+**Next, in order**
+1. **Fix the wms-test "already seen" filter.** It hid all 34 rows of carton 1356, because cartons 1–3
+   carried the same tags. On a re-run box or a wrong-SKU arming, it hides exactly the evidence of
+   the mistake. Proposed: never hide UNEXPECTED rows when `matched.count` is 0 (operator not yet asked).
+2. Ask the operator what was swapped. If the carrier changed too, re-measure J20 and J25 with an
+   antenna on each, because the J20 fault and the ANT2 choice belonged to the old board.
+3. Add `skus`, `invalid_skus`, `ReadResult.skus` and `MatchedTag.ean` to
+   `docs/Intelli-RFID-RestAPI.docx` before Reliance uses multi-SKU arming.
+4. Re-arm with the right EAN and confirm a PASS carton on `…F6`.
 
 ---
 
