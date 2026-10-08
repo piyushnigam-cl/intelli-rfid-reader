@@ -578,7 +578,7 @@ intelli-rfid-reader/            repo: intelli-rfid-reader — DOCS ONLY, ignores
     ├── intelli-rfid-core/          shared library — repo: intelli-rfid-core
     ├── intelli-rfid-reader-test/   bench acceptance — repo: intelli-rfid-reader-test
     ├── intelli-rfid-tunnel/        warehouse portal — repo
-    ├── intelli-rfid-admin/         laptop admin interface — repo: intelli-rfid-admin
+    ├── intelli-rfid-admin/         admin interface, run on the reader — repo: intelli-rfid-admin
     ├── intelli-wms-test/           WMS simulator — repo: intelli-wms-test
     ├── intelli-wayside-reader/     trackside railway, Charkop — repo (from 2026-09-24; replaces the
     │                               never-pushed laptop draft intelli-rfid-wayside)
@@ -603,17 +603,21 @@ Three of them are reader apps: they need the module, the vendor jar and core. Tw
 apps**: they talk to a reader over HTTP only, with no module, vendor jar or core, and that is the
 distinction that matters. **Where they run is a separate question.** `intelli-wms-test` has run
 **on the CM4 beside the tunnel since 2026-09-23** (operator: the new standard), and the laptop
-only opens it in a browser. `intelli-rfid-admin` still runs on the laptop.
+only opens it in a browser. **`intelli-rfid-admin` followed on 2026-10-08** (operator): it runs on
+the reader being worked on, started in `tmux` when needed and stopped after (no systemd unit; it
+holds an ADMIN key), and is used from a browser at `http://<hostname>.local:8090/`. Nothing is
+installed on the laptop any more. On its own board it reaches the reader app over loopback
+(`127.0.0.1:8081` / `:8082`), and the reader can call its receivers back over loopback too.
 
 | App | Port | Runs on | Purpose |
 |---|---|---|---|
 | `intelli-rfid-reader-test` | 8080 | reader | A new reader arrives: is it good? Reads a few tags, writes a few tags, reports pass/fail |
 | `intelli-rfid-tunnel` | 8081 | reader | Warehouse entry/exit tunnel. A box of ~40 tagged articles passes through; a third-party app asks what was in it. Also commissions warehouse tags |
 | `intelli-wayside-reader` | 8082 | reader | Trackside railway reader at Charkop. One antenna, two tags per train (one each end), wheel sensors via the SAMD21 on UART3, one cloud POST per train. **Design: `docs/Wayside-Reader-Design.md`.** Supersedes `intelli-rfid-wayside`, a laptop draft that never reached CodeCommit and took direction from two antennas |
-| `intelli-wms-test` | 8083 | **reader's CM4**, browsed from the laptop | A WMS, reduced to arming Super Fast Mode and showing the carton that comes back |
-| `intelli-rfid-admin` | 8090 | laptop | The whole surface: v1 contract, internal endpoints, commissioning, key issuance, bench harness, call log, contract checker |
+| `intelli-wms-test` | 8083 | **reader's CM4** (service), browsed from the laptop | A WMS, reduced to arming Super Fast Mode and showing the carton that comes back |
+| `intelli-rfid-admin` | 8090 | **reader's CM4** (on demand), browsed from the laptop | The whole surface for both reader apps: v1 contract and wayside pass checkers, internal endpoints, commissioning, key issuance, bench harnesses, receivers for callbacks and cloud POSTs, phase trials, call log |
 
-`intelli-rfid-core` is the shared library underneath the three reader apps. **The two laptop apps
+`intelli-rfid-core` is the shared library underneath the three reader apps. **The two client apps
 deliberately do not depend on it** — shared DTOs would serialise and deserialise with the reader's
 own code, so a wire-format regression would cancel itself out on both sides and be invisible to the
 one test built to catch it. Both parse the reader's JSON field by field on purpose.
@@ -640,7 +644,7 @@ The installer refuses while anything else holds :8083, so stop a tmux copy first
 resolving — even on the board itself.** At 11:04 that day avahi met `intellisbc` and `intellisbc-2`
 already claimed on the LAN, took the next free suffix, and does not switch back when the other device
 leaves. The suspect is another board or a cloned image still carrying the hostname `intellisbc`.
-**Every laptop URL and committed `base-url` that says `intellisbc.local` is broken until that device
+**Every browser bookmark and committed `base-url` that says `intellisbc.local` is broken until that device
 is renamed** and `sudo systemctl restart avahi-daemon` reclaims the name. Check
 `journalctl -u avahi-daemon | grep conflict` before blaming the network.
 
