@@ -111,6 +111,15 @@ site root**, which reads like an auth problem and is only a wrong path. The Clou
 does not retry it. The format sent is `docs/Wayside-Cloud-JSON.md`, which is still our proposal. To erase the
 SAMD21: `openocd -f tools/openocd-cm4.cfg -c "init; reset halt; at91samd chip-erase; shutdown"`.
 
+**The SAMD21 read loop currents 3.3× high until `intelli-wayside-reader-mcu` f80b0a3 (2026-10-08).**
+Its scale assumed a 100 Ω burden; the v2 schematic fits **330 Ω** (R45–R48, WheelSense sheet), so the
+constant is now 2441 µA/LSB, not 8057, and full scale is ~10.0 mA. SHORT moved from an unreachable
+25 mA to 9.8 mA. **Re-check `wayside.wheel.detect.*` in `intellisbc2`'s site config after flashing**:
+they are deviations in µA, and any value picked by watching the old readings is now 3.3× too large
+for the same physical dip (a 5 → 3 mA dip is a 2000 µA deviation). The scale is from the schematic,
+not measured, so heartbeat flag bit 3 stays set until the train simulator's 5.000 mA reads right;
+then set `BOARD_FRONTEND_VERIFIED 1`. Found from a cloud session that read the schematic.
+
 **CHECK `hostname` BEFORE WRITING ANY MEASUREMENT DOWN.** On 2026-09-29 a whole session's findings
 (the SAMD21 flash, its UART pins, the wayside simulator run) were first recorded as `intellisbc`
 while the session was actually on `intellisbc2`, and three commit messages still say so. The two
