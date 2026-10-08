@@ -1,6 +1,6 @@
 # Resume here — CM4 session, next sitting
 
-**Sections are newest first. 2026-10-07 (module swapped to `…F6` and reflashed; multi-EAN arming on the wms-test page, on intellisbc) is on top, then 2026-10-04 (sync, antenna LEDs deployed, VPN and wms-test as services, on intellisbc), then 2026-09-29 (the wayside reader, on intellisbc2), then 2026-09-28 (Radxa CM3), then 2026-09-24 (antenna LEDs), then 2026-09-23 late (the second
+**Sections are newest first. 2026-10-08 (cloud: the phased plan and open decisions) is on top, then 2026-10-07 (module swapped to `…F6` and reflashed; multi-EAN arming on the wms-test page, on intellisbc) is on top, then 2026-10-04 (sync, antenna LEDs deployed, VPN and wms-test as services, on intellisbc), then 2026-09-29 (the wayside reader, on intellisbc2), then 2026-09-28 (Radxa CM3), then 2026-09-24 (antenna LEDs), then 2026-09-23 late (the second
 board, flashed and running), then
 2026-09-23 evening (the export kit for a second CM4), then
 2026-09-23 (deployed, and the RZC stops per carton again) is on top,
@@ -11,6 +11,57 @@ disconnect before its close-out ran), then 2026-09-14 (housekeeping) and 2026-09
 `rzc-always-run: true` at 100 %). Below it, the 2026-09-07 rewrite —
 the session that FIXED the deafness, upgraded the SDK and made the armed EAN authoritative — which
 itself supersedes the "the reader is deaf, it is hardware" head that stood here earlier that day.**
+
+---
+
+## 2026-10-08 (cloud session): the plan, in phases, and the decisions it waits on
+
+Written from a cloud session, so nothing below was measured on a board. Check `hostname` first.
+
+**Done from the cloud today**
+- `intelli-wayside-reader-mcu` **f80b0a3**: wheel current scale for the 330 Ω burden (2441 µA/LSB, SHORT
+  at 9.8 mA). Not flashed yet.
+- `intelli-rfid-admin` overhauled (reader profiles, tunnel + wayside tabs, `/callback` and `/cloud`
+  receivers, phase trials), now **5cf34da**: the default reader is loopback `127.0.0.1:8081`, and the
+  API key is entered in **Profiles**, not the header. "no key: set one" in the header opens it.
+- `claude-code-cloud-setup/docs/Intelli-RFID-System.md`: the whole-system overview and its list of
+  cross-repo discrepancies.
+
+**Decisions waiting on the operator**
+1. **wms-test "already seen" filter**: proposed rule is to never hide UNEXPECTED rows when
+   `matched.count == 0` (carton 1356 showed 0 of 34 rows).
+2. **Retire `intelli-rfid-reader-test`**: move its acceptance run into an admin Acceptance tab, and
+   its bench probes to `intelli-rfid-core/tools/bench-probe`, then archive the repo.
+3. **Packaged tunnel defaults**: since tunnel `1a29ec1`, new units ship with the reverse nudge ON and
+   IN3 `power-off-os: true`. Should they?
+4. ~~Admin default base-url to loopback~~: **done**, admin `5cf34da`.
+
+**Phase 0, in the cloud**
+- [x] 0.1 Admin loopback default.
+- [ ] 0.2 wms-test filter fix (decision 1).
+- [ ] 0.3 Acceptance tab, probe move, reader-test retired (decision 2).
+- [ ] 0.4 Tunnel cleanups: the stale O6/O7 lamp comment in `install.sh`, the stale "IN4 does not yet
+      interlock anything" note in `DiagnosticsIoController`, and making shutdown step 3 a no-op when
+      no write is outstanding.
+
+**Phase 1, wheel sensing on `intellisbc2` with the train simulator**
+- [ ] Flash f80b0a3. A simulator 5.000 mA must read 5000 µA ±3%. If it does, set `BOARD_FRONTEND_VERIFIED 1`.
+- [ ] An OPEN-fault test with a channel unplugged.
+- [ ] Re-set `wayside.wheel.detect.*` in the site config (they were 3.3× too large). Start near 1500 / 750 / 200 µA.
+- [ ] Confirm the channel map (J22 = head A) and run `trigger.source: WHEELS` for a full simulated train.
+- [ ] Sweep the dip depth and width to find the detection margins.
+
+**Phase 2, admin smoke test on both boards.** Profiles, Check, Overview, the live stream, the tunnel
+v1 arm with callback `http://127.0.0.1:8090/callback` landing in Receivers, Field I/O, and the
+wayside Status, Wheel, Passes and `/cloud`.
+
+**Phase 3, phase trials** (static versus moving tags), from the admin Phase tab on J25.
+
+**Phase 4, tunnel field issues**: IN2 is dead, duplicate IN1 edges, put the nudge inside the
+shortest read or set `reverse: 0`, re-derive settle at 1500 on 38-article cartons, and the mDNS
+`intellisbc` clash.
+
+**Phase 5, documents**: fold the results back into CLAUDE.md and the system overview.
 
 ---
 
