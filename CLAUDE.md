@@ -195,7 +195,7 @@ shadow one another.
 **The 107 fallback is unchanged.** The reader-test jar had to be rebuilt first: the 08-31 build
 bundled the v260721 SDK jar. It also shipped `antenna-count: 4`, wrong for this one-port module, so it
 was launched with `--rfid.reader.antenna-count=1`. **Fixed 2026-09-14**: reader-test ships `1`
-(`3ea0ec1`). The tunnel's packaged file still says `2`, and only its site config's `1` corrects it.
+(`3ea0ec1`). The tunnel's packaged file ships `1` too since 2026-10-08 (tunnel `1a29ec1`).
 
 **Still open:** radiated power under the Indian limit, which `RG_IN` now makes a live question; a
 like-for-like carton read against 09-07's 38/38; and what a *bare* J25 reads on the VSWR sweep.
@@ -354,8 +354,9 @@ this system does not use it** — do not write code that assumes otherwise.
 ### The RZC runs continuously in Super Fast Mode — O2 is held HIGH
 
 > **REVERSED ON THE UNIT 2026-09-23: the site config now says `rzc-always-run: false`**, so O2 rises
-> on the entry trigger and falls again, and the arm line reads `RZC stopped`. The packaged default
-> was always `false`; this puts the unit back on it. **The consequence to watch is the discharge
+> on the entry trigger and falls again, and the arm line reads `RZC stopped`. The `FieldProperties`
+> default was always `false`; this puts the unit back on it. **The packaged `application.yml`
+> followed on 2026-10-08** (tunnel `1a29ec1`) and `PackagedConfigTest` now pins `false`. **The consequence to watch is the discharge
 > backstop, because IN2 is dead on this unit:** under always-run a missing exit edge only WARNs,
 > while under `false` the same timer calls `setRzc(STOP)` — `no exit edge 10000 ms after the read
 > closed; stopping the RZC anyway`, which is now in the log after every carton. Fix IN2 or put
@@ -363,14 +364,15 @@ this system does not use it** — do not write code that assumes otherwise.
 
 **Operator decision, 2026-09-09.** `tunnel.field.conveyor.rzc-always-run: true`: the Reading Zone
 Conveyor joins the EnC and the ExC as a belt that simply turns while the tunnel is armed, instead of
-starting on the EnS entry edge and stopping on the IN2 exit edge. Shipped in the packaged
-`application.yml` and in this unit's site config; the `FieldProperties` default stays `false`.
+starting on the EnS entry edge and stopping on the IN2 exit edge. It was shipped in the packaged
+`application.yml` and in this unit's site config until both were reversed (above); the
+`FieldProperties` default stays `false`.
 
 **The gear moved 50 % → 100 % with it and that is the same decision, not a second one.** The
 EZY-S100 ladder is not monotonic — Run B alone is 50 %, Run A alone is 100 %, both is 75 % — so "the
 RZC is running" and "O2 is high" are different machines: at 50 % the belt turns with **O3** high and
 O2 dark. Run A alone is the only gear that leaves O2 high by itself, matching O1 and O5.
-`PackagedConfigTest` pins both values, because either one alone gives the wrong machine.
+`PackagedConfigTest` pins the gear at 100 and, since 2026-10-08, always-run at `false`.
 
 Two things it buys, and two it does not touch:
 
@@ -401,7 +403,10 @@ trigger for the first and **from the end of the previous pulse** for the rest.
 waits `direction-change-dwell-ms` (250), then flips O4. A nudge cannot: the dwell alone is fifty
 times the pulse. So the nudge writes O4 **with the Run bits still high** — a direct reversal of a
 loaded drum motor, which is the one unmeasured motion this application commands. That is why it
-ships off and why `PackagedConfigTest` pins it off.
+shipped off until 2026-10-08. **Since then the packaged file ships it ON**, at `reverse: 1`,
+`[2000, 101]` / `[1000, 5]`, copied from this unit's site config (tunnel `1a29ec1`), and
+`PackagedConfigTest` pins those values. So every new unit arrives with the roller reversing
+mid-carton. Put both the file and the test back to `0` / `[]` if that is not wanted.
 
 **MEASURED 2026-09-09 on this CM4: every edge lands ~4 ms late and every pulse comes out ~4 ms
 wider than requested.** The real controller driven with `reverse: 2`, `[100, 101]` and `[3, 5]`,
@@ -1147,8 +1152,8 @@ guessing at signatures.
   thermally convenient. Use S0 for continuous-carrier bench work; S2 belongs with triggered RF.
 - **We run `session: 1` and it is clean. MEASURED 2026-09-02: the same tags re-read a few seconds
   later with no problem.** S1's inventoried flag self-decays in 500 ms–5 s even while the tag is
-  powered, which is what a carton-at-a-time tunnel wants. **`application.yml` still says `session: 2`
-  — that is live config drift; the committed default is not what the rig runs.** The S2 note below
+  powered, which is what a carton-at-a-time tunnel wants. The packaged `application.yml` said
+  `session: 2` until 2026-10-08, and ships `session: 1` since (tunnel `1a29ec1`). The S2 note below
   stands as the reason S1 was chosen, and as what you will see if the session is ever left at 2.
   Caveat: S1 decay is a timing window, not a guarantee, so a read that closes fast and immediately
   reverses can start its return pass with some tags still in state B. The Select-to-A reset is
@@ -1442,6 +1447,7 @@ at ~1.4 s because the IN2 edge cut the wait short, which is exactly what a conve
 for.
 
 **`settle-ms` is 800 on the production unit from 2026-09-04, down from the packaged 1500.** The
+packaged file ships 800 too since 2026-10-08. The
 window only has to exceed the largest gap between consecutive *new* EPCs inside one carton, and that
 is far smaller than the window was: measured over 20 cartons (sequences 733–752, 16–18 tags),
 **median worst-gap 231 ms, worst 406 ms** — 1500 was 3.7× the worst case. 800 keeps 2× and takes the
@@ -1947,6 +1953,13 @@ nudge and the bench test surface ON. Raw outputs: `~/fw-2026-09-23/` on that boa
   report success while apps still bundle the old class. Use `mvn clean install` on core after
   editing it. Verify with `javap -c -p -cp target/classes <Class>` when behaviour contradicts source.
 - Site config lives in `/etc/intelli/<app>/application.yml` and overrides the packaged defaults.
+  **On 2026-10-08 the tunnel's packaged file took `intellisbc`'s live values** (tunnel `1a29ec1`):
+  antenna-count 1, session 1, write power 2700, settle 800, triggered-carrier off, conveyor
+  enabled, always-run off, EnC and RZC stop delays 2000, the reverse nudge on, and IN3
+  `power-off-os: true`. **It did not take** the key hashes, `gs1.reader-id`, or
+  `tunnel.test.enabled`, which is on in this unit's site file and must never ship. A new unit
+  therefore powers its OS off on a held IN3 out of the box, and needs the `deploy/` sudoers
+  drop-in or that fails.
 - The service user must be in the `dialout` group or the app starts and then fails to open the
   serial port — which looks exactly like a reader fault.
 - **Never conclude a setting took effect from its return code — read it back.** Two adjacent
