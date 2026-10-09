@@ -129,10 +129,13 @@ SAMD21: `openocd -f tools/openocd-cm4.cfg -c "init; reset halt; at91samd chip-er
 - **J26 on the wayside drives the WPMS valves through the interposer**: OUT1 opens the WPMS flaps;
   OUT2–7 blow air for the Left External, Left Internal, Right Internal, Right External, Right
   Diameter and Left Diameter modules. IN3 held 5 s shuts the CM4 down (as on the tunnel), and
-  IN1/IN2/IN4 are spare. The valves are **SMC SY7000** (6× SY7100-5U1 air, 1× SY7300-5U1 flaps),
-  ~15 mA with a built-in non-polar suppressor, so within the interposer's 80 mA. **The SY7300 is a
+  IN1/IN2/IN4 are spare. The pneumatics are an **SMC SS5Y plug-in metal-base manifold, type 51**
+  (label reads "SS5Y51"; it must be SS5Y**7**-51 for SY7000 valves, so check), with 6× SY7100-5U1 air
+  and 1× SY7300-5U1 flaps: standard 24 V coils (no power-saving), 0.4 W = 16.7 mA, non-polar varistor,
+  so within the interposer's 80 mA. Wire positive common (D-sub pin 13 = +24 V) with JP1 SINK.
+  The catalogue (`SS5Y51.pdf`, 74 MB) is in `intelli-pcb-interposer` on CodeCommit only. **The SY7300 is a
   3-position closed-centre double solenoid: one output can open the flaps but not close them, and a
-  dead output holds them where they are.** See `docs/WPMS-Valves-SMC-SY7000.md`. The valve sequence
+  dead output holds them where they are.** See `docs/WPMS-Pneumatics-SMC.md`. The valve sequence
   is not decided yet. On the wayside O7 is a valve, never a lamp.
 - **Wayside development now happens on `intellisbc`** (the bench board bound for the Reliance
   tunnel). `intellisbc2` pulls later, is tested, and ships to Charkop. Only one of the tunnel and
