@@ -1,6 +1,6 @@
 # WPMS pneumatics: SMC SS5Y manifold, SY7100 and SY7300 valves
 
-The wayside reader drives the WPMS pneumatics from J26 OUT1–OUT7, through the interposer
+The wayside reader drives the WPMS pneumatics from J26 OUT1–OUT5, through the interposer
 (`Wayside-Reader-Design.md` §2.0). This is the reference for the whole pneumatic set: the valve
 manifold, the seven valves, how they wire to the interposer, and what that means for the app.
 
@@ -15,8 +15,8 @@ measured.**
 | Qty | Part | What it is | Does |
 |---|---|---|---|
 | 1 | **SS5Y7-10F1-07B-C8D0** | Plug-in **connector connecting base, type 10 (side ported)**, 7 stations | Carries the valves; common supply and exhaust; one D-sub for all coils |
-| 6 | **SY7100-5U1** | SY7000, 2-position single solenoid | Air blow, one per WPMS module (OUT2–OUT7) |
-| 1 | **SY7300-5U1** | SY7000, 3-position closed centre, two solenoids | WPMS flaps open/close (OUT1) |
+| 6 | **SY7100-5U1** | SY7000, 2-position single solenoid | Air blow, one per WPMS module, paired two per output (OUT3–OUT5) |
+| 1 | **SY7300-5U1** | SY7000, 3-position closed centre, two solenoids | WPMS flaps: SOL.a open (OUT1), SOL.b close (OUT2) |
 
 **Corrected 2026-10-09:** the operator first reported the block as "SS5Y51". The full part number is
 **SS5Y7-10F1-07B-C8D0**: a type-10 connector base, not a type-51 metal base. The valves fit it
@@ -118,21 +118,28 @@ in the catalogue.
   §2). Negative common with JP1 in SOURCE also works. Pick one and record it, because JP1 is
   board-global.
 
-Proposed allocation, to be confirmed against the real station order:
+Allocation (operator, 2026-10-09). The stations are still to be confirmed against the real manifold:
 
-| J26 | Interposer | Function | Manifold station / pin (positive common, all double wiring) |
-|---|---|---|---|
-| OUT1 | OUTB1 | Flaps, SY7300 **SOL.a** | Station of the SY7300, SOL.a |
-| — | — | Flaps, SY7300 **SOL.b** | **No output left** (see below) |
-| OUT2–OUT7 | OUTB2–7 | Air, six SY7100 SOL.a | Their stations' SOL.a pins |
-| — | FIELD_24V | Manifold COM | Pin 13 |
+| J26 | Interposer | Function | Coils | Manifold pins (positive common, double wiring) |
+|---|---|---|---|---|
+| OUT1 | OUTB1 | Flaps **open** | SY7300 SOL.a | SY7300 station, SOL.a |
+| OUT2 | OUTB2 | Flaps **close** | SY7300 SOL.b | SY7300 station, SOL.b |
+| OUT3 | OUTB3 | Air, Left External + Right External | 2 × SY7100 SOL.a | Both stations' SOL.a pins, joined |
+| OUT4 | OUTB4 | Air, Left Internal + Right Internal | 2 × SY7100 SOL.a | Both stations' SOL.a pins, joined |
+| OUT5 | OUTB5 | Air, Right Diameter + Left Diameter | 2 × SY7100 SOL.a | Both stations' SOL.a pins, joined |
+| OUT6, OUT7 | — | Spare | — | — |
+| — | FIELD_24V | Manifold COM | — | Pin 13 |
+
+Join each pair at the D-sub cable or a terminal block; the manifold itself needs no change. A pair
+can only blow together, and splitting it later is a rewire. If the stations are free to choose, put
+each pair on adjacent stations so the joins are short.
 
 ### Electrical checks against the interposer
 
 | Check | Value | Verdict |
 |---|---|---|
-| Current per output | 16.7 mA per coil (0.4 W standard with LED) | 21 % of the 80 mA envelope. **Passes** |
-| Total from the field supply | 7 coils × 16.7 mA ≈ 0.12 A worst case | Negligible |
+| Current per output | 16.7 mA on OUT1/OUT2 (one coil); **33.4 mA** on OUT3–OUT5 (two coils in parallel) | 21 % and 42 % of the 80 mA envelope. **Passes** |
+| Total from the field supply | 6 air coils + 1 flap coil (never both flap coils) × 16.7 mA ≈ 0.12 A worst case | Negligible |
 | Suppressor | Varistor in each valve (`U`) | Meets the interposer's "suppressed coils only" rule |
 | Turn-off clamp | The `U` varistor clamps at **~47 V** across the coil (p. 292) | ⚠ See below |
 | Polarity | Non-polar valve; the interposer still needs OUT ≥ FIELD_COM | Met by positive common + SINK |
@@ -142,47 +149,43 @@ Proposed allocation, to be confirmed against the real station order:
 mode the coil's flyback lifts OUT to 24 V plus the coil's clamp voltage. The valve's varistor would
 allow ~47 V across the coil, about 71 V at OUT. The interposer's SMAJ33A on OUT starts conducting at
 ~37 V, so it clamps first and takes the coil's stored energy on every turn-off. That is well inside
-its rating: about a millijoule per event against a 400 W pulse rating. It also keeps OUT below the
+its rating: about a millijoule per coil per event (two on a paired output) against a 400 W pulse rating. It also keeps OUT below the
 photorelay's 60 V. Worth one scope shot of OUT at turn-off during bring-up.
 
-## 🔴 The flap valve needs two outputs, and has one
+## The flap valve has two outputs (resolved 2026-10-09)
 
 The SY7300 has two coils:
 
-| SOL.a | SOL.b | Valve | Flaps (assuming SOL.a = open) |
+| OUT1 (SOL.a) | OUT2 (SOL.b) | Valve | Flaps |
 |---|---|---|---|
-| on | off | Position a | Driven open |
-| off | on | Position b | Driven closed |
+| on | off | Position a | Driven **open** |
+| off | on | Position b | Driven **closed** |
 | off | off | **Centre: all ports blocked** | **Held wherever they are** |
-| on | on | Not allowed | — |
+| on | on | **Not allowed** | — |
 
-With OUT1 on SOL.a only:
-- The reader can **open** the flaps but never **close** them. Dropping OUT1 returns the valve to
-  centre and freezes the cylinder.
-- On power loss, a dead JVM or an IN3 shutdown, **the flaps stay as they were**, open if a train was
-  passing.
+The first allocation gave the flaps OUT1 only, so they could be opened and never closed. Pairing the
+air valves freed OUT2 for SOL.b. Which coil opens and which closes depends on the plumbing to the
+cylinder: confirm on site that OUT1 opens.
 
-Options:
-1. **Swap the flap valve for a seventh SY7100-5U1** (2-position single, spring return), plumbed so
-   that de-energised = flaps closed. One output; power loss closes the flaps; all seven stations the
-   same part. The manifold could then even be all single wiring. **Recommended**, if "closed on
-   power loss" is what the WPMS wants.
-2. **Keep the SY7300 and give SOL.b an output.** J26 is full, so an air valve would have to give way
-   or share. The app then needs **≥ 20 ms with both coils off** between SOL.a and SOL.b, because
-   the photorelays are only bounded at ≤ 10 ms and could otherwise overlap. There is no hardware
-   interlock.
-3. **Keep OUT1 on SOL.a only, deliberately**, if the WPMS vendor wants hold-on-failure and closes the
-   flaps another way. The operator instructions must then say the reader cannot close them.
-
-Ask the WPMS vendor which behaviour the flaps are meant to have on failure. A closed-centre valve is
-usually chosen so that something does *not* move when power goes, which may be intentional here.
+What the app has to do, because nothing in hardware does it:
+- **Never energise OUT1 and OUT2 together**, and keep **≥ 20 ms with both off** between dropping
+  one and raising the other. Each photorelay may take up to 10 ms to release, and there is no
+  hardware interlock.
+- **Drive the flaps closed explicitly** on every stop path the JVM survives: pass end, fault, disarm,
+  IN3 shutdown. Dropping every output is not enough, because the closed centre holds the flaps.
+- **Power loss, a dead JVM or a hung app leave the flaps where they were**, open if a train was
+  passing. That is the valve's design; ask the WPMS vendor whether it is acceptable, since a
+  spring-return SY7100 on the flaps would close them on power loss instead.
+- **Pulse or hold.** The valve returns to centre when its coil drops, and the cylinder stops
+  wherever it got to. A pulse must outlast the full travel, so measure open and close times on site;
+  holding the coil for the whole movement is simpler. Max operating frequency is 3 Hz.
 
 ## Things the catalogue warns about that apply here
 
 - **Continuous energising (p. 293).** A standard coil energised for long periods heats up, reducing
   life and performance. Take special care if **three or more adjacent stations** are on together.
   The six air valves on neighbouring stations, all blowing at once for a long time, is exactly that
-  case. If the air stays on for minutes rather than seconds, power-saving valves (`…-5TZ1`, positive
+  case, and pairing makes it more likely, since every pair energises two stations at once. If the air stays on for minutes rather than seconds, power-saving valves (`…-5TZ1`, positive
   common, polar) are the catalogue's answer. Decide once the blowing sequence is known.
 - **Surge intrusion on non-polar valves (p. 293).** When a breaker cuts the supply to large loads
   sharing the 24 V, the surge can switch a de-energised non-polar valve over for a moment. The
@@ -197,7 +200,8 @@ usually chosen so that something does *not* move when power goes, which may be i
 
 1. ~~The full manifold label~~: **SS5Y7-10F1-07B-C8D0**, compatible with both valves.
 2. Which station each valve sits on, so the J26 → pin table can be completed.
-3. The flap valve decision (above).
+3. ~~The flap valve decision~~: both coils driven, OUT1 open and OUT2 close. Still open: pulse or
+   hold, the travel times, and whether start-up drives the flaps closed.
 4. The valve sequence: what opens the flaps and starts the air, for how long, and what closes them.
    Duration also decides whether standard coils are acceptable.
 5. Positive or negative common, recorded together with JP1's position on that interposer.

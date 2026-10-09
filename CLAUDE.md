@@ -126,17 +126,20 @@ SAMD21: `openocd -f tools/openocd-cm4.cfg -c "init; reset halt; at91samd chip-er
   starting values: 0.06 / 13 / 3.5 / 18.5 m** (so 35 m sensor to sensor), fine-tuned on site. Loop
   currents (~5 mA idle, ~3 mA dipped) are measured at site too. The admin app is to get the tools to capture them
   and emit the site YAML.
-- **J26 on the wayside drives the WPMS valves through the interposer**: OUT1 opens the WPMS flaps;
-  OUT2–7 blow air for the Left External, Left Internal, Right Internal, Right External, Right
-  Diameter and Left Diameter modules. IN3 held 5 s shuts the CM4 down (as on the tunnel), and
-  IN1/IN2/IN4 are spare. The pneumatics are an **SMC SS5Y7-10F1-07B-C8D0** manifold (type 10
-  connector base, 7 stations, D-sub 25-pin, double wiring; confirmed compatible), with 6× SY7100-5U1 air
-  and 1× SY7300-5U1 flaps: standard 24 V coils (no power-saving), 0.4 W = 16.7 mA, non-polar varistor,
-  so within the interposer's 80 mA. Wire positive common (D-sub pin 13 = +24 V) with JP1 SINK.
-  The catalogue (`SS5Y51.pdf`, 74 MB) is in `intelli-pcb-interposer` on CodeCommit only. **The SY7300 is a
-  3-position closed-centre double solenoid: one output can open the flaps but not close them, and a
-  dead output holds them where they are.** See `docs/WPMS-Pneumatics-SMC.md`. The valve sequence
-  is not decided yet. On the wayside O7 is a valve, never a lamp.
+- **J26 on the wayside drives the WPMS valves through the interposer** (revised 2026-10-09): OUT1
+  flaps open (SY7300 SOL.a), OUT2 flaps close (SOL.b), OUT3 air Left + Right External, OUT4 air Left
+  + Right Internal, OUT5 air Right + Left Diameter. **OUT6/OUT7 are spare.** The air valves are
+  paired, two coils in parallel per output (33 mA), so a pair always blows together. IN3 held 5 s
+  shuts the CM4 down (as on the tunnel), and IN1/IN2/IN4 are spare. The pneumatics are an **SMC
+  SS5Y7-10F1-07B-C8D0** manifold (type 10 connector base, 7 stations, D-sub 25-pin, double wiring;
+  confirmed compatible), with 6× SY7100-5U1 air and 1× SY7300-5U1 flaps: standard 24 V coils (no
+  power-saving), 0.4 W = 16.7 mA, non-polar varistor, so within the interposer's 80 mA. Wire positive
+  common (D-sub pin 13 = +24 V) with JP1 SINK. The catalogue (`SS5Y51.pdf`, 74 MB) is in
+  `intelli-pcb-interposer` on CodeCommit only. **The SY7300 is a 3-position closed-centre valve:
+  OUT1 and OUT2 must never be on together (keep ≥ 20 ms both off between them), and both off holds
+  the flaps where they are, so a dead JVM or 24 V loss leaves them in their last position.** Closing
+  them is an explicit step on every stop path. See `docs/WPMS-Pneumatics-SMC.md`. The valve sequence
+  is not decided yet.
 - **Wayside development now happens on `intellisbc`** (the bench board bound for the Reliance
   tunnel). `intellisbc2` pulls later, is tested, and ships to Charkop. Only one of the tunnel and
   wayside units may be enabled on a board, so re-enable the tunnel on `intellisbc` before it ships.

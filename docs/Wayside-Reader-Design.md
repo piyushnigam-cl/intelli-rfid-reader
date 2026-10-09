@@ -134,45 +134,63 @@ and write them into the site `application.yml`:
   speed, and check them against passes (speed at Wheel 1 vs Wheel 2 vs head-to-head).
 - **Output.** The YAML block for the site config, as the key tool already does for key hashes.
 
-**J26 on the wayside: the WPMS valves through the interposer (operator, 2026-10-09).** The tunnel's
-J26 map does not apply. Every output energises a solenoid valve of the WPMS, through the interposer:
+**J26 on the wayside: the WPMS valves through the interposer (operator, 2026-10-09, revised the same
+day).** The tunnel's J26 map does not apply. Outputs energise WPMS solenoid valves through the
+interposer. The air valves are paired, two coils per output, so that the SY7300 flap valve gets both
+of its coils:
 
 | J26 | Ch | BCM | Wayside function |
 |---|---|---|---|
-| 1 | OUT1 | 26 | `WPMS_FLAPS` — valve that **opens the WPMS flaps** |
-| 2 | OUT2 | 20 | `AIR_LEFT_EXTERNAL` — air for the Left External module |
-| 3 | OUT3 | 16 | `AIR_LEFT_INTERNAL` — air for the Left Internal module |
-| 4 | OUT4 | 19 | `AIR_RIGHT_INTERNAL` — air for the Right Internal module |
-| 5 | OUT5 | 21 | `AIR_RIGHT_EXTERNAL` — air for the Right External module |
-| 6 | OUT6 | 12 | `AIR_RIGHT_DIAMETER` — air for the Right Diameter module |
-| 7 | OUT7 | 13 | `AIR_LEFT_DIAMETER` — air for the Left Diameter module |
+| 1 | OUT1 | 26 | `FLAPS_OPEN` — SY7300 **SOL.a**, drives the WPMS flaps open |
+| 2 | OUT2 | 20 | `FLAPS_CLOSE` — SY7300 **SOL.b**, drives the WPMS flaps closed |
+| 3 | OUT3 | 16 | `AIR_EXTERNAL` — air for the **Left External and Right External** modules (two SY7100) |
+| 4 | OUT4 | 19 | `AIR_INTERNAL` — air for the **Left Internal and Right Internal** modules (two SY7100) |
+| 5 | OUT5 | 21 | `AIR_DIAMETER` — air for the **Right Diameter and Left Diameter** modules (two SY7100) |
+| 6 | OUT6 | 12 | spare |
+| 7 | OUT7 | 13 | spare |
 | 8 | — | — | `FIELD_COM` |
 | 9 | IN1 | 23 | spare (the bench `trigger.source: GPIO` stand-in still uses it) |
 | 10 | IN2 | 24 | spare (likewise) |
 | 11 | IN3 | 18 | `SHUTDOWN_REQUEST` — **held 5 s shuts the CM4 down**, as on the tunnel |
 | 12 | IN4 | 25 | spare |
 
+The first map (also 2026-10-09) gave OUT1 the flap valve's SOL.a only and OUT2–OUT7 one air valve
+each. That left the flaps able to open and never close; pairing the air valves freed OUT2 for SOL.b.
+Each paired output drives two coils in parallel: 33 mA, inside the interposer's 80 mA
+(`docs/WPMS-Pneumatics-SMC.md`). **A pair can only ever blow together**; splitting one later means
+rewiring the D-sub, not a config change.
+
+Rules the app must keep, because nothing in hardware does:
+- **OUT1 and OUT2 are never on together.** Both coils energised is not allowed on the SY7300. Between
+  dropping one and raising the other, keep **≥ 20 ms with both off**, since each photorelay may take up
+  to 10 ms to release.
+- **Both off holds the flaps where they are** (closed centre, all ports blocked). So the flaps are
+  moved by a pulse or a held coil on OUT1 or OUT2, and a dead JVM, a 24 V loss or an IN3 shutdown
+  **leaves them in their last position**, open if a train was passing. Closing the flaps is therefore
+  an explicit step on every stop path the JVM survives (fault, disarm, IN3), done before the air is
+  cut and the outputs dropped.
+
 Not decided yet, and needed before any of it is code:
 - **When each valve is driven**: what opens the flaps (the first wheel at Wheel 1 or Wheel 2, or a
-  lead time from the approach), when the air blows and for how long, and what closes them (the pass
-  closing, a timeout, the last axle clearing the far sensor).
-- **The safe state.** At boot, on a dead JVM and on 24 V loss every output is off. That presumably
-  means flaps closed and no air. Confirm the flap valve closes when de-energised.
-- **Faults, disarm and the IN3 shutdown** must drive every valve off before anything else. This is
-  the wayside version of the tunnel's "every stop still stops".
+  lead time from the approach), when each air pair blows and for how long, and what closes the flaps
+  (the pass closing, a timeout, the last axle clearing the far sensor).
+- **Pulse or hold on the flap coils.** The SY7300 is not detented: it springs back to centre when the
+  coil drops, and the cylinder then holds wherever it got to. A pulse must last long enough for full
+  travel, so measure the open and close times on site; holding the coil for the whole movement is
+  the simpler choice.
+- **The state at boot.** The app cannot know where the flaps were left, so it should decide whether
+  start-up drives them closed (a FLAPS_CLOSE pulse) or leaves them.
 
 Constraints that come with the interposer (`intelli-pcb-interposer/INTERPOSER-DESIGN.md` §2):
 - Its published output envelope is **≤ 80 mA, 0–30 V, OUT positive with respect to FIELD_COM**, and
   only coils **with their own surge suppressor** are acceptable. **The WPMS valves are SMC SY7000**
   (operator, 2026-10-09): an SMC SS5Y7-10F1-07B-C8D0 manifold (7 stations, D-sub) with 6× SY7100-5U1 for air and
   1× SY7300-5U1 for the flaps. Standard coils draw 16.7 mA each and carry a non-polar suppressor, so
-  they fit. **But the SY7300 is a 3-position closed-centre,
-  double-solenoid valve: OUT1 alone can open the flaps and never close them, and on power loss they
-  hold position.** Details and options: `docs/WPMS-Pneumatics-SMC.md`.
+  one coil (OUT1, OUT2) or two in parallel (OUT3–OUT5) fit. Details: `docs/WPMS-Pneumatics-SMC.md`.
 - The photorelays switch in ≤ 10 ms each way, so the shortest useful pulse is ~50 ms.
-- On the shutdown path: the tunnel's IN3 sequence blinks **O7** as a "safe to remove 24 V" lamp. On
-  the wayside O7 is the Left Diameter air valve, so that lamp behaviour must not come across. The
-  tunnel's `intelli-lamp.shutdown` hook only drives O7 low, which is harmless here.
+- On the shutdown path: the tunnel's IN3 sequence blinks **O7** as a "safe to remove 24 V" lamp. O7
+  is spare on the wayside now, so that lamp could come across if a lamp is wired to it. Undecided.
+  The tunnel's `intelli-lamp.shutdown` hook only drives O7 low, which is harmless either way.
 
 **Development board.** Wayside development moves to **`intellisbc`**, the board on the test bench
 that will later be deployed to the Reliance tunnel. `intellisbc2` pulls from git later, is tested,
