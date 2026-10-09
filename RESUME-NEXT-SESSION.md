@@ -67,7 +67,9 @@ measured at site; speed at each sensor. Next for the wayside, in order:
 - [ ] Deploy the wayside app on `intellisbc` (it runs the tunnel today; switch the enabled unit).
 - [ ] Admin: wheel commissioning page (live loop currents, dip capture, geometry entry, YAML out).
 - [x] J26 map for the wayside recorded (2026-10-09): OUT1 flaps, OUT2–7 air valves, IN3 shutdown, IN1/2/4 spare.
-- [ ] Operator: the valve sequence (what opens the flaps and starts the air, for how long, what closes them) and the valves' coil currents.
+- [x] Valves identified: SMC SY7100-5U1 ×6, SY7300-5U1 ×1, ~15 mA each, fit the interposer (`docs/WPMS-Valves-SMC-SY7000.md`).
+- [ ] Operator: the SY7300 flap valve has two coils and OUT1 drives one. Swap it for an SY7100, give coil B an output, or accept hold-only.
+- [ ] Operator: the valve sequence (what opens the flaps and starts the air, for how long, what closes them).
 - [ ] App: IN3 5 s shutdown and the WPMS valve outputs, once the sequence is decided. Every stop drives all valves off.
 - [ ] Simulator testing (to discuss).
 

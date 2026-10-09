@@ -129,8 +129,11 @@ SAMD21: `openocd -f tools/openocd-cm4.cfg -c "init; reset halt; at91samd chip-er
 - **J26 on the wayside drives the WPMS valves through the interposer**: OUT1 opens the WPMS flaps;
   OUT2–7 blow air for the Left External, Left Internal, Right Internal, Right External, Right
   Diameter and Left Diameter modules. IN3 held 5 s shuts the CM4 down (as on the tunnel), and
-  IN1/IN2/IN4 are spare. The valve sequence and the coil currents are not decided yet. The
-  interposer allows ≤ 80 mA per suppressed coil, and on the wayside O7 is a valve, never a lamp.
+  IN1/IN2/IN4 are spare. The valves are **SMC SY7000** (6× SY7100-5U1 air, 1× SY7300-5U1 flaps),
+  ~15 mA with a built-in non-polar suppressor, so within the interposer's 80 mA. **The SY7300 is a
+  3-position closed-centre double solenoid: one output can open the flaps but not close them, and a
+  dead output holds them where they are.** See `docs/WPMS-Valves-SMC-SY7000.md`. The valve sequence
+  is not decided yet. On the wayside O7 is a valve, never a lamp.
 - **Wayside development now happens on `intellisbc`** (the bench board bound for the Reliance
   tunnel). `intellisbc2` pulls later, is tested, and ships to Charkop. Only one of the tunnel and
   wayside units may be enabled on a board, so re-enable the tunnel on `intellisbc` before it ships.
