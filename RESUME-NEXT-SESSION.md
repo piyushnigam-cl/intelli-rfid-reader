@@ -66,7 +66,7 @@ measured at site; speed at each sensor. Next for the wayside, in order:
 - [x] App: layout settings `wheel1-to-wpms-m` / `wpms-length-m` / `wpms-to-wheel2-m`, packaged at 13 / 3.5 / 18.5 m, element spacing 0.06 m (2026-10-09). Fine-tune on site.
 - [ ] Deploy the wayside app on `intellisbc` (it runs the tunnel today; switch the enabled unit).
 - [ ] Admin: wheel commissioning page (live loop currents, dip capture, geometry entry, YAML out).
-- [x] J26 map for the wayside recorded (2026-10-09, revised the same day): OUT1 flaps open, OUT2 flaps close, OUT3 External pair, OUT4 Internal pair, OUT5 Diameter pair, OUT6/7 spare, IN3 shutdown, IN1/2/4 spare.
+- [x] J26 map for the wayside recorded (2026-10-09, revised the same day): OUT1 flaps open, OUT2 flaps close, OUT3 Left External, OUT4 Internal pair, OUT5 Diameter pair, OUT6 Right External, OUT7 spare, IN3 shutdown, IN1/2/4 spare.
 - [x] Pneumatics documented from SMC's catalogue (`docs/WPMS-Pneumatics-SMC.md`): SS5Y type-51 manifold, SY7100-5U1 ×6, SY7300-5U1 ×1, standard coils 16.7 mA, positive common + JP1 SINK.
 - [x] Manifold is SS5Y7-10F1-07B-C8D0: compatible with SY7100-5U1/SY7300-5U1, 7 stations, double wiring, D-sub. DIN rail not included.
 - [ ] Operator: the station order of the seven valves, for the J26 → D-sub pin table.

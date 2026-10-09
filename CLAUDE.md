@@ -126,10 +126,11 @@ SAMD21: `openocd -f tools/openocd-cm4.cfg -c "init; reset halt; at91samd chip-er
   starting values: 0.06 / 13 / 3.5 / 18.5 m** (so 35 m sensor to sensor), fine-tuned on site. Loop
   currents (~5 mA idle, ~3 mA dipped) are measured at site too. The admin app is to get the tools to capture them
   and emit the site YAML.
-- **J26 on the wayside drives the WPMS valves through the interposer** (revised 2026-10-09): OUT1
-  flaps open (SY7300 SOL.a), OUT2 flaps close (SOL.b), OUT3 air Left + Right External, OUT4 air Left
-  + Right Internal, OUT5 air Right + Left Diameter. **OUT6/OUT7 are spare.** The air valves are
-  paired, two coils in parallel per output (33 mA), so a pair always blows together. IN3 held 5 s
+- **J26 on the wayside drives the WPMS valves through the interposer** (revised twice 2026-10-09):
+  OUT1 flaps open (SY7300 SOL.a), OUT2 flaps close (SOL.b), OUT3 air Left External, OUT4 air Left +
+  Right Internal, OUT5 air Right + Left Diameter, OUT6 air Right External. **OUT7 is spare.** The
+  Internal and Diameter valves are paired, two coils in parallel per output (33 mA), so a pair always
+  blows together. IN3 held 5 s
   shuts the CM4 down (as on the tunnel), and IN1/IN2/IN4 are spare. The pneumatics are an **SMC
   SS5Y7-10F1-07B-C8D0** manifold (type 10 connector base, 7 stations, D-sub 25-pin, double wiring;
   confirmed compatible), with 6× SY7100-5U1 air and 1× SY7300-5U1 flaps: standard 24 V coils (no

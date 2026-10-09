@@ -1,6 +1,6 @@
 # WPMS pneumatics: SMC SS5Y manifold, SY7100 and SY7300 valves
 
-The wayside reader drives the WPMS pneumatics from J26 OUT1–OUT5, through the interposer
+The wayside reader drives the WPMS pneumatics from J26 OUT1–OUT6, through the interposer
 (`Wayside-Reader-Design.md` §2.0). This is the reference for the whole pneumatic set: the valve
 manifold, the seven valves, how they wire to the interposer, and what that means for the app.
 
@@ -15,7 +15,7 @@ measured.**
 | Qty | Part | What it is | Does |
 |---|---|---|---|
 | 1 | **SS5Y7-10F1-07B-C8D0** | Plug-in **connector connecting base, type 10 (side ported)**, 7 stations | Carries the valves; common supply and exhaust; one D-sub for all coils |
-| 6 | **SY7100-5U1** | SY7000, 2-position single solenoid | Air blow, one per WPMS module, paired two per output (OUT3–OUT5) |
+| 6 | **SY7100-5U1** | SY7000, 2-position single solenoid | Air blow, one per WPMS module: Externals on their own outputs (OUT3, OUT6), Internals and Diameters paired (OUT4, OUT5) |
 | 1 | **SY7300-5U1** | SY7000, 3-position closed centre, two solenoids | WPMS flaps: SOL.a open (OUT1), SOL.b close (OUT2) |
 
 **Corrected 2026-10-09:** the operator first reported the block as "SS5Y51". The full part number is
@@ -118,16 +118,18 @@ in the catalogue.
   §2). Negative common with JP1 in SOURCE also works. Pick one and record it, because JP1 is
   board-global.
 
-Allocation (operator, 2026-10-09). The stations are still to be confirmed against the real manifold:
+Allocation (operator, 2026-10-09, revised the same day to split the External pair). The stations are
+still to be confirmed against the real manifold:
 
 | J26 | Interposer | Function | Coils | Manifold pins (positive common, double wiring) |
 |---|---|---|---|---|
 | OUT1 | OUTB1 | Flaps **open** | SY7300 SOL.a | SY7300 station, SOL.a |
 | OUT2 | OUTB2 | Flaps **close** | SY7300 SOL.b | SY7300 station, SOL.b |
-| OUT3 | OUTB3 | Air, Left External + Right External | 2 × SY7100 SOL.a | Both stations' SOL.a pins, joined |
+| OUT3 | OUTB3 | Air, Left External | 1 × SY7100 SOL.a | Its station's SOL.a pin |
 | OUT4 | OUTB4 | Air, Left Internal + Right Internal | 2 × SY7100 SOL.a | Both stations' SOL.a pins, joined |
 | OUT5 | OUTB5 | Air, Right Diameter + Left Diameter | 2 × SY7100 SOL.a | Both stations' SOL.a pins, joined |
-| OUT6, OUT7 | — | Spare | — | — |
+| OUT6 | OUTB6 | Air, Right External | 1 × SY7100 SOL.a | Its station's SOL.a pin |
+| OUT7 | — | Spare | — | — |
 | — | FIELD_24V | Manifold COM | — | Pin 13 |
 
 Join each pair at the D-sub cable or a terminal block; the manifold itself needs no change. A pair
@@ -138,7 +140,7 @@ each pair on adjacent stations so the joins are short.
 
 | Check | Value | Verdict |
 |---|---|---|
-| Current per output | 16.7 mA on OUT1/OUT2 (one coil); **33.4 mA** on OUT3–OUT5 (two coils in parallel) | 21 % and 42 % of the 80 mA envelope. **Passes** |
+| Current per output | 16.7 mA on OUT1, OUT2, OUT3, OUT6 (one coil); **33.4 mA** on OUT4, OUT5 (two coils in parallel) | 21 % and 42 % of the 80 mA envelope. **Passes** |
 | Total from the field supply | 6 air coils + 1 flap coil (never both flap coils) × 16.7 mA ≈ 0.12 A worst case | Negligible |
 | Suppressor | Varistor in each valve (`U`) | Meets the interposer's "suppressed coils only" rule |
 | Turn-off clamp | The `U` varistor clamps at **~47 V** across the coil (p. 292) | ⚠ See below |
@@ -185,7 +187,7 @@ What the app has to do, because nothing in hardware does it:
 - **Continuous energising (p. 293).** A standard coil energised for long periods heats up, reducing
   life and performance. Take special care if **three or more adjacent stations** are on together.
   The six air valves on neighbouring stations, all blowing at once for a long time, is exactly that
-  case, and pairing makes it more likely, since every pair energises two stations at once. If the air stays on for minutes rather than seconds, power-saving valves (`…-5TZ1`, positive
+  case, and pairing makes it more likely, since each pair energises two stations at once. If the air stays on for minutes rather than seconds, power-saving valves (`…-5TZ1`, positive
   common, polar) are the catalogue's answer. Decide once the blowing sequence is known.
 - **Surge intrusion on non-polar valves (p. 293).** When a breaker cuts the supply to large loads
   sharing the 24 V, the surge can switch a de-energised non-polar valve over for a moment. The

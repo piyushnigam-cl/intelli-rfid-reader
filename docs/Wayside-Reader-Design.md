@@ -135,18 +135,18 @@ and write them into the site `application.yml`:
 - **Output.** The YAML block for the site config, as the key tool already does for key hashes.
 
 **J26 on the wayside: the WPMS valves through the interposer (operator, 2026-10-09, revised the same
-day).** The tunnel's J26 map does not apply. Outputs energise WPMS solenoid valves through the
-interposer. The air valves are paired, two coils per output, so that the SY7300 flap valve gets both
-of its coils:
+day, revised twice the same day).** The tunnel's J26 map does not apply. Outputs energise WPMS solenoid valves through the
+interposer. The Internal and Diameter air valves are paired, two coils per output, so that the SY7300
+flap valve gets both of its coils and the two External modules get one output each:
 
 | J26 | Ch | BCM | Wayside function |
 |---|---|---|---|
 | 1 | OUT1 | 26 | `FLAPS_OPEN` — SY7300 **SOL.a**, drives the WPMS flaps open |
 | 2 | OUT2 | 20 | `FLAPS_CLOSE` — SY7300 **SOL.b**, drives the WPMS flaps closed |
-| 3 | OUT3 | 16 | `AIR_EXTERNAL` — air for the **Left External and Right External** modules (two SY7100) |
+| 3 | OUT3 | 16 | `AIR_LEFT_EXTERNAL` — air for the **Left External** module (one SY7100) |
 | 4 | OUT4 | 19 | `AIR_INTERNAL` — air for the **Left Internal and Right Internal** modules (two SY7100) |
 | 5 | OUT5 | 21 | `AIR_DIAMETER` — air for the **Right Diameter and Left Diameter** modules (two SY7100) |
-| 6 | OUT6 | 12 | spare |
+| 6 | OUT6 | 12 | `AIR_RIGHT_EXTERNAL` — air for the **Right External** module (one SY7100) |
 | 7 | OUT7 | 13 | spare |
 | 8 | — | — | `FIELD_COM` |
 | 9 | IN1 | 23 | spare (the bench `trigger.source: GPIO` stand-in still uses it) |
@@ -156,9 +156,10 @@ of its coils:
 
 The first map (also 2026-10-09) gave OUT1 the flap valve's SOL.a only and OUT2–OUT7 one air valve
 each. That left the flaps able to open and never close; pairing the air valves freed OUT2 for SOL.b.
-Each paired output drives two coils in parallel: 33 mA, inside the interposer's 80 mA
-(`docs/WPMS-Pneumatics-SMC.md`). **A pair can only ever blow together**; splitting one later means
-rewiring the D-sub, not a config change.
+The second revision split the External pair again (Left on OUT3, Right on OUT6), since two outputs
+were free; OUT7 stays spare. Each paired output (OUT4, OUT5) drives two coils in parallel: 33 mA,
+inside the interposer's 80 mA (`docs/WPMS-Pneumatics-SMC.md`). **A pair can only ever blow
+together**; splitting one later means rewiring the D-sub, not a config change.
 
 Rules the app must keep, because nothing in hardware does:
 - **OUT1 and OUT2 are never on together.** Both coils energised is not allowed on the SY7300. Between
@@ -186,7 +187,7 @@ Constraints that come with the interposer (`intelli-pcb-interposer/INTERPOSER-DE
   only coils **with their own surge suppressor** are acceptable. **The WPMS valves are SMC SY7000**
   (operator, 2026-10-09): an SMC SS5Y7-10F1-07B-C8D0 manifold (7 stations, D-sub) with 6× SY7100-5U1 for air and
   1× SY7300-5U1 for the flaps. Standard coils draw 16.7 mA each and carry a non-polar suppressor, so
-  one coil (OUT1, OUT2) or two in parallel (OUT3–OUT5) fit. Details: `docs/WPMS-Pneumatics-SMC.md`.
+  one coil (OUT1, OUT2, OUT3, OUT6) or two in parallel (OUT4, OUT5) fit. Details: `docs/WPMS-Pneumatics-SMC.md`.
 - The photorelays switch in ≤ 10 ms each way, so the shortest useful pulse is ~50 ms.
 - On the shutdown path: the tunnel's IN3 sequence blinks **O7** as a "safe to remove 24 V" lamp. O7
   is spare on the wayside now, so that lamp could come across if a lamp is wired to it. Undecided.
