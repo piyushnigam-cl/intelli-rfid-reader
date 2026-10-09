@@ -56,7 +56,15 @@ reader streamed tags live and drove Super Fast Mode (arm, carton, result) withou
 do: the wayside half on `intellisbc2` (Status, Wheel, Passes, `/cloud`) during Phase 1.
 
 **Focus from 2026-10-09: the wayside reader, through the interposer, tested with the train
-simulator** (Phase 1 below). The operator is adding inputs on the wayside first.
+simulator** (Phase 1 below). **Development board: `intellisbc`** (bench; switch its enabled unit
+from tunnel to wayside, and back before it goes to Reliance). `intellisbc2` pulls and is tested
+before shipping to Charkop. Operator inputs recorded 2026-10-09 in `docs/Wayside-Reader-Design.md`
+§2.0: Wheel 1 = J23, Wheel 2 = J22, Wheel 1 first = `UP`; loop currents and all distances are
+measured at site; speed at each sensor. Next for the wayside, in order:
+- [ ] App: rename head A/B to Wheel 2/Wheel 1 and make Wheel 1 first = `UP` (the default is reversed today).
+- [ ] App: per-sensor element spacing, sensor-to-WPMS distances, speed at each sensor.
+- [ ] Admin: wheel commissioning page (live loop currents, dip capture, geometry entry, YAML out).
+- [ ] Interposer output and simulator testing (to discuss).
 
 **Phase 2, admin smoke test on both boards.** Profiles, Check, Overview, the live stream, the tunnel
 v1 arm with callback `http://127.0.0.1:8090/callback` landing in Receivers, Field I/O, and the

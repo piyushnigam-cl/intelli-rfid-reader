@@ -67,6 +67,56 @@ document's defaults can be trusted until they do.
 **This app and the tunnel cannot run on the same board.** Both own `/dev/ttyAMA0` and the JNI
 library, which allow a single owner. The Charkop unit is its own board.
 
+### 2.0 Operator decisions, 2026-10-09
+
+**Naming: Wheel 1 and Wheel 2, by the board's silk.** **J23 is Wheel 1** (silk "Wheel Sensor 1") and
+**J22 is Wheel 2** (silk "Wheel Sensor 2"). That is the terminology from now on, in code, config, UI
+and documents. The PCB swapped the nets: J22 carries the `WSA*` nets and J23 the `WSB*` nets
+(`WHEEL-SENSOR-JIG.md`). That is a design-phase typo, and the project keeps the silk names.
+
+| Name | Connector | Board nets | SAMD21 | Protocol channels | App today |
+|---|---|---|---|---|---|
+| **Wheel 1** | **J23** | `WSB1`, `WSB2` | PA04 (AIN4), PA05 (AIN5) | **2, 3** | "head B" |
+| **Wheel 2** | **J22** | `WSA1`, `WSA2` | PA02 (AIN0), PA03 (AIN1) | **0, 1** | "head A" |
+
+**Direction: Wheel 1 first = `UP`, Wheel 2 first = `DOWN`.** Always in capitals.
+
+> **MISMATCH, still in the code on 2026-10-09.** The app calls channels 0/1 (J22, Wheel 2) "head A",
+> and its packaged `wayside.wheel.up-is-a-to-b: true` makes **Wheel 2 first = UP**, the reverse of the
+> rule above. Fix it in the app: rename head A/B to Wheel 2/Wheel 1, and replace `up-is-a-to-b` with a
+> setting that names the wheel (e.g. `up-first-wheel: 1`), defaulting to Wheel 1. Until that lands, a
+> site config needs `up-is-a-to-b: false` to follow the rule. The GPIO stand-in is unaffected:
+> J26 IN1 first is still `UP`.
+
+**Loop currents are to be measured, not assumed.** The no-wheel current is expected near **5 mA** and
+the damped (wheel-present) current near **3 mA**. Both are to be **measured on each loop at site**, on
+the real RSR110d, and the detection thresholds derived from them. **The admin app needs a
+wheel-sensor test page for this** (see the commissioning tools below).
+
+**Speed at each wheel sensor.** Each RSR110d has two sensing elements a known distance apart along the
+rail. The time between the two elements seeing the same wheel gives a speed **at that sensor**,
+independent of the other one. That is now a first-class output, not just the single-head fallback
+in §5.3. Measured on site and written to `application.yml`:
+
+1. **The distance between the two sensing elements in each RSR110d**, one value per sensor
+   (Wheel 1 and Wheel 2 may differ).
+2. **The distance between the two wheel sensors**, and **the distance from each wheel sensor to the
+   WPMS** (the reader's antenna).
+
+**Commissioning tools in the admin app (to build).** The admin app should help discover these values
+and write them into the site `application.yml`:
+- **Loop currents.** A live view per channel (current, baseline, deviation) and a capture of a wheel
+  passing, giving the no-wheel and dip currents per loop and proposing `wayside.wheel.detect.*` from them.
+- **Geometry.** Enter the measured distances, or derive the element spacing from a pass at a known
+  speed, and check them against passes (speed at Wheel 1 vs Wheel 2 vs head-to-head).
+- **Output.** The YAML block for the site config, as the key tool already does for key hashes.
+
+**Development board.** Wayside development moves to **`intellisbc`**, the board on the test bench
+that will later be deployed to the Reliance tunnel. `intellisbc2` pulls from git later, is tested,
+and then ships to Charkop. **The tunnel and wayside apps cannot run at once** (both own
+`/dev/ttyAMA0`). So on `intellisbc`, only one of the two units may be enabled at a time, and the
+tunnel must be re-enabled before that board goes to Reliance.
+
 ### 2.1 Site geometry (proposed layout, UNVERIFIED)
 
 ```
@@ -74,19 +124,19 @@ library, which allow a single owner. The Charkop unit is its own board.
 
    ══╪═══════════════╪═══════════════════════╪═══════════════╪══  rail
      │               │                       │               │
-   [WSA]           ◄ d_A ►   [ANT]    ◄ d_B ►               [WSB]
-   head A                  antenna                      head B
+   [J23]           ◄ d_1 ►   [ANT]    ◄ d_2 ►               [J22]
+  Wheel 1                  antenna (WPMS)              Wheel 2
 ```
 
 - **Put one wheel-sensor head on each side of the antenna.** Then whichever way a train comes, it
   crosses a head before its leading tag reaches the antenna. That first axle is what switches the
   carrier on (§5.2).
-- `d_A` and `d_B` must be large enough for the carrier to come up before the leading tag reaches the
+- `d_1` and `d_2` (each wheel sensor to the WPMS, measured on site, §2.0) must be large enough for the carrier to come up before the leading tag reaches the
   antenna. That depends on how far the front tag sits ahead of the first axle and on the maximum
   line speed. **Both are site questions (§10).**
-- `WSA → WSB` is **UP** by configuration (`wayside.wheel.up-is-a-to-b: true`). If it is wired the
-  other way round, every direction is confidently wrong. So the commissioning test is a train of
-  known direction, not a config review.
+- **Wheel 1 → Wheel 2 is `UP`** (operator, 2026-10-09; see §2.0 for the code mismatch). If it is
+  wired the other way round, every direction is confidently wrong. So the commissioning test is a
+  train of known direction, not a config review.
 
 ---
 
@@ -112,7 +162,7 @@ library, which allow a single owner. The Charkop unit is its own board.
 ```
 
 **Split of work: the SAMD21 detects and timestamps. The CM4 decides.** The SAMD21 turns samples
-into "system 2 of head A covered at tick t, uncovered at t′, peak 9.8 mA", because that needs
+into "system 2 of Wheel 2 covered at tick t, uncovered at t′, peak 9.8 mA", because that needs
 sub-millisecond timing a JVM cannot promise. Everything above that happens in Java: axle pairing,
 direction, speed, train boundaries, completeness. Java is where the logic can be unit-tested, and it
 can be changed without reflashing a board on a railway.
@@ -277,8 +327,11 @@ direction at that head, and the head-to-head order gives it again, independently
   the evidence is split. **Never a majority vote.**
 - **Speed** per axle is head spacing `L_AB` divided by the tick difference of the same axle at A and
   B. It is reported as min / mean / max over the train. If `L_AB` is not configured (0), speed is
-  `null`. The within-head system offset gives only a coarse fallback, and it is used only when one
-  head is down.
+  `null`. **Changed 2026-10-09 (operator): speed at each wheel sensor is wanted too**, from that
+  sensor's own element spacing and the time between its two elements seeing the same wheel. So there
+  are three estimates per axle (at Wheel 1, at Wheel 2, and between them), and each reports `null`
+  when its distance is not configured. Not built yet: today the within-head speed is only a
+  fallback used when one head is down, and there is a single `system-spacing-m` for both.
 - **Axle count** is reported per head. `axleCountConsistent: false` when the heads disagree. That is
   the classic axle-counter integrity check, and it is surfaced rather than resolved.
 
@@ -403,7 +456,10 @@ wayside:
     port: /dev/ttyAMA3
     baud: 115200
     up-is-a-to-b: true     # proven by a train of known direction, not by review
+                           # 2026-10-09: Wheel 1 (J23) first = UP; true today means Wheel 2 first (§2.0)
     head-spacing-m: 0      # 0 = no speed. Measure on site, rail to rail
+    # Proposed 2026-10-09, not built: element spacing per sensor (wheel1/wheel2) and the
+    # distance from each sensor to the WPMS antenna, all measured on site (§2.0).
     detect:                # UNVERIFIED, from the sensor datasheet then a capture
       covered-ua: 0
       uncovered-ua: 0
@@ -478,12 +534,15 @@ firmware for this chip yet.
 4. Who writes the two tags, and with what encoding? Does the EPC carry a train ID, and does it say
    which end it is?
 5. Where exactly on the train is each tag: height, side, and distance ahead of the first axle? This
-   fixes `d_A`/`d_B` and the antenna mounting.
+   fixes `d_1`/`d_2` and the antenna mounting.
 
 **The wheel sensors**
 6. ~~The exact Frauscher model~~ **RSR110d** (2026-09-29). Still open: the damped current (size
    and direction), the fault bands, and the system spacing. None of these is in the public datasheet.
+   **2026-10-09:** the no-wheel (~5 mA) and dip (~3 mA) currents will be measured per loop at site,
+   and the element spacing in each RSR110d measured there too (§2.0).
 7. The planned distance between the two heads, and the distance from each head to the antenna.
+   **2026-10-09:** to be measured at site and written to the site config (§2.0).
 
 **The cloud**
 8. Who owns the endpoint? Is the auth a bearer token or something else, and does the payload in §6

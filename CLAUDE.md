@@ -111,6 +111,19 @@ site root**, which reads like an auth problem and is only a wrong path. The Clou
 does not retry it. The format sent is `docs/Wayside-Cloud-JSON.md`, which is still our proposal. To erase the
 SAMD21: `openocd -f tools/openocd-cm4.cfg -c "init; reset halt; at91samd chip-erase; shutdown"`.
 
+**Wayside decisions, operator 2026-10-09** (details in `docs/Wayside-Reader-Design.md` §2.0):
+- **J23 is Wheel 1, J22 is Wheel 2**, by the board's silk, although the PCB put the `WSB*` nets on
+  J23 and `WSA*` on J22. In protocol channels, Wheel 1 = 2/3 and Wheel 2 = 0/1.
+- **Wheel 1 first = `UP`, Wheel 2 first = `DOWN`.** The app's "head A" is channels 0/1 (Wheel 2), so
+  its default `up-is-a-to-b: true` gives the reverse. Fix the app before trusting a direction.
+- Loop currents (~5 mA idle, ~3 mA dipped), the element spacing in each RSR110d, the sensor-to-sensor
+  distance and each sensor's distance to the WPMS antenna are all measured at site. The admin app is
+  to get the tools to capture them and emit the site YAML. Speed is wanted at each sensor as well as
+  between them.
+- **Wayside development now happens on `intellisbc`** (the bench board bound for the Reliance
+  tunnel). `intellisbc2` pulls later, is tested, and ships to Charkop. Only one of the tunnel and
+  wayside units may be enabled on a board, so re-enable the tunnel on `intellisbc` before it ships.
+
 **The SAMD21 read loop currents 3.3× high until `intelli-wayside-reader-mcu` f80b0a3 (2026-10-08).**
 Its scale assumed a 100 Ω burden; the v2 schematic fits **330 Ω** (R45–R48, WheelSense sheet), so the
 constant is now 2441 µA/LSB, not 8057, and full scale is ~10.0 mA. SHORT moved from an unreachable
