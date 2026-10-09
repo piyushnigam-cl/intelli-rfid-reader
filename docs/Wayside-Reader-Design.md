@@ -81,12 +81,17 @@ and documents. The PCB swapped the nets: J22 carries the `WSA*` nets and J23 the
 
 **Direction: Wheel 1 first = `UP`, Wheel 2 first = `DOWN`.** Always in capitals.
 
-> **MISMATCH, still in the code on 2026-10-09.** The app calls channels 0/1 (J22, Wheel 2) "head A",
-> and its packaged `wayside.wheel.up-is-a-to-b: true` makes **Wheel 2 first = UP**, the reverse of the
-> rule above. Fix it in the app: rename head A/B to Wheel 2/Wheel 1, and replace `up-is-a-to-b` with a
-> setting that names the wheel (e.g. `up-first-wheel: 1`), defaulting to Wheel 1. Until that lands, a
-> site config needs `up-is-a-to-b: false` to follow the rule. The GPIO stand-in is unaffected:
-> J26 IN1 first is still `UP`.
+> **Done in the app 2026-10-09** (`intelli-wayside-reader`): the direction rule is fixed in code
+> and not configurable, so `up-is-a-to-b` is gone, and a site file that still sets it is ignored.
+> Internally the sensors are Wheel 1 and Wheel 2. The pass JSON keeps its schema-1 names, in which
+> `headA`/`atA` are Wheel 2 and `headB`/`atB` are Wheel 1. Renaming them is a schema-2 change for the
+> cloud owner. The GPIO stand-in is unaffected: J26 IN1 first is still `UP`.
+>
+> **Installation rule that follows from the channel order:** in each RSR110d, the sensing element on
+> pin 4 (element 2) is the one on the Wheel 1 side, and the element on pin 2 the one on the Wheel 2
+> side. Direction is named only when the sensor order and the element order at both sensors agree.
+> A sensor wired with its elements swapped gives `UNKNOWN` on every pass, with the note "the two
+> sensors disagree on element order". That is the commissioning symptom to look for.
 
 **Loop currents are to be measured, not assumed.** The no-wheel current is expected near **5 mA** and
 the damped (wheel-present) current near **3 mA**. Both are to be **measured on each loop at site**, on
@@ -98,10 +103,13 @@ rail. The time between the two elements seeing the same wheel gives a speed **at
 independent of the other one. That is now a first-class output, not just the single-head fallback
 in §5.3. Measured on site and written to `application.yml`:
 
-1. **The distance between the two sensing elements in each RSR110d**, one value per sensor
-   (Wheel 1 and Wheel 2 may differ).
-2. **The distance between the two wheel sensors**, and **the distance from each wheel sensor to the
-   WPMS** (the reader's antenna).
+1. **`wayside.wheel.element-spacing-m`**: the distance between the two sensing elements of an
+   RSR110d. **One setting for both sensors** (operator, 2026-10-09). Gives the speed at each sensor.
+2. **`wayside.wheel.sensor-spacing-m`**: the distance between Wheel 1 and Wheel 2. Gives the
+   sensor-to-sensor speed.
+3. **The distance from each wheel sensor to the WPMS** (the reader's antenna). Not a setting yet.
+
+The old names `system-spacing-m` and `head-spacing-m` still bind to 1 and 2.
 
 **Commissioning tools in the admin app (to build).** The admin app should help discover these values
 and write them into the site `application.yml`:
@@ -327,11 +335,13 @@ direction at that head, and the head-to-head order gives it again, independently
   the evidence is split. **Never a majority vote.**
 - **Speed** per axle is head spacing `L_AB` divided by the tick difference of the same axle at A and
   B. It is reported as min / mean / max over the train. If `L_AB` is not configured (0), speed is
-  `null`. **Changed 2026-10-09 (operator): speed at each wheel sensor is wanted too**, from that
-  sensor's own element spacing and the time between its two elements seeing the same wheel. So there
-  are three estimates per axle (at Wheel 1, at Wheel 2, and between them), and each reports `null`
-  when its distance is not configured. Not built yet: today the within-head speed is only a
-  fallback used when one head is down, and there is a single `system-spacing-m` for both.
+  `null`. **Built 2026-10-09: speed at each wheel sensor as well**, from `element-spacing-m` and the
+  time between that sensor's two elements seeing the same wheel. Each axle carries
+  `speedAtWheel1Kmh` and `speedAtWheel2Kmh`. Its `speedKmh` is the sensor-to-sensor figure when that
+  can be had (both sensors saw it, counts agree, direction known), otherwise the mean of the
+  per-sensor figures. The train's min/mean/max are over `speedKmh`. Pairing a sensor's two pulses
+  is mutual-nearest, so a missed pulse leaves an orphan rather than pairing a wheel with the next
+  axle and producing a false speed.
 - **Axle count** is reported per head. `axleCountConsistent: false` when the heads disagree. That is
   the classic axle-counter integrity check, and it is surfaced rather than resolved.
 
@@ -455,11 +465,9 @@ wayside:
   wheel:
     port: /dev/ttyAMA3
     baud: 115200
-    up-is-a-to-b: true     # proven by a train of known direction, not by review
-                           # 2026-10-09: Wheel 1 (J23) first = UP; true today means Wheel 2 first (§2.0)
-    head-spacing-m: 0      # 0 = no speed. Measure on site, rail to rail
-    # Proposed 2026-10-09, not built: element spacing per sensor (wheel1/wheel2) and the
-    # distance from each sensor to the WPMS antenna, all measured on site (§2.0).
+    # Direction is fixed: Wheel 1 (J23) first = UP (§2.0). No setting.
+    sensor-spacing-m: 0    # Wheel 1 to Wheel 2, rail to rail, measured on site. 0 = no such speed
+    element-spacing-m: 0   # between an RSR110d's two elements, measured on site. 0 = no per-sensor speed
     detect:                # UNVERIFIED, from the sensor datasheet then a capture
       covered-ua: 0
       uncovered-ua: 0
@@ -496,7 +504,7 @@ detecting against a guess. Every other value above is a working default.
 | **2** | Protocol codec and `TickClock`, `SimulatedWheelSource`, `AxleBuilder`, `PassTracker`, with unit tests for direction and `MIXED`, axle-count mismatch, timeout, link-down fallback, tick wrap | None |
 | **3** | SAMD21 firmware (**its own repo, `intelli-wayside-reader-mcu`**), flashed from the CM4 over SWD. First target: `HELLO`/`HEARTBEAT`, then real ADC levels on the four channels with the sensors on the bench | The board, plus a sensor or a current source |
 | **4** | Threshold tuning from raw captures, wheel link against real hardware, a mock cloud endpoint | Sensors |
-| **5** | Charkop: geometry, `head-spacing-m`, direction proof, `axle-gap-ms` from real trains, radiated power check | Site |
+| **5** | Charkop: geometry, `sensor-spacing-m` and `element-spacing-m`, direction proof, `axle-gap-ms` from real trains, radiated power check | Site |
 
 **Phases 1 and 2 are DONE (2026-09-29)**, in `apps/intelli-wayside-reader` (CodeCommit
 `intelli-wayside-reader`): 29 tests, plus an end-to-end run on `intellisbc` against the simulated

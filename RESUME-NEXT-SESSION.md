@@ -61,8 +61,10 @@ from tunnel to wayside, and back before it goes to Reliance). `intellisbc2` pull
 before shipping to Charkop. Operator inputs recorded 2026-10-09 in `docs/Wayside-Reader-Design.md`
 §2.0: Wheel 1 = J23, Wheel 2 = J22, Wheel 1 first = `UP`; loop currents and all distances are
 measured at site; speed at each sensor. Next for the wayside, in order:
-- [ ] App: rename head A/B to Wheel 2/Wheel 1 and make Wheel 1 first = `UP` (the default is reversed today).
-- [ ] App: per-sensor element spacing, sensor-to-WPMS distances, speed at each sensor.
+- [x] App: Wheel 1 first = `UP`, fixed in code (wayside, 2026-10-09). Not yet deployed to any board.
+- [x] App: `element-spacing-m` (one value) and `sensor-spacing-m`, speed at each sensor per axle.
+- [ ] App: sensor-to-WPMS distances (not a setting yet).
+- [ ] Deploy the wayside app on `intellisbc` (it runs the tunnel today; switch the enabled unit).
 - [ ] Admin: wheel commissioning page (live loop currents, dip capture, geometry entry, YAML out).
 - [ ] Interposer output and simulator testing (to discuss).
 

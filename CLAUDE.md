@@ -114,12 +114,16 @@ SAMD21: `openocd -f tools/openocd-cm4.cfg -c "init; reset halt; at91samd chip-er
 **Wayside decisions, operator 2026-10-09** (details in `docs/Wayside-Reader-Design.md` §2.0):
 - **J23 is Wheel 1, J22 is Wheel 2**, by the board's silk, although the PCB put the `WSB*` nets on
   J23 and `WSA*` on J22. In protocol channels, Wheel 1 = 2/3 and Wheel 2 = 0/1.
-- **Wheel 1 first = `UP`, Wheel 2 first = `DOWN`.** The app's "head A" is channels 0/1 (Wheel 2), so
-  its default `up-is-a-to-b: true` gives the reverse. Fix the app before trusting a direction.
-- Loop currents (~5 mA idle, ~3 mA dipped), the element spacing in each RSR110d, the sensor-to-sensor
-  distance and each sensor's distance to the WPMS antenna are all measured at site. The admin app is
-  to get the tools to capture them and emit the site YAML. Speed is wanted at each sensor as well as
-  between them.
+- **Wheel 1 first = `UP`, Wheel 2 first = `DOWN`.** Fixed in the wayside app the same day and not
+  configurable (`up-is-a-to-b` is gone). Installation rule: in each RSR110d the element on pin 4 is
+  on the Wheel 1 side; swapped elements make every direction `UNKNOWN`. The pass JSON keeps its
+  schema-1 names, so `headA`/`atA` = Wheel 2 and `headB`/`atB` = Wheel 1.
+- Two distances, both measured at site: **`wayside.wheel.element-spacing-m`** (between an RSR110d's
+  two sensing elements, one value for both sensors; gives the speed at each sensor) and
+  **`wayside.wheel.sensor-spacing-m`** (Wheel 1 to Wheel 2). The old names `system-spacing-m` and
+  `head-spacing-m` still bind. Loop currents (~5 mA idle, ~3 mA dipped) and each sensor's distance
+  to the WPMS antenna are measured at site too. The admin app is to get the tools to capture them
+  and emit the site YAML.
 - **Wayside development now happens on `intellisbc`** (the bench board bound for the Reliance
   tunnel). `intellisbc2` pulls later, is tested, and ships to Charkop. Only one of the tunnel and
   wayside units may be enabled on a board, so re-enable the tunnel on `intellisbc` before it ships.

@@ -159,11 +159,11 @@ reading the next train.
 | Field | Type | Meaning |
 |---|---|---|
 | `link` | enum | Where the pass boundaries came from (below) |
-| `direction` | enum or null | `UP`, `DOWN`, `MIXED` (the train reversed over the sensors), `UNKNOWN` (evidence missing or conflicting), or `null` (no wheel data at all) |
-| `axleCount` | object or null | `{ "headA": int, "headB": int, "consistent": bool }`. The two sensor heads count independently. `consistent: false` means they disagree, and the reader reports that rather than picking a number |
-| `speedKmh` | object or null | `{ "min", "mean", "max" }`, in km/h to 0.1. `null` inside when it cannot be measured |
+| `direction` | enum or null | `UP` (Wheel 1, connector J23, saw the train first), `DOWN` (Wheel 2, J22, first), `MIXED` (the train reversed over the sensors), `UNKNOWN` (evidence missing or conflicting), or `null` (no wheel data at all) |
+| `axleCount` | object or null | `{ "headA": int, "headB": int, "consistent": bool }`. **`headA` is Wheel 2 (J22) and `headB` is Wheel 1 (J23)**; the names are kept from schema 1. The two sensors count independently. `consistent: false` means they disagree, and the reader reports that rather than picking a number |
+| `speedKmh` | object or null | `{ "min", "mean", "max" }` over the axles' `speedKmh`, in km/h to 0.1. `null` inside when it cannot be measured |
 | `axles` | array or null | One entry per axle, in order (below) |
-| `faults` | array of strings | Human-readable sensor problems seen during the pass, e.g. `"head B system 1: OPEN"`. **Wording may change: display it, do not parse it** |
+| `faults` | array of strings | Human-readable sensor problems seen during the pass, e.g. `"Wheel 1 element 1: OPEN"` (was `"head B system 1: OPEN"` before 2026-10-09). **Wording may change: display it, do not parse it** |
 
 `link`:
 
@@ -175,10 +175,18 @@ reading the next train.
 | `DOWN` | No wheel sensing at all: this pass is `TAG_GAP`, and the wheel fields are `null` |
 
 Each entry in `axles`: `{ "n": 1, "atA": time|null, "atB": time|null, "speedKmh": number|null,
-"peakUa": [int|null, int|null, int|null, int|null] }`. `atA` and `atB` are when that axle passed
-head A and head B. `peakUa` is the sensor current peak in µA for head A system 1, head A system 2,
-head B system 1 and head B system 2, for spotting a weak sensor over months. A 12-car train is
-about 50 entries.
+"speedAtWheel1Kmh": number|null, "speedAtWheel2Kmh": number|null, "peakUa": [int|null, int|null,
+int|null, int|null] }`.
+- `atA` and `atB` are when that axle passed **Wheel 2 (J22)** and **Wheel 1 (J23)**.
+- `speedAtWheel1Kmh` / `speedAtWheel2Kmh` (added 2026-10-09; a consumer must tolerate new fields)
+  are the speed at each sensor: the distance between that sensor's two sensing elements over the
+  time between them. `null` when that distance is not configured or the sensor missed the axle.
+- `speedKmh` is the speed between the two sensors (their distance over the time between them) when
+  both saw the axle and the counts agree, otherwise the mean of the two per-sensor speeds.
+- `peakUa` is the sensor current peak in µA for Wheel 2 element 1, Wheel 2 element 2, Wheel 1
+  element 1 and Wheel 1 element 2, for spotting a weak sensor over months.
+
+A 12-car train is about 50 entries.
 
 What a pass looks like with wheel sensors (from the simulator; the sensors are not fitted yet):
 
@@ -189,8 +197,9 @@ What a pass looks like with wheel sensors (from the simulator; the sensors are n
   "axleCount": { "headA": 8, "headB": 8, "consistent": true },
   "speedKmh": { "min": 45.0, "mean": 45.0, "max": 45.0 },
   "axles": [
-    { "n": 1, "atA": "2026-09-29T10:22:18.589999304Z", "atB": "2026-09-29T10:22:16.990052556Z",
-      "speedKmh": 45.0, "peakUa": [9800, 9800, 9800, 9800] }
+    { "n": 1, "atA": "2026-09-29T10:22:16.990052556Z", "atB": "2026-09-29T10:22:18.589999304Z",
+      "speedKmh": 45.0, "speedAtWheel1Kmh": 45.0, "speedAtWheel2Kmh": 45.0,
+      "peakUa": [9800, 9800, 9800, 9800] }
   ],
   "faults": []
 }
