@@ -14,20 +14,26 @@ measured.**
 
 | Qty | Part | What it is | Does |
 |---|---|---|---|
-| 1 | **SS5Y?-51…** (reported as "SS5Y51") | Plug-in **metal base manifold, type 51 (bottom ported)** | Carries the valves; common supply and exhaust; one electrical connector for all coils |
+| 1 | **SS5Y7-10F1-07B-C8D0** | Plug-in **connector connecting base, type 10 (side ported)**, 7 stations | Carries the valves; common supply and exhaust; one D-sub for all coils |
 | 6 | **SY7100-5U1** | SY7000, 2-position single solenoid | Air blow, one per WPMS module (OUT2–OUT7) |
 | 1 | **SY7300-5U1** | SY7000, 3-position closed centre, two solenoids | WPMS flaps open/close (OUT1) |
 
-> ⚠ **Read the full manifold part number off its label.** "SS5Y51" is not a complete SMC part
-> number, and the one digit that matters is missing:
-> - **SS5Y5-51…** is the base for **SY5000** valves (1/4 ports).
-> - **SS5Y7-51…** is the base for **SY7000** valves (3/8 ports).
->
-> The valves are SY7000 (`SY7…`), so the base should be an **SS5Y7-51**. An SY7000 valve does not fit
-> an SS5Y5 base. The rest of the label also says how it is wired (connector type and single/double
-> wiring), which decides the pinout below. Full form (p. 223):
-> `SS5Y` · series `3/5/7` · `-` · type `50/51` · connector `F/P/PG/PH` · entry `1/2` · wiring `Nil/S` ·
-> `-` · stations `02…12` · P/E entry `U/D/B` · A/B port size · thread · mounting.
+**Corrected 2026-10-09:** the operator first reported the block as "SS5Y51". The full part number is
+**SS5Y7-10F1-07B-C8D0**: a type-10 connector base, not a type-51 metal base. The valves fit it
+(catalogue p. 41: the type-10 example lists `SY3100-5U1` / `SY3200-5U1` / `SY3300-5U1` on an
+`SS5Y3-10F1` base). Decoded (pp. 41–42):
+
+| Field | Value | Meaning |
+|---|---|---|
+| `SS5Y7` | 7 | SY7000 series, matching the valves |
+| `-10` | 10 | Connector connecting base, **side ported** |
+| `F` | F | **D-sub, 25 pins, IP40** (`FW` would be the IP67 D-sub) |
+| `1` | 1 | Connector entry upward |
+| `07` | 7 | **7 stations, double wiring**: every station has SOL.a and SOL.b, so the SY7300 works on any station |
+| `B` | B | P/E ports on **both** sides |
+| (nil) | — | SUP/EXH block: internal pilot, matching the valves' internal pilot |
+| `C8` | C8 | A/B ports **ø8 one-touch** (P/E are ø12 one-touch on SY7000) |
+| `D0` | D0 | **DIN rail mounting, rail not included** (brackets only): supply a 35 mm rail |
 
 ## Valve part numbers, decoded (catalogue p. 225)
 
@@ -70,24 +76,20 @@ Response is measured to JIS B 8419 with the coil at 20 °C and rated voltage. Ad
 interposer's photorelay. The flaps and the air take longer than the valve, so measure open and close
 times on site.
 
-## Manifold: plug-in metal base, type 51 (pp. 220–224, 248–249)
+## Manifold: SS5Y7-10F1-07B-C8D0 (pp. 36–42, 55)
 
-| Item | SS5Y7-51 (for SY7000) |
+| Item | Value |
 |---|---|
-| Ports | P (1), EA/EB (3/5) **3/8**, common to all stations; A/B **bottom ported** |
-| Flow, rubber seal, 5 stations | P→A/B: C = 4.1 dm³/(s·bar), b = 0.34. A/B→E: C = 4.8, b = 0.20 |
-| P/E entry | **D side only** for type 51 |
-| Mounting | **Direct mounting only** for type 51 (no DIN rail) |
-| Stations | 2–12 with a D-sub (F) or 26-pin ribbon (P) connector |
-| Enclosure | IP40 |
+| Type | Plug-in connector connecting base, side ported, 7 stations |
+| Ports | A/B ø8 one-touch per station; P and 3/5 (E) common, ø12 one-touch, both ends |
+| Electrical | One **D-sub 25-pin (IP40)** for all 14 coil positions, double wiring |
 | Internal wiring | **Positive common or negative common**, set by how COM is wired. Non-polar valves (`U`) work either way |
-| Wiring type | `Nil` = all double wiring (any valve on any station). `S` = all single wiring, **only if every station is a 2-position single valve** |
+| Mounting | DIN rail (rail not supplied) |
 
-**The SY7300 needs double wiring.** A manifold built "all single wiring" cannot drive its second coil
-at all. With six single valves and one 3-position valve the base must be all double wiring
-(`Nil`). The SY7100s then use only their SOL.a pin and leave SOL.b unused.
+Double wiring means each SY7100 uses only its SOL.a pin and leaves SOL.b unused, which the catalogue
+calls "an unused control signal". That is harmless.
 
-### D-sub (F, 25 pins) pinout: all double wiring (p. 248)
+### D-sub (F, 25 pins) pinout: double wiring (p. 55; the metal base on p. 248 is identical)
 
 | Station | SOL.a pin | SOL.b pin |
 |---|---|---|
@@ -103,9 +105,8 @@ at all. With six single valves and one 3-position valve the base must be all dou
 
 Station 1 is the one nearest the **D side**. Polarity: in **positive common**, pin 13 is +24 V and
 each SOL pin is the coil's (−) end. In **negative common**, pin 13 is 0 V and each SOL pin is (+).
-The SMC cable is `AXT100-DS25-015/030/050` (1.5/3/5 m, 25 × 0.3 mm²). Its colour code per pin is on
-p. 248. Ribbon-cable variants (P 26-pin, PG 20-pin, PH 10-pin) have their own tables on p. 249,
-with COM on the last two pins.
+The SMC cable is `AXT100-DS25-015/030/050` (1.5/3/5 m, 25 × 0.3 mm²), with its colour code per pin
+in the catalogue.
 
 ## Wiring to the interposer
 
@@ -190,11 +191,11 @@ usually chosen so that something does *not* move when power goes, which may be i
 - **Operating pressure.** The 3-position valve needs **≥ 0.2 MPa** and the single ones ≥ 0.15 MPa,
   so the site supply must stay above 0.2 MPa while all six are blowing.
 - **Temperature.** −10 to 50 °C at the valve. A trackside enclosure in Mumbai sun can exceed 50 °C.
-- **IP40 manifold.** The metal base is IP40, not IP67, so it needs an enclosure against dust and rain.
+- **IP40 connector.** The `F` D-sub is IP40, not IP67, so the manifold needs an enclosure against dust and rain.
 
 ## Open items
 
-1. The full manifold label: series digit (5 or 7), connector type, wiring type, station count.
+1. ~~The full manifold label~~: **SS5Y7-10F1-07B-C8D0**, compatible with both valves.
 2. Which station each valve sits on, so the J26 → pin table can be completed.
 3. The flap valve decision (above).
 4. The valve sequence: what opens the flaps and starts the air, for how long, and what closes them.

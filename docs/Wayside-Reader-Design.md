@@ -164,7 +164,7 @@ Not decided yet, and needed before any of it is code:
 Constraints that come with the interposer (`intelli-pcb-interposer/INTERPOSER-DESIGN.md` §2):
 - Its published output envelope is **≤ 80 mA, 0–30 V, OUT positive with respect to FIELD_COM**, and
   only coils **with their own surge suppressor** are acceptable. **The WPMS valves are SMC SY7000**
-  (operator, 2026-10-09): an SS5Y type-51 metal-base manifold with 6× SY7100-5U1 for air and
+  (operator, 2026-10-09): an SMC SS5Y7-10F1-07B-C8D0 manifold (7 stations, D-sub) with 6× SY7100-5U1 for air and
   1× SY7300-5U1 for the flaps. Standard coils draw 16.7 mA each and carry a non-polar suppressor, so
   they fit. **But the SY7300 is a 3-position closed-centre,
   double-solenoid valve: OUT1 alone can open the flaps and never close them, and on power loss they

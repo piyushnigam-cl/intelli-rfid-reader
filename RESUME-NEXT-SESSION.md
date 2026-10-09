@@ -68,7 +68,8 @@ measured at site; speed at each sensor. Next for the wayside, in order:
 - [ ] Admin: wheel commissioning page (live loop currents, dip capture, geometry entry, YAML out).
 - [x] J26 map for the wayside recorded (2026-10-09): OUT1 flaps, OUT2–7 air valves, IN3 shutdown, IN1/2/4 spare.
 - [x] Pneumatics documented from SMC's catalogue (`docs/WPMS-Pneumatics-SMC.md`): SS5Y type-51 manifold, SY7100-5U1 ×6, SY7300-5U1 ×1, standard coils 16.7 mA, positive common + JP1 SINK.
-- [ ] Operator: read the full manifold label. It must be SS5Y**7**-51 (SY7000), all double wiring, and the station order is needed for the pin table.
+- [x] Manifold is SS5Y7-10F1-07B-C8D0: compatible with SY7100-5U1/SY7300-5U1, 7 stations, double wiring, D-sub. DIN rail not included.
+- [ ] Operator: the station order of the seven valves, for the J26 → D-sub pin table.
 - [ ] Operator: the SY7300 flap valve has two coils and OUT1 drives one. Swap it for an SY7100, give coil B an output, or accept hold-only.
 - [ ] Operator: the valve sequence (what opens the flaps and starts the air, for how long, what closes them).
 - [ ] App: IN3 5 s shutdown and the WPMS valve outputs, once the sequence is decided. Every stop drives all valves off.
