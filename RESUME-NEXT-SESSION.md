@@ -1,6 +1,6 @@
 # Resume here — CM4 session, next sitting
 
-**Sections are newest first. 2026-10-08 (cloud: the phased plan and open decisions; updated 10-09: admin passes on the tunnel, focus moves to wayside + GPS) is on top, then 2026-10-07 (module swapped to `…F6` and reflashed; multi-EAN arming on the wms-test page, on intellisbc) is on top, then 2026-10-04 (sync, antenna LEDs deployed, VPN and wms-test as services, on intellisbc), then 2026-09-29 (the wayside reader, on intellisbc2), then 2026-09-28 (Radxa CM3), then 2026-09-24 (antenna LEDs), then 2026-09-23 late (the second
+**Sections are newest first. 2026-10-08 (cloud: the phased plan and open decisions; updated 10-09: admin passes on the tunnel, focus moves to the wayside) is on top, then 2026-10-07 (module swapped to `…F6` and reflashed; multi-EAN arming on the wms-test page, on intellisbc) is on top, then 2026-10-04 (sync, antenna LEDs deployed, VPN and wms-test as services, on intellisbc), then 2026-09-29 (the wayside reader, on intellisbc2), then 2026-09-28 (Radxa CM3), then 2026-09-24 (antenna LEDs), then 2026-09-23 late (the second
 board, flashed and running), then
 2026-09-23 evening (the export kit for a second CM4), then
 2026-09-23 (deployed, and the RZC stops per carton again) is on top,
@@ -56,24 +56,7 @@ reader streamed tags live and drove Super Fast Mode (arm, carton, result) withou
 do: the wayside half on `intellisbc2` (Status, Wheel, Passes, `/cloud`) during Phase 1.
 
 **Focus from 2026-10-09: the wayside reader, through the interposer, tested with the train
-simulator.** Then a feasibility check: can a GPS on TTL NMEA come in over the wheel-sensor lines?
-The cloud's first read of the schematic, all of it INFERRED and none measured:
-- **All four J22/J23 channels are wheel channels** (two double sensors, `W_AIN1..4` → PA02–PA05).
-  NMEA on one of them costs one sensor system, and with it the direction check on that head.
-- **Only PA04 (J23 pin 2, `WSB1`) and PA05 (J23 pin 4, `WSB2`) can be a hardware UART RX**
-  (SERCOM0 PAD0/PAD1). PA02/PA03 have no SERCOM.
-- **The front end fights a UART.** 330 Ω burden to GND, then 1 k + 100 nF (τ = 100 µs). A 3.3 V GPS
-  TX into 330 Ω needs 10 mA, which most modules cannot source. At 9600 baud a bit is only ~1 τ, so
-  the edge reaches about 63 %, below VIH. At **4800 baud** (the NMEA 0183 default) a bit is ~2 τ,
-  so the edge reaches about 86 %, which works.
-- **No board change needed:** drive the line the way the jig does. Use a small adapter with an
-  opto/NPN that sinks ~8–9 mA from `V_SEN` (24 V on pin 1/3) into `WSBx` when TX is high, powered
-  from the same `V_SEN`. Run the GPS at 4800, and add a SERCOM0 RX (or ADC-sampled soft-UART) to the
-  MCU firmware, plus a new frame type to carry the sentences.
-- **J26 IN1–IN4 are no better**: the BCM 23/24/18/25 pins have no UART function, the inputs need
-  24 V into 6.8 k, and the TLP291 turn-off is slow. The v2 board has no USB host port (removed in v2).
-- **The lines meant by "encoder input lines" are NOT confirmed.** Nothing on the board is named
-  encoder, so the notes above assume J22/J23.
+simulator** (Phase 1 below). The operator is adding inputs on the wayside first.
 
 **Phase 2, admin smoke test on both boards.** Profiles, Check, Overview, the live stream, the tunnel
 v1 arm with callback `http://127.0.0.1:8090/callback` landing in Receivers, Field I/O, and the
