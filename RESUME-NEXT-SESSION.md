@@ -63,7 +63,7 @@ before shipping to Charkop. Operator inputs recorded 2026-10-09 in `docs/Wayside
 measured at site; speed at each sensor. Next for the wayside, in order:
 - [x] App: Wheel 1 first = `UP`, fixed in code (wayside, 2026-10-09). Not yet deployed to any board.
 - [x] App: `element-spacing-m` (one value) and `sensor-spacing-m`, speed at each sensor per axle.
-- [ ] App: sensor-to-WPMS distances (not a setting yet).
+- [x] App: layout settings `wheel1-to-wpms-m` / `wpms-length-m` / `wpms-to-wheel2-m`, packaged at 13 / 3.5 / 18.5 m, element spacing 0.06 m (2026-10-09). Fine-tune on site.
 - [ ] Deploy the wayside app on `intellisbc` (it runs the tunnel today; switch the enabled unit).
 - [ ] Admin: wheel commissioning page (live loop currents, dip capture, geometry entry, YAML out).
 - [ ] Interposer output and simulator testing (to discuss).

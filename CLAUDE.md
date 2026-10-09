@@ -121,8 +121,10 @@ SAMD21: `openocd -f tools/openocd-cm4.cfg -c "init; reset halt; at91samd chip-er
 - Two distances, both measured at site: **`wayside.wheel.element-spacing-m`** (between an RSR110d's
   two sensing elements, one value for both sensors; gives the speed at each sensor) and
   **`wayside.wheel.sensor-spacing-m`** (Wheel 1 to Wheel 2). The old names `system-spacing-m` and
-  `head-spacing-m` still bind. Loop currents (~5 mA idle, ~3 mA dipped) and each sensor's distance
-  to the WPMS antenna are measured at site too. The admin app is to get the tools to capture them
+  `head-spacing-m` still bind. The layout is three more settings, `wheel1-to-wpms-m`,
+  `wpms-length-m` and `wpms-to-wheel2-m`, and `sensor-spacing-m: 0` means their sum. **Packaged
+  starting values: 0.06 / 13 / 3.5 / 18.5 m** (so 35 m sensor to sensor), fine-tuned on site. Loop
+  currents (~5 mA idle, ~3 mA dipped) are measured at site too. The admin app is to get the tools to capture them
   and emit the site YAML.
 - **Wayside development now happens on `intellisbc`** (the bench board bound for the Reliance
   tunnel). `intellisbc2` pulls later, is tested, and ships to Charkop. Only one of the tunnel and

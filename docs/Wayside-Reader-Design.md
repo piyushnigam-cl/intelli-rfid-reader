@@ -103,13 +103,28 @@ rail. The time between the two elements seeing the same wheel gives a speed **at
 independent of the other one. That is now a first-class output, not just the single-head fallback
 in §5.3. Measured on site and written to `application.yml`:
 
-1. **`wayside.wheel.element-spacing-m`**: the distance between the two sensing elements of an
-   RSR110d. **One setting for both sensors** (operator, 2026-10-09). Gives the speed at each sensor.
-2. **`wayside.wheel.sensor-spacing-m`**: the distance between Wheel 1 and Wheel 2. Gives the
-   sensor-to-sensor speed.
-3. **The distance from each wheel sensor to the WPMS** (the reader's antenna). Not a setting yet.
+| Setting (`wayside.wheel.`) | What | Starting value (operator, 2026-10-09) |
+|---|---|---|
+| `element-spacing-m` | Between the two sensing elements of an RSR110d, **one value for both sensors**. Gives the speed at each sensor | **0.06** (6 cm) |
+| `wheel1-to-wpms-m` | Wheel 1 to the WPMS | **13.0** |
+| `wpms-length-m` | Length of the WPMS | **3.5** |
+| `wpms-to-wheel2-m` | The WPMS to Wheel 2 | **18.5** |
+| `sensor-spacing-m` | Wheel 1 to Wheel 2. **0 = the three above added up** (35 m); non-zero overrides the sum | 0 |
 
-The old names `system-spacing-m` and `head-spacing-m` still bind to 1 and 2.
+```
+   Wheel 1 (J23) ──13 m── [ WPMS 3.5 m ] ──18.5 m── Wheel 2 (J22)      UP ──►
+```
+
+These are **in the packaged `application.yml`** as starting values; the team fine-tunes them on site
+in the site config. A layout with any part at 0 gives no sensor-to-sensor speed rather than a short
+sum. The old names `system-spacing-m` and `head-spacing-m` still bind to `element-spacing-m` and
+`sensor-spacing-m`.
+
+**What 6 cm costs in resolution (INFERRED).** The SAMD21 samples each loop at 5 kHz, so an edge is
+placed to within about 200 µs. Over 6 cm that is ±2.4 % of the element-to-element time at 20 km/h,
+±5 % at 45 km/h and ±10 % at 90 km/h, per axle. The train's min/mean/max over ~50 axles averages
+much of it out. The 35 m sensor-to-sensor speed is far finer and is the figure to trust when both
+sensors saw the train.
 
 **Commissioning tools in the admin app (to build).** The admin app should help discover these values
 and write them into the site `application.yml`:
@@ -466,8 +481,11 @@ wayside:
     port: /dev/ttyAMA3
     baud: 115200
     # Direction is fixed: Wheel 1 (J23) first = UP (§2.0). No setting.
-    sensor-spacing-m: 0    # Wheel 1 to Wheel 2, rail to rail, measured on site. 0 = no such speed
-    element-spacing-m: 0   # between an RSR110d's two elements, measured on site. 0 = no per-sensor speed
+    wheel1-to-wpms-m: 13.0   # starting values (operator, 2026-10-09), fine-tuned on site
+    wpms-length-m: 3.5
+    wpms-to-wheel2-m: 18.5
+    sensor-spacing-m: 0      # 0 = the three above added up (35 m); non-zero overrides
+    element-spacing-m: 0.06  # between an RSR110d's two elements. 0 = no per-sensor speed
     detect:                # UNVERIFIED, from the sensor datasheet then a capture
       covered-ua: 0
       uncovered-ua: 0
