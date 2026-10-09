@@ -66,7 +66,10 @@ measured at site; speed at each sensor. Next for the wayside, in order:
 - [x] App: layout settings `wheel1-to-wpms-m` / `wpms-length-m` / `wpms-to-wheel2-m`, packaged at 13 / 3.5 / 18.5 m, element spacing 0.06 m (2026-10-09). Fine-tune on site.
 - [ ] Deploy the wayside app on `intellisbc` (it runs the tunnel today; switch the enabled unit).
 - [ ] Admin: wheel commissioning page (live loop currents, dip capture, geometry entry, YAML out).
-- [ ] Interposer output and simulator testing (to discuss).
+- [x] J26 map for the wayside recorded (2026-10-09): OUT1 flaps, OUT2–7 air valves, IN3 shutdown, IN1/2/4 spare.
+- [ ] Operator: the valve sequence (what opens the flaps and starts the air, for how long, what closes them) and the valves' coil currents.
+- [ ] App: IN3 5 s shutdown and the WPMS valve outputs, once the sequence is decided. Every stop drives all valves off.
+- [ ] Simulator testing (to discuss).
 
 **Phase 2, admin smoke test on both boards.** Profiles, Check, Overview, the live stream, the tunnel
 v1 arm with callback `http://127.0.0.1:8090/callback` landing in Receivers, Field I/O, and the

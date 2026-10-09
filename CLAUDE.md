@@ -126,6 +126,11 @@ SAMD21: `openocd -f tools/openocd-cm4.cfg -c "init; reset halt; at91samd chip-er
   starting values: 0.06 / 13 / 3.5 / 18.5 m** (so 35 m sensor to sensor), fine-tuned on site. Loop
   currents (~5 mA idle, ~3 mA dipped) are measured at site too. The admin app is to get the tools to capture them
   and emit the site YAML.
+- **J26 on the wayside drives the WPMS valves through the interposer**: OUT1 opens the WPMS flaps;
+  OUT2–7 blow air for the Left External, Left Internal, Right Internal, Right External, Right
+  Diameter and Left Diameter modules. IN3 held 5 s shuts the CM4 down (as on the tunnel), and
+  IN1/IN2/IN4 are spare. The valve sequence and the coil currents are not decided yet. The
+  interposer allows ≤ 80 mA per suppressed coil, and on the wayside O7 is a valve, never a lamp.
 - **Wayside development now happens on `intellisbc`** (the bench board bound for the Reliance
   tunnel). `intellisbc2` pulls later, is tested, and ships to Charkop. Only one of the tunnel and
   wayside units may be enabled on a board, so re-enable the tunnel on `intellisbc` before it ships.
