@@ -134,6 +134,12 @@ and write them into the site `application.yml`:
   speed, and check them against passes (speed at Wheel 1 vs Wheel 2 vs head-to-head).
 - **Output.** The YAML block for the site config, as the key tool already does for key hashes.
 
+**The site: an Omron-run WPMS (operator, 2026-10-10).** The Charkop WPMS is run today by an Omron
+NX1P2-9024DT1 with an NX-AD4204 analog card. The reader takes the wheel-sensor loops **in series
+with the NX-AD4204** and **replaces the Omron's digital outputs** to the valves. Loop wiring, the
+single-supply rule, the bypass links, output handover and the cut-over order are in
+**`docs/WPMS-Charkop-System.md`**.
+
 **J26 on the wayside: the WPMS valves through the interposer (operator, 2026-10-09, revised the same
 day, revised twice the same day).** The tunnel's J26 map does not apply. Outputs energise WPMS solenoid valves through the
 interposer. The Internal and Diameter air valves are paired, two coils per output, so that the SY7300

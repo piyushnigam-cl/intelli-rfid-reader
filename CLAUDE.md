@@ -141,6 +141,13 @@ SAMD21: `openocd -f tools/openocd-cm4.cfg -c "init; reset halt; at91samd chip-er
   the flaps where they are, so a dead JVM or 24 V loss leaves them in their last position.** Closing
   them is an explicit step on every stop path. See `docs/WPMS-Pneumatics-SMC.md`. The valve sequence
   is not decided yet.
+- **The Charkop WPMS is run today by an Omron NX1P2-9024DT1 + NX-AD4204** (operator, 2026-10-10).
+  The reader takes the four wheel loops **in series** with the NX-AD4204 (the reader's 330 Ω at the
+  0 V end, the Omron's 85 Ω differential input in the middle, one loop supply only) and **replaces
+  the Omron's outputs** to the valves. Fit a bypass link per loop, or unplugging the reader blinds
+  the Omron. Physically disconnect the Omron's valve outputs. The DT1 outputs are PNP, so the
+  manifold is probably negative common and JP1 then goes to SOURCE. The Omron program holds the
+  valve sequence the app still needs. See `docs/WPMS-Charkop-System.md`.
 - **Wayside development now happens on `intellisbc`** (the bench board bound for the Reliance
   tunnel). `intellisbc2` pulls later, is tested, and ships to Charkop. Only one of the tunnel and
   wayside units may be enabled on a board, so re-enable the tunnel on `intellisbc` before it ships.

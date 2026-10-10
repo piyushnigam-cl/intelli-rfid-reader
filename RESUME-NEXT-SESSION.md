@@ -70,6 +70,8 @@ measured at site; speed at each sensor. Next for the wayside, in order:
 - [x] Pneumatics documented from SMC's catalogue (`docs/WPMS-Pneumatics-SMC.md`): SS5Y type-51 manifold, SY7100-5U1 ×6, SY7300-5U1 ×1, standard coils 16.7 mA, positive common + JP1 SINK.
 - [x] Manifold is SS5Y7-10F1-07B-C8D0: compatible with SY7100-5U1/SY7300-5U1, 7 stations, double wiring, D-sub. DIN rail not included.
 - [ ] Operator: the station order of the seven valves, for the J26 → D-sub pin table.
+- [ ] Charkop panel survey (`docs/WPMS-Charkop-System.md` §6–7): sensor count and NX-AD4204 channel map, loop wiring and supply, Omron output → coil map, manifold common polarity (decides JP1), cable lengths.
+- [ ] Get the valve sequence from the Omron: Sysmac Studio project from the WPMS supplier, and/or a shadow capture of the Omron outputs on IN1/IN2/IN4.
 - [x] SY7300 flap valve gets both coils (OUT1 open, OUT2 close), by pairing the air valves (2026-10-09).
 - [ ] Operator: flap coils pulsed or held, and the open/close travel times (measure on site). Whether start-up drives the flaps closed.
 - [ ] Operator: the valve sequence (what opens the flaps and starts the air, for how long, what closes them).

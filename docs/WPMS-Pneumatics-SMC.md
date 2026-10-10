@@ -110,6 +110,12 @@ in the catalogue.
 
 ## Wiring to the interposer
 
+> **Superseded in part, 2026-10-10:** the valves are driven today by an Omron NX1P2-9024DT1, whose
+> outputs are PNP (sourcing). So the manifold is most likely already wired **negative common**
+> (pin 13 = 0 V). If so, set JP1 to **SOURCE (2-3)** and leave the manifold wiring alone; see
+> `WPMS-Charkop-System.md` §4.2. The positive-common advice below applies only to a manifold
+> wired that way, or to a fresh install.
+
 **Use positive common, with the interposer's JP1 in SINK (1-2, as shipped).**
 - Manifold COM (D-sub pin 13) goes to the field +24 V.
 - Each interposer output pulls its coil's SOL pin to FIELD_COM when energised.
