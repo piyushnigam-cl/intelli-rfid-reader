@@ -1,5 +1,11 @@
 # Intelli RFID Reader — project instructions
 
+> **FIRST, BEFORE ANYTHING ELSE: find out which board you are on.** Several CM4s share this exact
+> workspace, user, prompt, memory and file. Run `hostname`, match it in **`BOARDS.md`**, and open
+> your first reply by naming the board and its role. A measurement, a resume section or a commit
+> about hardware that does not name its board is assumed to be wrong. Wherever this file says "this
+> unit" without naming one, it means `intellisbc`.
+
 Software for the Intelli RFID reader. Read this before changing anything; it captures decisions and
 hardware behaviour that are not derivable from the code.
 
